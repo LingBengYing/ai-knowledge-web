@@ -8,6 +8,9 @@
 | --- | --- | --- |
 | `/v1/config` | GET | Java 能力、固定 workspace、认证模式 |
 | `/v1/session` | POST、DELETE | Java JWT → HttpOnly Cookie / 清除 Cookie |
+| `/v1/documents?filename=<encoded>` | POST | 原始PDF/TXT/MD，Content-Type严格application/octet-stream，1..20MiB，202返回任务 |
+| `/v1/ingestions/{id}` | GET | 当前授权解析任务 |
+| `/v1/ingestions/{id}/cancel`、`/retry` | POST | 无请求体；权限与状态由Java检查，返回更新任务 |
 | `/v1/management/documents` | GET | 授权分页、筛选、排序 |
 | `/v1/management/documents/{id}` | PATCH | 展示元数据整理；详情使用当前授权列表行，没有独立GET详情接口 |
 | `/v1/management/document-actions` | POST | 批量移动／追加标签及逐项回执 |
@@ -17,6 +20,14 @@
 | `/health/live`、`/health/ready` | GET | 原样传递 Java 健康状态，ready503不会伪装成200 |
 
 ID 仅接受1–128位 ASCII 字母、数字、下划线与连字符。具体 body/query/ACL 和错误语义见 [Java API](https://github.com/LingBengYing/ai-knowledge/blob/main/docs/API.md)。新增后端路由不会自动穿透前端开发代理；必须在新的变更中明确加入方法与路由回归。
+
+## 文本任务
+
+Java的`RAG_INGESTION_ENABLED=true`为显式本机开关，默认关闭；页面同时检查`text_upload`和`ingestions`。filename是唯一query参数，不允许路径、控制字符、超过255字符或不支持的扩展名。浏览器用原始File，不使用multipart/base64/JSON包装。只有这一精确上传接口享有20MiB、30秒和最多两个在途请求；其他JSON接口仍128KiB/10秒，所有响应仍4MiB。Cookie和同源要求与管理操作相同。
+
+任务安全shape：`task_id/document_id/revision_id/state/attempt/error_code/can_cancel/can_retry`。state为queued、processing、parsed、failed、cancelled；attempt为1..3，retry沿用任务与解析版本，增加attempt。界面不显示正文、chunk或原始异常。`parsed`是终态但未索引；任务revision不是文档active revision，不允许问答。
+
+轮询只在当前身份/任务的queued或processing执行，约1.5秒；终态停止，网络或数据错误暂停等待手动刷新。切换身份或列表上下文会中止读取并清除任务，不取消服务器任务。POST不自动重试：若上传/取消/重试响应丢失，应先查询列表/任务确认是否已经生效。
 
 ## 认证
 
@@ -32,5 +43,6 @@ JWT：由可信签发方提供现有合法 JWT；页面 POST `/v1/session`，Jav
 - 脚本写API收到403：开发代理的写操作也必须提交精确同源 Origin 和正常身份；不删除Origin校验来方便工具。
 - 404/405：路由或方法不在当前 allowlist；并不意味着未来RAG已经提供。
 - 413/502/504：分别可能是请求限长、后端失败/重定向/响应超限、总deadline；不重试写操作，先确认后端结果。
+- 429：本地代理或Java已有两个上传请求在途；稍后显式重试，不放大并发限额。Java持久任务/原文件总量配额则返回409，应先核对后端安全错误。
 
 生产同源托管、TLS和 Cookie Secure 需要单独验收。不要把该开发Node代理放到公网后声称原认证边界仍成立。

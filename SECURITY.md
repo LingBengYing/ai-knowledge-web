@@ -17,6 +17,8 @@
 
 API有请求/响应大小和总deadline限制；拒绝重定向、绝对目标和自动重试。静态文件allowlist拒绝symlink；不公开任意项目文件。Cookie请求只保留单一`rag_session`，响应只接受会话路径的Host-only、HttpOnly、SameSite=Strict、Path=/值，不改写Domain或去除Secure。
 
+只有精确文本上传POST使用20MiB/30秒，最多两个exchange同时在途；普通JSON仍128KiB/10秒，响应仍4MiB，header仍10秒。deadline覆盖请求上传和上游响应读取，不保证慢浏览器响应排空时间。原文件只在请求内存中转发，不由Node保存到磁盘；Java独立持久化和解析。文件名/扩展名的前端检查不是内容安全判定，Java必须重新校验；仅支持文本解析，不执行上传脚本或Markdown指令。任务状态/attempt有身份epoch和旧响应防回填保护；取消不能保证撤回已发生的服务端工作，不自动重试写请求。
+
 浏览器Cookie不按端口隔离：相同`127.0.0.1`上的其他服务可能收到同名cookie或覆盖它。同一用户的其他本机程序也能构造请求。只在可信本机和独立浏览器配置中使用；此代理不保护已被本机程序或XSS控制的环境。
 
 JWT由Java验证，此仓库不签发/刷新/吊销JWT。清除会话不使已签发Bearer失效。当前本机HTTP、无生产TLS/SSO/会话撤销表/限流或全链路审计；不得据此宣布生产就绪。Java权限、版本和证据边界始终为权威。

@@ -223,3 +223,74 @@ test('non-session responses cannot set cookies; malformed session attributes fai
   const response = await raw(origin, '/v1/session', { method: 'DELETE', headers: { Origin: origin } });
   assert.deepEqual(response.headers['set-cookie'], [`${sessionPair}; Path=/; HttpOnly; SameSite=Strict`]);
 });
+
+test('only exact text upload receives binary body with independent upload size and deadline', async t => {
+  let seen;
+  const { origin } = await fixture(t, (req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      seen = { path: req.url, type: req.headers['content-type'], bytes: Buffer.concat(chunks) };
+      setTimeout(() => { res.writeHead(202, { 'Content-Type': 'application/json' }); res.end('{}'); }, 75);
+    });
+  }, { requestBytes: 32, deadlineMs: 30, uploadBytes: 512, uploadDeadlineMs: 500 });
+  const bytes = Buffer.from('原始文本'.repeat(10));
+  const response = await raw(origin, '/v1/documents?filename=%E6%96%87%E6%A1%A3.md', {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream' }, body: bytes,
+  });
+  assert.equal(response.status, 202);
+  assert.equal(seen.path, '/v1/documents?filename=%E6%96%87%E6%A1%A3.md');
+  assert.equal(seen.type, 'application/octet-stream');
+  assert.deepEqual(seen.bytes, bytes);
+  const ordinary = await raw(origin, '/v1/session', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: 'x'.repeat(33) });
+  assert.equal(ordinary.status, 413);
+});
+
+test('upload rejects missing/duplicate/unsafe filename, wrong type, empty/over-limit bytes and unsafe origin', async t => {
+  let calls = 0;
+  const { origin } = await fixture(t, (_req, res) => { calls++; res.end('{}'); }, { uploadBytes: 32 });
+  const headers = { Origin: origin, 'Content-Type': 'application/octet-stream' };
+  for (const suffix of ['', '?filename=a.txt&filename=b.txt', '?filename=a.txt&unknown=1', '?filename=video.mp4', '?filename=../a.txt', '?filename=a%5Cb.md', '?filename=%FF.txt', '?filename=a%00.txt']) {
+    assert.equal((await raw(origin, `/v1/documents${suffix}`, { method: 'POST', headers, body: 'x' })).status, 400, suffix);
+  }
+  assert.equal((await raw(origin, '/v1/documents?filename=a.txt', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{}' })).status, 415);
+  assert.equal((await raw(origin, '/v1/documents?filename=a.txt', { method: 'POST', headers })).status, 400);
+  assert.equal((await raw(origin, '/v1/documents?filename=a.txt', { method: 'POST', headers, body: 'x'.repeat(33) })).status, 413);
+  assert.equal((await raw(origin, '/v1/documents?filename=a.txt', { method: 'POST', headers: { ...headers, Origin: 'http://other.invalid' }, body: 'x' })).status, 403);
+  assert.equal(calls, 0);
+});
+
+test('task GET and bodyless cancel/retry POST are precise routes, never broad API proxying', async t => {
+  const seen = [];
+  const { origin } = await fixture(t, (req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => { seen.push({ path: req.url, body: Buffer.concat(chunks).toString() }); res.end('{}'); });
+  });
+  assert.equal((await raw(origin, '/v1/ingestions/task-one')).status, 200);
+  for (const action of ['cancel', 'retry']) assert.equal((await raw(origin, `/v1/ingestions/task-one/${action}`, { method: 'POST', headers: { Origin: origin } })).status, 200);
+  assert.deepEqual(seen.map(value => value.body), ['', '', '']);
+  assert.equal((await raw(origin, '/v1/ingestions/task-one/cancel', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })).status, 400);
+  for (const path of ['/v1/ingestions', '/v1/ingestions/task-one/remove', '/v1/ingestions/task-one/retry/more']) assert.equal((await raw(origin, path)).status, 404);
+  assert.equal(seen.length, 3);
+});
+
+test('at most two upload exchanges remain in flight and released capacity is reusable', async t => {
+  const responses = [];
+  const { origin } = await fixture(t, (req, res) => { req.resume(); responses.push(res); });
+  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream' }, body: 'synthetic' };
+  const first = raw(origin, '/v1/documents?filename=a.txt', options);
+  const second = raw(origin, '/v1/documents?filename=b.txt', options);
+  for (let i = 0; responses.length < 2 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(responses.length, 2);
+  assert.equal((await raw(origin, '/v1/documents?filename=c.txt', options)).status, 429);
+  assert.equal(responses.length, 2);
+  for (const response of responses) { response.writeHead(202); response.end('{}'); }
+  assert.equal((await first).status, 202);
+  assert.equal((await second).status, 202);
+  const next = raw(origin, '/v1/documents?filename=d.txt', options);
+  for (let i = 0; responses.length < 3 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(responses.length, 3);
+  responses[2].writeHead(202); responses[2].end('{}');
+  assert.equal((await next).status, 202);
+});

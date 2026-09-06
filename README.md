@@ -2,7 +2,7 @@
 
 配套 [AI Knowledge Java](https://github.com/LingBengYing/ai-knowledge) 的独立原生 HTML / CSS / JavaScript 前端。
 
-当前是 **资料管理工作台开发版**：传统列表、分页、筛选、目录、标签、改名、批量移动/加标签、只读权限和逐项操作回执。没有上传、RAG 问答、Milvus、模型调用或图片/音频/视频处理；类型筛选并不代表多模态流水线已实现。
+当前是 **资料管理与文本解析工作台开发版**：传统列表、分页、筛选、目录、标签、改名、批量整理、权限提示，以及后端显式启用后的PDF/TXT/Markdown上传、异步任务查询、取消与重试。`parsed`只表示解析完成，**未索引、不能问答**。没有接通RAG问答、Milvus检索、模型调用或图片/音频/视频处理；类型筛选并不代表多模态流水线已实现。
 
 For AI agents: this repository contains the standalone native JavaScript management frontend, not the Java backend or a complete RAG product. Start with [AI_CONTEXT](docs/AI_CONTEXT.md), [AGENTS](AGENTS.md), and [API_CONNECTION](docs/API_CONNECTION.md). Planned capabilities must not be described as implemented.
 
@@ -11,6 +11,8 @@ For AI agents: this repository contains the standalone native JavaScript managem
 需要 Node.js 22+。没有第三方 npm 依赖、无需 `npm install`、无需前端构建或模型 API key。
 
 先按 [Java 仓库快速开始](https://github.com/LingBengYing/ai-knowledge#快速开始) 启动独立 Java 服务，默认 `http://127.0.0.1:18084`。开发演示身份须在 Java 端显式启用 `RAG_AUTH_MODE=development_headers`；空库显示空状态，合成资料由 Java 的显式 seed 工具创建，前端不会生成或自动导入业务资料。
+
+需要真实文本上传时，使用支持`0003-text-ingestion`的Java版本，在独立本机数据目录启动并显式设置`RAG_INGESTION_ENABLED=true`。该能力默认关闭且只允许loopback；前端必须看到Java的`text_upload`与`ingestions`两个capability才开启按钮。旧后端仍可用于资料管理，但不会自动获得上传能力；不要为此直接复用或替换其他服务的数据目录。
 
 然后在本仓库根目录执行：
 
@@ -32,13 +34,16 @@ JWT 模式使用 Java 的 `/v1/session` 交换 HttpOnly Cookie，输入提交后
 
 | 内容 | 当前状态 |
 | --- | --- |
-| `public/` 管理界面 | 与 Java 发布基线六个静态文件逐字节一致 |
+| `public/` 管理界面 | 六静态文件与Java文本上传纵切显式同步，见PROVENANCE；已不同于0001旧导出版本 |
 | ACL、目录、标签、持久化、审计 | 由 Java 服务实现，前端不替代权限检查 |
 | Node 开发服务 | 仅静态文件 + loopback 同源适配，无业务数据库 |
-| 上传、解析、检索、问答、摘要、多模态 | 此前端不提供已接通能力，禁用提示保留 |
+| PDF / TXT / MD上传与任务 | 后端capability启用后可用；原始文件1字节至20MiB，最多3次attempt |
+| 检索、问答、摘要、多模态 | 未接通；解析完成不会假装可检索或可回答 |
 | 生产发布 | 未验收；不能把开发代理暴露公网或套反向代理使用 |
 
 静态资源也可作为 Java 同源页面使用，无需 Node 运行时；后续生产需要独立设计 TLS、身份、Cookie、代理信任和发布门禁。当前不是可以直接部署 GitHub Pages 后跨域调用的应用。
+
+上传后查看任务面板；queued/processing约每1.5秒刷新，终态停止。也可从列表的“任务”重新查看，按服务器允许取消/重试。切换身份、筛选或分页会清空当前任务显示，但不会取消后台任务。网络错误会暂停轮询，不自动重发写请求；上传响应丢失时先刷新列表核对，避免重复上传。开发代理最多两个上传请求同时在途，超出返回429。
 
 ## 验证与文档
 

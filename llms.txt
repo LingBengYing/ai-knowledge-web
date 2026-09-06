@@ -1,6 +1,6 @@
 # AI Knowledge Web
 
-> Native JavaScript knowledge-management frontend for the AI Knowledge Java development edition. Not a complete RAG or production application.
+> Native JavaScript knowledge-management frontend with capability-gated PDF/TXT/MD upload and asynchronous parsing tasks for AI Knowledge Java. Parsed is not indexed or answerable. Not a complete RAG or production application.
 
 - [README](README.md): capabilities and local startup
 - [AI Context](docs/AI_CONTEXT.md): source map and implementation boundaries
@@ -8,7 +8,8 @@
 - [API Connection](docs/API_CONNECTION.md): Java connection and allowed routes
 - [Agent Instructions](AGENTS.md): versioned AI-Native workflow
 - [Verification](docs/VERIFICATION.md): actual evidence and limitations
-- [Provenance](docs/PROVENANCE.md): immutable exported asset source
+- [Provenance](docs/PROVENANCE.md): historical export plus explicit current six-asset synchronization
+- [Current Change](docs/changes/0002-text-ingestion/spec.md): text upload and task UI contract
 - [Security](SECURITY.md): secrets, cookies and local-only transport
 - [Backend](https://github.com/LingBengYing/ai-knowledge): Java authority and persistence
 

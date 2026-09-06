@@ -18,6 +18,9 @@ const ASSETS = new Map([
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
 ]);
 const ROUTES = [
+  [/^\/v1\/documents$/, ['POST'], 'upload'],
+  [/^\/v1\/ingestions\/[A-Za-z0-9_-]{1,128}$/, ['GET']],
+  [/^\/v1\/ingestions\/[A-Za-z0-9_-]{1,128}\/(?:cancel|retry)$/, ['POST'], 'empty'],
   [/^\/v1\/config$/, ['GET']],
   [/^\/v1\/session$/, ['POST', 'DELETE']],
   [/^\/health\/(?:live|ready)$/, ['GET']],
@@ -135,11 +138,26 @@ function sessionCookies(values = []) {
   });
 }
 
-async function proxy(req, res, backend, headers, limits, signal) {
-  if (!['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
+function validateUploadTarget(target) {
+  try {
+    decodeURIComponent(target);
+    const parameters = new URL(target, 'http://127.0.0.1').searchParams;
+    const filename = parameters.get('filename');
+    if ([...parameters].length !== 1 || !parameters.has('filename') || !filename || filename.length > 255
+      || /[/\\\u0000-\u001f\u007f]/u.test(filename) || !/\.(?:pdf|txt|md)$/iu.test(filename)) throw new Error('invalid upload target');
+  } catch { throw new TransportError(400, 'invalid_upload_filename'); }
+}
+
+async function proxy(req, res, backend, headers, limits, signal, kind) {
+  if (kind === 'upload') {
+    validateUploadTarget(req.url);
+    if (headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
+  } else if (kind !== 'empty' && !['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
     throw new TransportError(415, 'json_required');
   }
   const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
+  if (kind === 'upload' && !body.length) throw new TransportError(400, 'empty_upload');
+  if (kind === 'empty' && body.length) throw new TransportError(400, 'request_body_denied');
   if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
   headers['Content-Length'] = String(body.length);
   const response = await new Promise((resolveResponse, rejectResponse) => {
@@ -182,19 +200,22 @@ async function serveAsset(res, asset, publicDirectory, head) {
 
 export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084', port = 18085,
   publicDirectory = DEFAULT_PUBLIC, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
-  deadlineMs = 10_000 } = {}) {
+  deadlineMs = 10_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000 } = {}) {
   const backend = backendAddress(backendOrigin);
   if (!Number.isInteger(port) || port < 0 || port === 80 || port > 65535) throw new TransportError(500, 'invalid_port');
-  for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000]]) {
+  for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000], [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000]]) {
     if (!Number.isInteger(value) || value < 1 || value > max) throw new TransportError(500, 'invalid_limit');
   }
-  const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 10_000, headersTimeout: 10_000 }, async (req, res) => {
+  let activeUploads = 0;
+  const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
     const requestId = randomUUID();
     for (const [name, value] of Object.entries(SAFE_HEADERS)) res.setHeader(name, value);
     res.setHeader('X-Request-Id', requestId);
     const controller = new AbortController();
     req.on('error', () => controller.abort());
-    const timer = setTimeout(() => controller.abort(), deadlineMs);
+    const upload = req.method === 'POST' && req.url.split('?')[0] === '/v1/documents';
+    const timer = setTimeout(() => controller.abort(), upload ? uploadDeadlineMs : deadlineMs);
+    let reservedUpload = false;
     res.once('close', () => { if (!res.writableEnded) controller.abort(); });
     try {
       const origin = validateBrowserBoundary(req, server.address().port);
@@ -209,7 +230,12 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
         if (!route) throw new TransportError(404, 'route_not_found');
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         const headers = forwardedHeaders(req, backend, origin, requestId);
-        await proxy(req, res, backend, headers, { requestBytes, responseBytes }, controller.signal);
+        if (route[2] === 'upload') {
+          if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached');
+          activeUploads += 1;
+          reservedUpload = true;
+        }
+        await proxy(req, res, backend, headers, { requestBytes: route[2] === 'upload' ? uploadBytes : requestBytes, responseBytes }, controller.signal, route[2]);
       }
     } catch (error) {
       const known = error instanceof TransportError;
@@ -220,7 +246,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
           detail: status >= 500 ? '开发连接未完成，请确认 Java 服务后重试。' : '开发请求不符合安全约束。', request_id: requestId }));
       }
       req.resume();
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; }
   });
   server.maxHeadersCount = 40;
   await new Promise((resolveListening, rejectListening) => {
