@@ -1,0 +1,15 @@
+{
+  "name": "ai-knowledge-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone native JavaScript management frontend for the AI Knowledge Java development edition",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "start": "node scripts/dev-server.mjs",
+    "test": "node --test ui-tests/*.test.mjs tests/*.test.mjs scripts/check-secrets.test.mjs",
+    "check": "node scripts/check-syntax.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs --history"
+  }
+}

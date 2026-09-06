@@ -1,0 +1,60 @@
+# AI Knowledge Web · 知识库管理前端
+
+配套 [AI Knowledge Java](https://github.com/LingBengYing/ai-knowledge) 的独立原生 HTML / CSS / JavaScript 前端。
+
+当前是 **资料管理工作台开发版**：传统列表、分页、筛选、目录、标签、改名、批量移动/加标签、只读权限和逐项操作回执。没有上传、RAG 问答、Milvus、模型调用或图片/音频/视频处理；类型筛选并不代表多模态流水线已实现。
+
+For AI agents: this repository contains the standalone native JavaScript management frontend, not the Java backend or a complete RAG product. Start with [AI_CONTEXT](docs/AI_CONTEXT.md), [AGENTS](AGENTS.md), and [API_CONNECTION](docs/API_CONNECTION.md). Planned capabilities must not be described as implemented.
+
+## 本地运行
+
+需要 Node.js 22+。没有第三方 npm 依赖、无需 `npm install`、无需前端构建或模型 API key。
+
+先按 [Java 仓库快速开始](https://github.com/LingBengYing/ai-knowledge#快速开始) 启动独立 Java 服务，默认 `http://127.0.0.1:18084`。开发演示身份须在 Java 端显式启用 `RAG_AUTH_MODE=development_headers`；空库显示空状态，合成资料由 Java 的显式 seed 工具创建，前端不会生成或自动导入业务资料。
+
+然后在本仓库根目录执行：
+
+```bash
+npm run dev
+```
+
+打开 [前端工作台](http://127.0.0.1:18085/)。必须使用 `127.0.0.1`，不要改成 `localhost`。页面通过同源开发代理连接 Java；Java 未启动时页面会显示安全连接错误，不返回假数据。
+
+```bash
+RAG_WEB_BACKEND_ORIGIN=http://127.0.0.1:18084 RAG_WEB_PORT=18085 npm run dev
+```
+
+配置仅接受字面量 `127.0.0.1` 的 HTTP origin 与合法端口；前端端口禁止80，避免浏览器省略默认端口导致同源身份歧义。不能填公网域名、用户信息、路径、查询或 fragment。[.env.example](.env.example) 没有密钥，程序也不自动加载 `.env`。`NODE_ENV=production` 拒绝启动。
+
+JWT 模式使用 Java 的 `/v1/session` 交换 HttpOnly Cookie，输入提交后清空，不写入 localStorage / sessionStorage。本仓库没有令牌签发或刷新服务；模型和 JWT 签名密钥只能留在后端。浏览器 Cookie 按主机而非端口隔离，详见 [SECURITY](SECURITY.md)。
+
+## 范围与运行方式
+
+| 内容 | 当前状态 |
+| --- | --- |
+| `public/` 管理界面 | 与 Java 发布基线六个静态文件逐字节一致 |
+| ACL、目录、标签、持久化、审计 | 由 Java 服务实现，前端不替代权限检查 |
+| Node 开发服务 | 仅静态文件 + loopback 同源适配，无业务数据库 |
+| 上传、解析、检索、问答、摘要、多模态 | 此前端不提供已接通能力，禁用提示保留 |
+| 生产发布 | 未验收；不能把开发代理暴露公网或套反向代理使用 |
+
+静态资源也可作为 Java 同源页面使用，无需 Node 运行时；后续生产需要独立设计 TLS、身份、Cookie、代理信任和发布门禁。当前不是可以直接部署 GitHub Pages 后跨域调用的应用。
+
+## 验证与文档
+
+```bash
+npm run check
+npm test
+npm run check:secrets
+```
+
+`check:secrets` 要求 Git 仓库，检查已暂存文件、对应工作树和所有可达提交历史。新增未跟踪文件须先暂存再扫描；不能把空 index 的扫描当作完整发布验证。
+
+- [AI_CONTEXT](docs/AI_CONTEXT.md)：AI 检索入口与能力边界
+- [ARCHITECTURE](docs/ARCHITECTURE.md)：Module、信任边界与源码地图
+- [API_CONNECTION](docs/API_CONNECTION.md)：实际转发路由、认证与连接诊断
+- [VERIFICATION](docs/VERIFICATION.md)：测试证据与未验证项
+- [PROVENANCE](docs/PROVENANCE.md)：导出版本、文件摘要与测试来源
+- [SECURITY](SECURITY.md)、[CONTRIBUTING](CONTRIBUTING.md)、[llms.txt](llms.txt)
+
+本仓库尚未指定开源许可证；公开可读不等于已授予 MIT / Apache 等许可。AI 导航不保证搜索引擎或模型自动收录。
