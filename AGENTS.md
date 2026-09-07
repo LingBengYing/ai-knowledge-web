@@ -1,6 +1,12 @@
+2026-09-07源码更新授权：用户要求“更新到仓库吧”，允许提交并推送本独立前端的0003/0004/0005相关源码和文档；旧工件中的未提交状态为历史记录。仍不授权修改后端或宣称生产验收完成。
+
+当前追加：[0005-media-preview](docs/changes/0005-media-preview/)本地文件预览已实现；库内原文件API缺失，不能宣称库内多模态预览完成。后端对接要求见该变更backend-integration.md。
+
 # AI Knowledge Web：智能体工作约定
 
-先读 [README](README.md)、[AI_CONTEXT](docs/AI_CONTEXT.md)、[ARCHITECTURE](docs/ARCHITECTURE.md) 和 [API_CONNECTION](docs/API_CONNECTION.md)，再按顺序读当前 [0002-text-ingestion](docs/changes/0002-text-ingestion/) 的 intent、spec、plan、REVIEW。工件和实际路由是 source of truth；0001为历史发布基线。
+当前前端工作： [0004-workflow-navigation](docs/changes/0004-workflow-navigation/)；用户明确仅改前端，其他任务负责后端。禁止向Java内置页面自动同步。0004本地实现与验证完成，未发布；0003仍作为底层索引契约阅读。
+
+先读 [README](README.md)、[AI_CONTEXT](docs/AI_CONTEXT.md)、[ARCHITECTURE](docs/ARCHITECTURE.md) 和 [API_CONNECTION](docs/API_CONNECTION.md)，再按顺序读当前 [0003-text-index-publication](docs/changes/0003-text-index-publication/) 的 intent、spec、plan、REVIEW。当前索引界面为IMPLEMENTATION工作区增量，未提交或推送，不是本次已发布能力；0001/0002为历史基线。工件和实际路由是 source of truth。
 
 - 当前为管理前端、后端显式启用的PDF/TXT/MD上传与解析任务、本地开发代理，不是完整 Java RAG 或生产部署。只有capabilities同时含text_upload/ingestions才启用；parsed不是indexed/ready。不可将禁用按钮、类型筛选或合成资料写成多模态/问答已完成。
 - `public/` 导出来源见 [PROVENANCE](docs/PROVENANCE.md)。修改功能必须新建变更工件并保留完整 UI 回归；不要静默覆盖另一仓库的对应文件。
@@ -12,3 +18,4 @@
 - 交付记录 spec 对应行为、红绿证据、测试命令、相关 acceptance、偏离及未验证项。纯导出没有 RAG 行为，RAG acceptance 记不适用而非通过。
 - 后续 RAG invariant 保留：文档是数据、ACL 先于模型上下文、完整 selected set 不扩成全库、服务端来源校验、无证拒答、整理不改变证据身份；这些不是本次新增功能。
 - 上传仅原始File、1..20MiB、固定精确路由；任务只显示安全字段，不显示正文。单任务轮询必须有epoch/attempt保护并在终态停止；写操作不得自动重试。扩大上传限额不得扩大JSON、Origin、Host、Authorization或Cookie信任边界。
+- 索引入口要求text_index/indexings及当前授权行can_index；创建/重试先确认外部嵌入模型与Milvus处理。解析task与indexTask独立，poll只更新各自状态，不自行设置active或问答能力。索引发布必须回读服务器列表，已发布资料不得仍显示未索引；详情刷新只读证据字段时保留未保存表单。

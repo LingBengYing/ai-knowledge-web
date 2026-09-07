@@ -294,3 +294,72 @@ test('at most two upload exchanges remain in flight and released capacity is reu
   responses[2].writeHead(202); responses[2].end('{}');
   assert.equal((await next).status, 202);
 });
+
+test('index creation and task routes forward exact bodyless requests without changing identity', async t => {
+  const seen = [];
+  const { origin, backendOrigin } = await fixture(t, (req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      seen.push({ path: req.url, method: req.method, body: Buffer.concat(chunks).toString(), headers: req.headers });
+      res.writeHead(req.method === 'POST' ? 202 : 200); res.end('{}');
+    });
+  });
+  for (const [path, method] of [['/v1/documents/doc-one/index', 'POST'], ['/v1/indexings/index-one', 'GET'],
+    ['/v1/indexings/index-one/cancel', 'POST'], ['/v1/indexings/index-one/retry', 'POST']]) {
+    const result = await raw(origin, path, { method, headers: { Origin: origin, 'X-Principal-Id': 'owner', Cookie: `unrelated=private; ${sessionPair}` } });
+    assert.equal(result.status, method === 'POST' ? 202 : 200, path);
+  }
+  assert.equal(seen.length, 4);
+  for (const request of seen) {
+    assert.equal(request.body, '');
+    assert.equal(request.headers.origin, backendOrigin);
+    assert.equal(request.headers.cookie, sessionPair);
+    assert.equal(request.headers['x-principal-id'], 'owner');
+    assert.equal(request.headers['content-type'], undefined);
+  }
+});
+
+test('index routes reject query, body, wrong method, unsafe identity and expanded paths before forwarding', async t => {
+  let calls = 0;
+  const { origin } = await fixture(t, (_req, res) => { calls++; res.end('{}'); });
+  const routes = [['/v1/documents/doc-one/index', 'POST'], ['/v1/indexings/index-one', 'GET'],
+    ['/v1/indexings/index-one/cancel', 'POST'], ['/v1/indexings/index-one/retry', 'POST']];
+  for (const [path, method] of routes) {
+    const headers = { Origin: origin, 'Content-Type': 'application/json', 'Content-Length': '2' };
+    for (const suffix of ['?', '?unknown=1', '?filename=synthetic.txt']) assert.equal((await raw(origin, path + suffix, { method, headers: { Origin: origin } })).status, 400, path + suffix);
+    assert.equal((await raw(origin, path, { method, headers, body: '{}' })).status, 400);
+    assert.equal((await raw(origin, path, { method: method === 'GET' ? 'POST' : 'GET', headers: { Origin: origin } })).status, 405);
+    assert.equal((await raw(origin, path, { method, headers: { Origin: 'http://other.invalid' } })).status, 403);
+    assert.equal((await raw(origin, path, { method, headers: { Origin: origin, Authorization: 'Bearer synthetic', Cookie: sessionPair } })).status, 400);
+  }
+  for (const path of ['/v1/documents/doc-one/index/more', '/v1/documents/%64oc/index', '/v1/indexings', '/v1/indexings/index-one/remove', '/v1/indexings/index-one/retry/more', '/v1/indexings/index.one']) {
+    assert.equal((await raw(origin, path, { headers: { Origin: origin } })).status, 404, path);
+  }
+  assert.equal(calls, 0);
+});
+
+test('index writes retain ordinary deadline and never retry after an upstream failure', async t => {
+  let calls = 0;
+  const { origin } = await fixture(t, (req, res) => {
+    calls++;
+    if (req.url.endsWith('/retry')) req.socket.destroy();
+    else res.write('{}');
+  }, { deadlineMs: 80, uploadDeadlineMs: 500 });
+  for (const [path, expected] of [['/v1/documents/doc-one/index', 504], ['/v1/indexings/index-one/retry', 502]]) {
+    assert.equal((await raw(origin, path, { method: 'POST', headers: { Origin: origin } })).status, expected);
+  }
+  assert.equal(calls, 2);
+});
+
+test('preview static module and local blob media are allowed without enabling remote media or API routes', async t => {
+  const { origin } = await fixture(t);
+  const response = await raw(origin, '/preview.mjs');
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-security-policy'], /img-src 'self' data: blob:;/);
+  assert.match(response.headers['content-security-policy'], /media-src 'self' blob:;/);
+  assert.match(response.headers['content-security-policy'], /object-src blob:;/);
+  assert.match(response.headers['content-security-policy'], /connect-src 'self';/);
+  assert.equal((await raw(origin, '/v1/documents/demo/content')).status, 404);
+  assert.equal((await raw(origin, '/preview.mjs/more')).status, 404);
+});

@@ -13,12 +13,16 @@ const ASSETS = new Map([
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/api.mjs', ['api.mjs', 'text/javascript; charset=utf-8']],
+  ['/preview.mjs', ['preview.mjs', 'text/javascript; charset=utf-8']],
   ['/notices.mjs', ['notices.mjs', 'text/javascript; charset=utf-8']],
   ['/workbench-state.mjs', ['workbench-state.mjs', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
 ]);
 const ROUTES = [
   [/^\/v1\/documents$/, ['POST'], 'upload'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/index$/, ['POST'], 'index'],
+  [/^\/v1\/indexings\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'index'],
+  [/^\/v1\/indexings\/[A-Za-z0-9_-]{1,128}\/(?:cancel|retry)$/, ['POST'], 'index'],
   [/^\/v1\/ingestions\/[A-Za-z0-9_-]{1,128}$/, ['GET']],
   [/^\/v1\/ingestions\/[A-Za-z0-9_-]{1,128}\/(?:cancel|retry)$/, ['POST'], 'empty'],
   [/^\/v1\/config$/, ['GET']],
@@ -36,7 +40,7 @@ const SAFE_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 
 class TransportError extends Error {
@@ -149,15 +153,17 @@ function validateUploadTarget(target) {
 }
 
 async function proxy(req, res, backend, headers, limits, signal, kind) {
+  const bodyless = kind === 'empty' || kind === 'index';
+  if (kind === 'index' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'upload') {
     validateUploadTarget(req.url);
     if (headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
-  } else if (kind !== 'empty' && !['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
+  } else if (!bodyless && !['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
     throw new TransportError(415, 'json_required');
   }
   const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
   if (kind === 'upload' && !body.length) throw new TransportError(400, 'empty_upload');
-  if (kind === 'empty' && body.length) throw new TransportError(400, 'request_body_denied');
+  if (bodyless && body.length) throw new TransportError(400, 'request_body_denied');
   if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
   headers['Content-Length'] = String(body.length);
   const response = await new Promise((resolveResponse, rejectResponse) => {

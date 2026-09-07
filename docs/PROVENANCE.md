@@ -19,11 +19,11 @@
 
 `scripts/check-secrets.mjs`和其11项CLI测试逐字节复制同一提交。摘要分别为`aa4687db8272dbf91b4afdf5579d5732859f69cf757bb4ee99e4f8487f8acdc0`、`cce159e52987f9995aee2cc3511898a2b5616aabea2d472f060adf3d66ea5337`。新开发代理、代理测试、Node配置、CI与文档属于此次独立前端发布。
 
-## 0002文本上传显式同步 · 2026-09-06
+## 0002文本上传历史同步 · 2026-09-06（不认证当前增量）
 
 本变更先在独立前端`public/`实现，再显式复制到Java仓库`src/main/resources/static/`；与Java `docs/changes/0003-text-ingestion`契约对应。不是从旧85aa6aa重新导出，也不引用尚未发布的Java提交。最终两仓库提交与独立验收由发布记录绑定。
 
-| 当前文件 | SHA-256 |
+| 0002文件 | SHA-256 |
 | --- | --- |
 | api.mjs | 0ac55f0895cb9416f4dae137eb2480e1320a2dcb5b3c95d3ecf6b1e50b4bcbad |
 | app.js | 7ec8ed28afd6e948338cb9cc04a8735670820248fa01b7e7ef529ded58a966a4 |
@@ -35,3 +35,27 @@
 新增`ui-tests/ingestion.test.mjs`在两仓库只有import路径不同，原四个20项UI测试与两份secret checker文件未改动。代理新增精确上传/任务路由和独立上传预算；没有复制Java实现、原文、数据库或凭据。
 
 这不是自动同步机制。后续UI变更应明确哪个仓库负责维护并更新来源/差异说明，不能将本页摘要当作未来源码认证。
+
+## 0003文本索引工作区同步 · 2026-09-07
+
+状态：IMPLEMENTATION，未提交、推送或发布。先修改Java仓库内置页面，再通过明确补丁同步本仓库`public/`；对应Java0004文本索引契约。六静态文件已逐字节核对，当前摘要如下；这些摘要只绑定本次工作区文件，不认证Java实现或外部集成。
+
+| 当前工作区文件 | SHA-256 |
+| --- | --- |
+| api.mjs | 0ac55f0895cb9416f4dae137eb2480e1320a2dcb5b3c95d3ecf6b1e50b4bcbad |
+| app.js | 62a1da6209a45fddeb06e44a37ccaabb8c33421fe1f53ee1c3268afbba22842e |
+| index.html | 368bcc7f7b45f61613b34ad0a5a6acd690a459b84906c85dc12468faac818bf8 |
+| notices.mjs | 8e43264e4f7e52bca45f8893bd797f66e0ec2ad7ae5a5fcffe142b070da61a80 |
+| styles.css | 66e9b29f7815841579af33e0f10e9e2d979b8f6280d2cf8e81af0867d6285829 |
+| workbench-state.mjs | 932f776f1d7caf5c4aa29e9e9dbb589235e345e886521edfe370cd0589d52bfd |
+
+新增10项`ui-tests/indexing.test.mjs`在两仓库仅import路径不同，已转换核对；前端测试文件SHA-256为`f53404f38aa39cb7b8592d12e603d2e170e295a9937bd9704aacff667d4ce4ea`。原UI与secret checker测试未删除或放宽。
+
+独立审查两项P2修复后新增12项实际应用DOM回归`ui-tests/task-detail.test.mjs`，前端SHA-256为`f5ddb7d835a676b31d31fec3130ea0cae8e365b1cc46cd1a3c7fddb35c487918`；两仓同样只有静态资源import路径差异。上述app摘要已更新为修复后源码，先前`0f48de3b`版本不认证当前应用。
+
+独立前端代理SHA-256为`fdbc011a361e55396e195b4590f1cfb0d3e64c1d4e049541611d1d2080a9bcd8`，代理测试为`7962e23178ff5c05ce0711a849f28a1f9f5dac7e06d216d336d2cc7c75872c68`。新增3项真实HTTP stub回归，仍只代理精确同源路由，不复制Java authority、模型配置、数据库或业务文件。
+
+
+## 2026-09-07 独立前端分化
+
+0004工作流程导航修改public/index.html、app.js、styles.css，仅存在于本独立前端。用户明确要求其他任务负责后端，故不再与Java内置页面保持本次六文件同步。既有历史摘要不能认证当前前端，当前摘要见0004/source-manifest.json。API、状态与通知模块沿用工作区0003契约。

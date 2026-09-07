@@ -11,6 +11,9 @@
 | `/v1/documents?filename=<encoded>` | POST | 原始PDF/TXT/MD，Content-Type严格application/octet-stream，1..20MiB，202返回任务 |
 | `/v1/ingestions/{id}` | GET | 当前授权解析任务 |
 | `/v1/ingestions/{id}/cancel`、`/retry` | POST | 无请求体；权限与状态由Java检查，返回更新任务 |
+| `/v1/documents/{id}/index` | POST | 工作区0003新增；无query/body，确认后建立索引，要求Java0004显式能力与当前can_index |
+| `/v1/indexings/{id}` | GET | 工作区0003新增；无query/body，当前授权索引任务 |
+| `/v1/indexings/{id}/cancel`、`/retry` | POST | 工作区0003新增；无query/body，按服务器权限取消或有界重试 |
 | `/v1/management/documents` | GET | 授权分页、筛选、排序 |
 | `/v1/management/documents/{id}` | PATCH | 展示元数据整理；详情使用当前授权列表行，没有独立GET详情接口 |
 | `/v1/management/document-actions` | POST | 批量移动／追加标签及逐项回执 |
@@ -25,9 +28,19 @@ ID 仅接受1–128位 ASCII 字母、数字、下划线与连字符。具体 bo
 
 Java的`RAG_INGESTION_ENABLED=true`为显式本机开关，默认关闭；页面同时检查`text_upload`和`ingestions`。filename是唯一query参数，不允许路径、控制字符、超过255字符或不支持的扩展名。浏览器用原始File，不使用multipart/base64/JSON包装。只有这一精确上传接口享有20MiB、30秒和最多两个在途请求；其他JSON接口仍128KiB/10秒，所有响应仍4MiB。Cookie和同源要求与管理操作相同。
 
-任务安全shape：`task_id/document_id/revision_id/state/attempt/error_code/can_cancel/can_retry`。state为queued、processing、parsed、failed、cancelled；attempt为1..3，retry沿用任务与解析版本，增加attempt。界面不显示正文、chunk或原始异常。`parsed`是终态但未索引；任务revision不是文档active revision，不允许问答。
+任务安全shape：`task_id/document_id/revision_id/state/attempt/error_code/can_cancel/can_retry`。state为queued、processing、parsed、failed、cancelled；attempt为1..3，retry沿用任务与解析版本，增加attempt。界面不显示正文、chunk或原始异常。`parsed`是解析终态，不能单凭它推定是否已索引；任务revision不是文档active revision，不允许问答。
 
 轮询只在当前身份/任务的queued或processing执行，约1.5秒；终态停止，网络或数据错误暂停等待手动刷新。切换身份或列表上下文会中止读取并清除任务，不取消服务器任务。POST不自动重试：若上传/取消/重试响应丢失，应先查询列表/任务确认是否已经生效。
+
+## 索引任务（0003工作区IMPLEMENTATION）
+
+对应Java0004。Java必须显式启用`RAG_INDEXING_ENABLED=true`且同时声明`text_index/indexings`；前端还验证当前授权行`can_index=true`、parsed、非合成资料、无active和已有索引任务。默认能力缺失时不显示索引入口。创建与重试都先显示确认框，说明解析文本会发送到服务器配置的嵌入模型和Milvus以及可能的调用费用。
+
+索引任务使用同一安全字段白名单，但状态是queued/processing/indexed/failed/cancelled；`checkedIndexTask`拒绝parsed，解析校验拒绝indexed。`state.indexTask`、`indexing`读票据与解析链独立；单任务面板按kind切换，保留任务/资料/revision身份、attempt和终态单调性。详情按钮只从当前授权列表行重开，旧详情闭包或旧列表不能回退进度，也不能把任务资料插入当前无权访问的页面。
+
+列表的解析`status`保持parsed，另有`index_status`（默认not_indexed）、`latest_index_job`、`index_publication_id`、`can_index`。任务poll只写前两个索引状态字段；active_revision_id、publication与can_answer只能由服务器列表返回。indexed后刷新授权列表，详情只读证据字段更新时保留未保存表单；发布后的资料与其解析任务不再显示未索引。有证问答仍未接通，can_answer=false、answers=false、ready503边界不变。
+
+四条新索引路由拒绝任何query（包括空问号）与body；创建和任务动作无Content-Type要求，不获得上传预算。保留普通10秒deadline、128KiB读取上限、4MiB响应、原鉴权/Origin/Host/Cookie限制和错误不重试。Node回归与HTTP替身结果不认证真实Java、provider/Milvus或浏览器。
 
 ## 认证
 
@@ -46,3 +59,8 @@ JWT：由可信签发方提供现有合法 JWT；页面 POST `/v1/session`，Jav
 - 429：本地代理或Java已有两个上传请求在途；稍后显式重试，不放大并发限额。Java持久任务/原文件总量配额则返回409，应先核对后端安全错误。
 
 生产同源托管、TLS和 Cookie Secure 需要单独验收。不要把该开发Node代理放到公网后声称原认证边界仍成立。
+
+
+## 0005 预览边界
+
+本地文件预览没有新增API，只增加preview.mjs静态资源与本地blob媒体CSP。Java没有提供原文件读取路由，库内记录不能仅凭filename生成媒体src；[后端需求](changes/0005-media-preview/backend-integration.md)待冻结并实施后再接线。不能把本地File预览当作远程文件读取或RAG引用。

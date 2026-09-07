@@ -3,17 +3,79 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>资料管理 · Java 开发版</title>
+  <title>资料库 · 证据知识库</title>
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
+  <script type="module" src="/preview.mjs"></script>
 </head>
 <body>
-  <a class="skip-link" href="#documents-heading">跳到资料列表</a>
+  <a id="skip-content" class="skip-link" href="#documents-heading">跳到主要内容</a>
   <header class="topbar">
-    <div><span class="brand">证据知识库</span><span class="edition">JAVA</span></div>
-    <span class="development">Java 迁移开发版 · 非生产</span>
+    <a class="brand" href="#/documents">证据知识库<span class="edition">WORKSPACE</span></a>
+    <nav class="primary-nav" aria-label="主要导航">
+      <a id="nav-documents" href="#/documents" aria-current="page">资料库</a>
+      <a id="nav-tasks" href="#/tasks">处理任务</a>
+      <a id="nav-settings" href="#/settings">设置</a>
+    </nav>
+    <span class="development">开发环境 · 非生产</span>
   </header>
-  <div class="scope-notice"><strong id="scope-title">当前可用：资料整理</strong><span id="scope-description">合成资料会单独标识；能力以Java服务配置为准，当前不提供检索问答。</span></div>
+  <div class="global-notices"><p id="global-error" class="notice error" role="alert" hidden></p>
+      <section id="operation-feedback" class="feedback" aria-live="polite" hidden><div class="section-heading"><h2 id="feedback-title">操作结果</h2><button id="dismiss-feedback" type="button">收起结果</button></div><ul id="feedback-items"></ul></section>
+  </div>
+  <main id="main-content">
+  <section id="view-documents" aria-labelledby="documents-heading">
+  <div class="layout">
+    <aside class="sidebar" aria-labelledby="folders-heading">
+      <div class="section-heading"><h2 id="folders-heading">资料目录</h2><button id="new-folder" type="button" disabled>新建</button></div>
+      <nav id="folder-list" aria-label="按目录筛选"></nav>
+      <p id="folder-error" class="notice error" role="alert" hidden></p>
+    </aside>
+    <section class="workspace" aria-labelledby="documents-heading">
+      <div class="section-heading page-heading"><div><p class="eyebrow">WORKSPACE / LIBRARY</p><h1 id="documents-heading" tabindex="-1">资料库</h1><p class="page-description">归档、整理和管理团队知识资料。</p></div><div class="header-actions"><button id="preview-local" type="button">本地文件预览</button><button id="refresh" type="button" disabled>刷新</button><button id="upload" type="button" class="primary" disabled title="服务未启用文本上传">上传资料</button></div></div>
+      <form id="filters" class="filters" aria-label="资料筛选">
+        <label class="search-field" for="search">搜索资料<input id="search" name="q" type="search" maxlength="200" placeholder="按显示名称或原文件名搜索"></label>
+        <button id="toggle-filters" type="button" aria-expanded="false" aria-controls="advanced-filters">筛选条件</button>
+        <div id="advanced-filters" class="advanced-filters" hidden>
+        <label for="type">类型<select id="type" name="type"><option value="">全部类型</option><option value="document">文档</option><option value="image">图片</option><option value="audio">音频</option><option value="video">视频</option></select></label>
+        <label for="status">解析状态<select id="status" name="status"><option value="">全部状态</option><option value="ready">演示就绪</option><option value="queued">等待解析</option><option value="processing">正在解析</option><option value="parsed">已解析</option><option value="failed">解析失败</option><option value="cancelled">已取消</option></select></label>
+        <label for="tag">标签<select id="tag" name="tag"><option value="">全部标签</option></select></label>
+        <label for="sort">排序<select id="sort" name="sort"><option value="updated_desc">最近更新</option><option value="updated_asc">最早更新</option><option value="name_asc">名称正序</option><option value="name_desc">名称倒序</option></select></label>
+        <button id="clear-filters" type="button">重置</button>
+        </div>
+      </form>
+      <div class="list-summary"><span id="list-count">尚未加载资料</span><span id="current-folder">全部资料</span></div>
+      <div id="batch-tools" class="batch-bar" hidden aria-label="当前页批量操作"><strong id="selection-count">已选 0 项</strong><span class="muted">仅当前页</span><button id="batch-move" type="button" disabled>移动到目录</button><button id="batch-tag" type="button" disabled>添加标签</button><button id="clear-selection" type="button" disabled>清空选择</button></div>
+      <p id="list-error" class="notice error" role="alert" hidden></p>
+      <div class="table-scroll" id="table-region" aria-busy="false">
+        <table><thead><tr><th class="check-cell"><input id="select-page" type="checkbox" aria-label="全选当前页资料" disabled></th><th scope="col">名称 / 原文件名</th><th scope="col" class="optional">类型 / 大小</th><th scope="col" class="optional">目录 / 标签</th><th scope="col">状态</th><th scope="col" class="optional">更新 / 权限</th><th scope="col" class="action-cell">操作</th></tr></thead><tbody id="document-rows"></tbody></table>
+        <div id="list-empty" class="empty-state"><strong>连接 Java 资料服务</strong><p>配置和身份确认后显示当前有权访问的资料。</p></div>
+      </div>
+      <footer class="pagination"><label for="page-size">每页<select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><span id="page-label">第 0 / 0 页</span><button id="previous-page" type="button" disabled>上一页</button><button id="next-page" type="button" disabled>下一页</button></footer>
+    </section>
+  </div>
+  </section>
+  <section id="view-tasks" class="standalone-view" aria-labelledby="tasks-heading" hidden>
+    <div class="section-heading page-heading"><div><p class="eyebrow">WORKSPACE / PROCESSING</p><h1 id="tasks-heading" tabindex="-1">处理任务</h1><p class="page-description">跟进资料解析与索引，处理失败和重试。</p></div><button id="tasks-refresh" type="button">刷新状态</button></div>
+    <div class="task-layout"><section class="task-list-section" aria-labelledby="task-list-heading">
+      <h2 id="task-list-heading">当前资料页的任务</h2>
+      <p id="task-list-scope" class="help-text">来自资料库当前筛选和分页，不代表全部历史任务。</p>
+      <div class="task-filters" role="group" aria-label="任务类型"><button id="tasks-all" type="button" aria-pressed="true">全部</button><button id="tasks-ingestion" type="button" aria-pressed="false">解析</button><button id="tasks-indexing" type="button" aria-pressed="false">索引</button></div>
+      <div id="task-list" aria-live="polite"></div>
+      <a class="text-link" href="#/documents">返回资料库，调整资料范围</a>
+    </section><div class="task-inspector">
+      <div id="task-placeholder" class="empty-state"><strong>选择一个处理任务</strong><p>查看进度、失败信息及当前允许的操作。</p></div>
+      <section id="task-panel" class="task-panel" aria-labelledby="task-heading" hidden>
+        <div class="section-heading"><div><h2 id="task-heading" tabindex="-1">文本处理任务</h2><p id="task-status" role="status" aria-live="polite"></p></div><button id="task-dismiss" type="button">收起任务</button></div>
+        <dl id="task-metadata" class="task-metadata"></dl>
+        <p id="task-boundary" class="help-text">任务已接收不代表解析完成；已解析仍未索引，不能用于问答。</p>
+        <p id="task-error" class="notice error" role="alert" hidden></p>
+        <div class="task-actions"><button id="task-refresh" type="button">刷新任务</button><button id="task-cancel" type="button" hidden>取消解析</button><button id="task-retry" type="button" hidden>重试解析</button></div>
+      </section>
+    </div></div>
+  </section>
+  <section id="view-settings" class="standalone-view settings-view" aria-labelledby="settings-heading" hidden>
+    <div class="page-heading"><p class="eyebrow">WORKSPACE / SETTINGS</p><h1 id="settings-heading" tabindex="-1">设置</h1><p class="page-description">管理当前访问身份，查看服务连接与已开放能力。</p></div>
+    <section class="settings-section"><h2>访问身份</h2><p class="section-description">身份决定你可以查看和整理的资料范围。</p>
   <section class="identity-bar" aria-label="访问身份">
     <span id="identity-status" role="status">正在读取服务配置…</span>
     <form id="dev-identity" hidden>
@@ -25,43 +87,27 @@
       <button type="submit">建立安全会话</button><button id="sign-out" type="button">退出会话</button>
     </form>
   </section>
-  <p id="global-error" class="notice error" role="alert" hidden></p>
-  <main class="layout">
-    <aside class="sidebar" aria-labelledby="folders-heading">
-      <div class="section-heading"><h2 id="folders-heading">资料目录</h2><button id="new-folder" type="button" disabled>新建</button></div>
-      <nav id="folder-list" aria-label="按目录筛选"></nav>
-      <p id="folder-error" class="notice error" role="alert" hidden></p>
-      <div class="migration-list"><h3>能力边界</h3><p>文本上传由服务端显式开启。已解析不等于已索引，问答、来源查看、重建和删除仍未迁移。</p><p>整理不会调用嵌入、重排或生成模型。</p></div>
-    </aside>
-    <section class="workspace" aria-labelledby="documents-heading">
-      <div class="section-heading page-heading"><div><p class="eyebrow">KNOWLEDGE / MANAGEMENT</p><h1 id="documents-heading" tabindex="-1">资料管理</h1></div><div class="header-actions"><button id="refresh" type="button" disabled>刷新</button><button id="upload" type="button" class="primary" disabled title="服务未启用文本上传">上传文本</button><button type="button" disabled title="尚未接通有证问答">问答 · 迁移中</button></div></div>
-      <section id="task-panel" class="task-panel" aria-labelledby="task-heading" hidden>
-        <div class="section-heading"><div><h2 id="task-heading" tabindex="-1">文本处理任务</h2><p id="task-status" role="status" aria-live="polite"></p></div><button id="task-dismiss" type="button">收起任务</button></div>
-        <dl id="task-metadata" class="task-metadata"></dl>
-        <p id="task-boundary" class="help-text">任务已接收不代表解析完成；已解析仍未索引，不能用于问答。</p>
-        <p id="task-error" class="notice error" role="alert" hidden></p>
-        <div class="task-actions"><button id="task-refresh" type="button">刷新任务</button><button id="task-cancel" type="button" hidden>取消解析</button><button id="task-retry" type="button" hidden>重试解析</button></div>
-      </section>
-      <form id="filters" class="filters" aria-label="资料筛选">
-        <label class="search-field" for="search">搜索资料<input id="search" name="q" type="search" maxlength="200" placeholder="按显示名称或原文件名搜索"></label>
-        <label for="type">类型<select id="type" name="type"><option value="">全部类型</option><option value="document">文档</option><option value="image">图片</option><option value="audio">音频</option><option value="video">视频</option></select></label>
-        <label for="status">状态<select id="status" name="status"><option value="">全部状态</option><option value="ready">演示就绪</option><option value="queued">等待解析</option><option value="processing">正在解析</option><option value="parsed">已解析 · 未索引</option><option value="failed">解析失败</option><option value="cancelled">已取消</option></select></label>
-        <label for="tag">标签<select id="tag" name="tag"><option value="">全部标签</option></select></label>
-        <label for="sort">排序<select id="sort" name="sort"><option value="updated_desc">最近更新</option><option value="updated_asc">最早更新</option><option value="name_asc">名称正序</option><option value="name_desc">名称倒序</option></select></label>
-        <button id="clear-filters" type="button">重置</button>
-      </form>
-      <div class="list-summary"><span id="list-count">尚未加载资料</span><span id="current-folder">全部资料</span></div>
-      <div class="batch-bar" aria-label="当前页批量操作"><strong id="selection-count">已选 0 项</strong><span class="muted">仅当前页</span><button id="batch-move" type="button" disabled>移动到目录</button><button id="batch-tag" type="button" disabled>添加标签</button><button id="clear-selection" type="button" disabled>清空选择</button></div>
-      <p id="list-error" class="notice error" role="alert" hidden></p>
-      <div class="table-scroll" id="table-region" aria-busy="false">
-        <table><thead><tr><th class="check-cell"><input id="select-page" type="checkbox" aria-label="全选当前页资料" disabled></th><th scope="col">名称 / 原文件名</th><th scope="col" class="optional">类型 / 大小</th><th scope="col" class="optional">目录 / 标签</th><th scope="col">状态</th><th scope="col" class="optional">更新 / 权限</th><th scope="col" class="action-cell">操作</th></tr></thead><tbody id="document-rows"></tbody></table>
-        <div id="list-empty" class="empty-state"><strong>连接 Java 资料服务</strong><p>配置和身份确认后显示当前有权访问的资料。</p></div>
-      </div>
-      <footer class="pagination"><label for="page-size">每页<select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><span id="page-label">第 0 / 0 页</span><button id="previous-page" type="button" disabled>上一页</button><button id="next-page" type="button" disabled>下一页</button></footer>
-      <section id="operation-feedback" class="feedback" aria-live="polite" hidden><div class="section-heading"><h2 id="feedback-title">操作结果</h2><button id="dismiss-feedback" type="button">收起结果</button></div><ul id="feedback-items"></ul></section>
     </section>
-    <aside id="details" class="details" aria-labelledby="detail-heading"><div class="section-heading"><h2 id="detail-heading">资料详情</h2><button id="close-detail" type="button" hidden>关闭</button></div><div id="detail-content" class="detail-empty"><strong>选择一份资料</strong><p>点击列表中的名称，查看文件信息并修改显示名称、目录或标签。</p><p>真实上传资料可查看解析任务，尚无正文、摘要和来源预览。</p></div></aside>
+    <section class="settings-section"><div class="section-heading"><h2>服务与能力</h2><button id="reconnect" type="button">重新连接</button></div>
+  <div class="scope-notice"><strong id="scope-title">当前可用：资料整理</strong><span id="scope-description">合成资料会单独标识；能力以Java服务配置为准，当前不提供检索问答。</span></div>
+      <dl class="capability-list"><div><dt>资料整理</dt><dd>目录、标签、改名及批量操作，不改变原始证据。</dd></div><div><dt>文本处理</dt><dd>上传、解析和索引分别由服务器开放，已解析不等于已发布。</dd></div><div><dt>检索问答与多模态</dt><dd>当前版本尚未接通。当前页面不提供问答、来源预览或媒体理解。</dd></div></dl>
+    </section>
+  </section>
   </main>
+    <dialog id="details" class="details" aria-labelledby="detail-heading"><div class="section-heading"><h2 id="detail-heading">资料详情</h2><button id="close-detail" type="button" hidden>关闭</button></div><div id="detail-content" class="detail-empty"><strong>选择一份资料</strong><p>点击列表中的名称，查看文件信息并修改显示名称、目录或标签。</p><p>真实上传资料可查看解析任务，尚无正文、摘要和来源预览。</p></div></dialog>
+  <dialog id="preview-dialog" class="file-preview" aria-labelledby="preview-title">
+    <header class="preview-header"><div><p class="eyebrow">FILE VIEWER</p><h2 id="preview-title">本地文件预览</h2><p id="preview-info" class="help-text"></p></div><button id="preview-close" type="button">关闭预览</button></header>
+    <p class="preview-boundary">本地文件仅在当前浏览器打开，不上传，不代表已读取库内资料。关闭后释放本页资源。</p>
+    <div class="preview-toolbar">
+      <button id="preview-choose" type="button" class="primary">选择本地文件</button>
+      <input id="preview-input" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.mp3,.wav,.m4a,.ogg,.mp4,.webm,.mov,.ogv,.pdf,.txt,.md" hidden>
+      <div id="preview-image-tools" class="preview-tools" hidden><button id="preview-zoom-out" type="button" aria-label="缩小图片">缩小</button><output id="preview-zoom-value" aria-live="polite">100%</output><button id="preview-zoom-in" type="button" aria-label="放大图片">放大</button><button id="preview-fit" type="button">适应窗口</button><button id="preview-rotate" type="button">旋转90°</button></div>
+      <div id="preview-media-tools" class="preview-tools" hidden><label for="preview-rate">播放速度</label><select id="preview-rate"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></div>
+      <div id="preview-pdf-tools" hidden><a id="preview-pdf-open" target="_blank" rel="noopener noreferrer">在新窗口查看PDF</a></div>
+    </div>
+    <p id="preview-message" class="help-text" role="status" aria-live="polite">选择或拖入图片、音频、视频、PDF或文本。单文件最多100 MiB，文本最多2 MiB。</p>
+    <div id="preview-stage" class="preview-stage" aria-busy="false"><div class="preview-welcome"><strong>在这里查看文件内容</strong><p>图片可缩放旋转，音视频可播放，PDF可翻页，文本可阅读。</p><p>将一个文件拖入窗口，或点击“选择本地文件”。</p></div></div>
+  </dialog>
   <dialog id="edit-dialog" aria-labelledby="dialog-title"><form id="dialog-form"><h2 id="dialog-title">整理资料</h2><p id="dialog-description"></p><div id="dialog-fields"></div><p id="dialog-error" class="notice error" role="alert" hidden></p><div class="dialog-actions"><button id="dialog-cancel" type="button">取消</button><button id="dialog-submit" class="primary" type="submit">确认</button></div></form></dialog>
   <noscript><p class="notice error">资料管理需要启用 JavaScript，未启用时不会提交任何操作。</p></noscript>
 </body>

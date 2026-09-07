@@ -1,6 +1,18 @@
 # Verification
 
-## 当前0002文本上传 · 2026-09-06
+## 当前0003文本索引界面 · IMPLEMENTATION · 2026-09-07
+
+- 当前工作区增量尚未提交或推送，不认证本次已发布基线。最后一次详情权限修复后，实现者完成`npm run check`和`npm test`；91项Node测试通过，0失败/取消/跳过（61 UI、19真实HTTP代理stub、11 secret checker），原58项基线保留。本轮没有执行Git操作；此前diff检查不认证本次补丁。
+- 红绿：负责人提供的5项索引状态红测在独立indexTask Interface实现后通过；跨链ticket、能力gating、已发布标签的3项新增测试先失败后通过。索引创建前旧列表隐藏已知任务的回归先因invalid task response失败，按同解析版本合并后通过。当前10项索引UI测试还覆盖详情当前行重开、不同revision不合并、未授权页不插入。
+- 新3项代理红测先因未注册索引路由返回404而失败，精确路由实现后通过；覆盖无body/query、普通deadline、错误不自动重试，以及Origin/Authorization/Cookie保留。首次受限沙箱的listen EPERM是环境限制；经自动批准后使用临时ephemeral loopback HTTP fixtures跑完整测试，无跳过。
+- 两仓库六静态文件显式逐字节同步，新增索引与详情测试仅import路径不同。来源记录见[PROVENANCE](PROVENANCE.md)，本轮app和详情测试摘要已交负责人更新冻结记录；未修改secret checker豁免或生产门禁。
+- 独立审查发现两项P2：failed/cancelled轮询只刷新列表，详情状态停留processing；取消/重试成功的loadData重建详情表单，丢失未保存输入。新增`task-detail.test.mjs`通过受控DOM/transport执行真实app函数，先在10项中得到8项实际失败、2项保护通过：四种解析/索引终态标签不符，四种两链cancel/retry替换输入节点。修复为当前授权详情只读字段刷新、task action读取保留表单后通过；再补两链授权页移除/身份切换动作保护，共12项通过。夹具初始DOM属性映射错误单独修正，不作为产品红测证据。
+- 后续P2为保留表单时保存按钮仍可用、submit捕获旧`can_edit`：新增8项actual-app DOM回归连续两次真实失败，再修复为按钮与submit均读取当前授权同ID行，submit同时检查身份epoch、当前详情和live form。覆盖两链editor→reader拒绝PATCH、reader→editor不重建表单即可保存、列表移除和旧身份表单拒绝PATCH；原输入、草稿和值以及保存按钮节点保留。`task-detail.test.mjs`最终20/20通过，state模块未因该修复变更。
+- Java仓库在最后静态源码修改后运行`node --test ui-tests/*.test.mjs scripts/check-secrets.test.mjs`，72/72通过（61 UI、11 checker），0失败/取消/跳过；app和详情测试语法检查通过。Java Node检查不认证Java后端源码或coverage。
+- 实现者未运行Maven、真实Java服务/浏览器、provider/Milvus、完整RAG golden、移动端或生产验收。未启动或修改现有服务；HTTPstub不会读取业务数据。索引完成后问答仍禁用，RAG答案acceptance不可执行，不记为通过。
+- 独立审查详情P2修复待复核，最终真实Java浏览器验收仍待负责人执行；[REVIEW](changes/0003-text-index-publication/REVIEW.md)为IMPLEMENTATION。源码安全扫描须在负责人明确暂存后完成；本次secret checker测试不能代替最终index/历史扫描。
+
+## 0002文本上传历史基线 · 2026-09-06（不认证当前增量）
 
 - 发布负责人在审查修复后重跑全量Node测试58项（31 UI、16真实HTTP代理stub、11 secret checker），0失败/取消/跳过；`npm run check`语法检查通过。原43项基线全部保留，未修改secret checker豁免或限额。
 - 红绿：新UI测试先因缺少上传/任务导出失败；新增三项代理测试先404失败，实现精确路由后通过。两上传在途容量测试先收到504而非429，加入2-slot约束后通过。旧列表快照覆盖新任务测试先queued而非parsed，修复仅当前授权行的合并后通过。
@@ -34,3 +46,8 @@ HTTPstub验证精确Host/Origin/fetch-site检查、身份/会话头allowlist、J
 ## 0001历史发布状态
 
 独立实现、本地测试、只读审查和真实Java浏览器加载已完成。提交后的远端SHA/树及 [GitHub Actions](https://github.com/LingBengYing/ai-knowledge-web/actions) 按实际发布结果核对；CI配置本身不是通过证明。本文件不认证未来提交，静态来源见PROVENANCE，完整源码由Git提交绑定。
+
+
+## 2026-09-07 源码提交检查
+
+用户授权更新独立前端仓库。包含既有0003索引UI依赖、0004工作流程导航和0005本地预览；全量109/109、JavaScript语法与diff检查通过。0004/0005独立审查及浏览器证据见对应变更verification.md，库内远程原文件与生产验证仍未完成。暂存后执行凭据扫描；最终推送结果以远端提交为准。

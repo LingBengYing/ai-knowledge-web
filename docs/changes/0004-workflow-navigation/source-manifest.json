@@ -1,0 +1,10 @@
+{
+  "public/index.html": "2bd586645e72259cece65ce0c2098c2250d03bd46f028ab1906a5830be61cd9a",
+  "public/app.js": "c52a7c270360f43f98930040fdbf67e14cb2cca60b5c32a17fb2fb1f9515a8d2",
+  "public/styles.css": "c188bd1b52ed089277391f8176892c97e7a52c6dc6b5a1ae119496a184ce96ef",
+  "public/api.mjs": "0ac55f0895cb9416f4dae137eb2480e1320a2dcb5b3c95d3ecf6b1e50b4bcbad",
+  "public/workbench-state.mjs": "932f776f1d7caf5c4aa29e9e9dbb589235e345e886521edfe370cd0589d52bfd",
+  "public/notices.mjs": "8e43264e4f7e52bca45f8893bd797f66e0ec2ad7ae5a5fcffe142b070da61a80",
+  "ui-tests/navigation.test.mjs": "4ed17c14a81cac745c25f0fac5a9e6fedad9cfafe1cb259b8b01b13b518c0a52",
+  "ui-tests/task-detail.test.mjs": "304c7e581e21c912dc3ead8ed0792ae6c064840aa92bc8155a2bb1895078ddec"
+}
