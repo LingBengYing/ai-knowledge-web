@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createApi, ApiError, validateUpload } from '../public/api.mjs';
 import * as stateModule from '../public/workbench-state.mjs';
 import { showNotice } from '../public/notices.mjs';
+import * as answerModule from '../public/answers.mjs';
 
 // Execute the real app functions against a small DOM/transport Adapter, without a browser server.
 // Only module loading and automatic startup are adapted; no app function is replaced or mocked.
@@ -82,12 +83,13 @@ const row = (kind, value, change = {}) => ({ document_id: value.document_id, dis
 
 function appFixture(kind, initial = task(kind), rowChange = {}) {
   const dom = controlledDocument();
-  const context = vm.createContext({ ...dom, ...stateModule, createApi, ApiError, validateUpload, showNotice,
+  const context = vm.createContext({ ...dom, ...stateModule, ...answerModule, createApi, ApiError, validateUpload, showNotice,
     AbortController, URLSearchParams, setTimeout: () => 1, clearTimeout() {}, confirm: () => false });
   vm.runInContext(`${source}\nglobalThis.app = { state, openDetail, watchTask, loadTask, taskAction, resetContext, loadData,
-    showView, navigate, closeDetailPanel, changeFilter, documentQuery, renderControls,
+    showView, navigate, closeDetailPanel, changeFilter, documentQuery, renderControls, renderRows, openAnswers, answerSession,
     setConfirm(value) { globalThis.confirm = value; },
-    setApi(value) { api = value; }, configure() { connected = true; config = { capabilities: ['management', 'text_upload', 'ingestions', 'text_index', 'indexings'] }; } };`, context);
+    setApi(value) { api = value; }, configure() { connected = true; config = { capabilities: ['management', 'text_upload', 'ingestions', 'text_index', 'indexings'] }; },
+    enableAnswers() { config.capabilities.push('answers','sources'); renderControls(); } };`, context);
   const app = context.app;
   app.configure();
   app.state.commitPage(app.state.beginRead('documents'), [row(kind, initial, rowChange)]);
@@ -411,4 +413,140 @@ test('batch toolbar appears only for selections and unknown navigation falls bac
   fixture.app.showView('unknown');
   assert.equal(fixture.get('view-documents').hidden, false);
   assert.equal(fixture.get('view-tasks').hidden, true);
+});
+
+const textCitation = {
+  number: 1, document_id: 'doc-one', revision_id: 'rev-one', source_sha256: 'a'.repeat(64),
+  parser_revision: 'text-v1', filename: 'synthetic.txt', page: 1, start: 0, end: 4,
+  quote: '合成证据', quote_sha256: 'b'.repeat(64), source_url: '/v1/sources/answer-one/1',
+};
+const textAnswer = { answer_id: 'answer-one', status: 'answered', answer: '<script>合成证据</script>[1]', reason: null, citations: [textCitation] };
+async function settleAnswer() {
+  for (let count = 0; count < 5; count++) await new Promise(resolve => setImmediate(resolve));
+}
+
+test('question view is gated by Java capabilities and opens the complete selected set, including unpublished rows', async () => {
+  const fixture = appFixture('ingestion');
+  fixture.app.renderControls();
+  assert.equal(fixture.get('batch-ask').hidden, true);
+  assert.equal(fixture.get('answer-question').disabled, true);
+  fixture.app.enableAnswers();
+  const other = row('ingestion', task('ingestion', 'processing', { task_id: 'ingestion-other', document_id: 'doc-unpublished' }), { display_name: '尚未发布' });
+  fixture.app.state.items.push(other);
+  fixture.app.state.select('doc-one', true);
+  fixture.app.state.select('doc-unpublished', true);
+  fixture.app.renderControls();
+  const requests = [];
+  fixture.app.setApi(async (path, options) => {
+    requests.push({ path, options });
+    return { answer_id: 'answer-one', status: 'abstained', answer: '没有足够证据。', reason: 'no_evidence', citations: [] };
+  });
+  fixture.get('batch-ask').dispatch('click');
+  assert.equal(fixture.get('view-answers').hidden, false);
+  assert.match(fixture.get('answer-scope-label').textContent, /所选 2 份/u);
+  fixture.get('answer-question').value = '完整问题';
+  fixture.get('answer-form').dispatch('submit');
+  await settleAnswer();
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].options.body.document_ids, ['doc-one', 'doc-unpublished']);
+  assert.equal(fixture.get('answer-result').hidden, false);
+  assert.match(fixture.get('answer-reason').textContent, /no_evidence/u);
+  assert.equal(fixture.get('answer-error').hidden, true);
+  fixture.get('answer-all').dispatch('click');
+  fixture.get('answer-form').dispatch('submit');
+  await settleAnswer();
+  assert.equal(Object.hasOwn(requests[1].options.body, 'document_ids'), false);
+});
+
+test('real app renders text answer and current source, then removes verified source on a failed reread', async () => {
+  const fixture = appFixture('indexing');
+  fixture.app.enableAnswers();
+  let sourceFails = false;
+  fixture.app.setApi(async path => {
+    if (path === '/v1/answers') return textAnswer;
+    assert.equal(path, '/v1/sources/answer-one/1');
+    if (sourceFails) throw new ApiError(404, '来源已不可访问。');
+    return { answer_id: 'answer-one', citation: textCitation };
+  });
+  fixture.app.openAnswers(['doc-one']);
+  fixture.get('answer-question').value = '问题';
+  fixture.get('answer-form').dispatch('submit');
+  await settleAnswer();
+  assert.equal(fixture.get('answer-text').textContent, textAnswer.answer);
+  assert.equal(fixture.get('answer-text').children.length, 0, 'model HTML remains literal text');
+  fixture.get('answer-citations').querySelector('button').dispatch('click');
+  await settleAnswer();
+  assert.equal(fixture.get('source-content').hidden, false);
+  assert.equal(fixture.get('source-quote').textContent, '合成证据');
+  assert.match(fixture.get('source-metadata').textContent, /rev-one/u);
+  sourceFails = true;
+  fixture.get('answer-citations').querySelector('button').dispatch('click');
+  await settleAnswer();
+  assert.equal(fixture.get('source-content').hidden, true);
+  assert.equal(fixture.get('source-quote').textContent, '');
+  assert.match(fixture.get('source-error').textContent, /不可访问/u);
+});
+
+test('question form prevents duplicate submission and scope changes suppress the pending result', async () => {
+  const fixture = appFixture('ingestion');
+  fixture.app.enableAnswers();
+  let deliver;
+  let calls = 0;
+  fixture.app.setApi(() => { calls++; return new Promise(resolve => { deliver = resolve; }); });
+  fixture.app.openAnswers(['doc-one']);
+  fixture.get('answer-question').value = '问题';
+  fixture.get('answer-form').dispatch('submit');
+  fixture.get('answer-form').dispatch('submit');
+  assert.equal(calls, 1);
+  assert.equal(fixture.get('answer-submit').disabled, true);
+  assert.match(fixture.get('answer-status').textContent, /正在检索/u);
+  fixture.get('answer-all').dispatch('click');
+  deliver(textAnswer);
+  await settleAnswer();
+  assert.equal(fixture.get('answer-result').hidden, true);
+  assert.equal(fixture.get('answer-text').textContent, '');
+  assert.match(fixture.get('answer-scope-label').textContent, /全部/u);
+});
+
+test('parsed terminal poll rereads the authorized row so indexing becomes available without manual list refresh', async () => {
+  const fixture = appFixture('ingestion');
+  const preserved = editUnsaved(fixture);
+  const next = task('ingestion', 'parsed');
+  const calls = [];
+  fixture.app.setApi(async path => {
+    calls.push(path);
+    if (path === '/v1/ingestions/ingestion-one') return next;
+    if (path.startsWith('/v1/management/documents?')) return {
+      items: [row('ingestion', next, { can_index: true })], total: 1, total_pages: 1,
+    };
+    throw new Error(`unexpected route ${path}`);
+  });
+  await fixture.app.loadTask();
+  assert.equal(calls.length, 2);
+  assert.equal(fixture.app.state.items[0].can_index, true);
+  assert.match(fixture.get('detail-task-controls').textContent, /建立索引/u);
+  preserved();
+});
+
+test('row question entry uses service capability instead of legacy can_answer placeholder, without changing its value', () => {
+  const fixture = appFixture('indexing', task('indexing', 'indexed'), { active_revision_id: 'rev-one', index_publication_id: 'publication-one', can_answer: false });
+  fixture.app.enableAnswers();
+  fixture.app.renderRows();
+  const ask = fixture.get('document-rows').querySelectorAll('button').find(button => button.textContent === '提问');
+  assert.ok(ask, 'real published Java rows still carry the legacy false placeholder');
+  ask.dispatch('click');
+  assert.equal(fixture.get('view-answers').hidden, false);
+  assert.match(fixture.get('answer-scope-label').textContent, /所选 1 份/u);
+  assert.equal(fixture.app.state.items[0].can_answer, false, 'UI must not manufacture server eligibility');
+});
+
+test('all-library empty scope explains absence of published documents instead of telling user they forgot selection', async () => {
+  const fixture = appFixture('ingestion');
+  fixture.app.enableAnswers();
+  fixture.app.setApi(async () => ({ answer_id: 'answer-one', status: 'abstained', answer: '没有足够证据。', reason: 'empty_scope', citations: [] }));
+  fixture.app.openAnswers();
+  fixture.get('answer-question').value = '问题';
+  fixture.get('answer-form').dispatch('submit');
+  await settleAnswer();
+  assert.match(fixture.get('answer-reason').textContent, /没有可访问的已发布资料/u);
 });

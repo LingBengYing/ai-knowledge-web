@@ -13,12 +13,15 @@ const ASSETS = new Map([
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/api.mjs', ['api.mjs', 'text/javascript; charset=utf-8']],
+  ['/answers.mjs', ['answers.mjs', 'text/javascript; charset=utf-8']],
   ['/preview.mjs', ['preview.mjs', 'text/javascript; charset=utf-8']],
   ['/notices.mjs', ['notices.mjs', 'text/javascript; charset=utf-8']],
   ['/workbench-state.mjs', ['workbench-state.mjs', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
 ]);
 const ROUTES = [
+  [/^\/v1\/answers$/, ['POST'], 'answer'],
+  [/^\/v1\/sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
   [/^\/v1\/documents$/, ['POST'], 'upload'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/index$/, ['POST'], 'index'],
   [/^\/v1\/indexings\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'index'],
@@ -154,7 +157,7 @@ function validateUploadTarget(target) {
 
 async function proxy(req, res, backend, headers, limits, signal, kind) {
   const bodyless = kind === 'empty' || kind === 'index';
-  if (kind === 'index' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+  if (['index', 'answer', 'source'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'upload') {
     validateUploadTarget(req.url);
     if (headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
@@ -206,10 +209,12 @@ async function serveAsset(res, asset, publicDirectory, head) {
 
 export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084', port = 18085,
   publicDirectory = DEFAULT_PUBLIC, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
-  deadlineMs = 10_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000 } = {}) {
+  deadlineMs = 10_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000,
+  answerDeadlineMs = 180_000 } = {}) {
   const backend = backendAddress(backendOrigin);
   if (!Number.isInteger(port) || port < 0 || port === 80 || port > 65535) throw new TransportError(500, 'invalid_port');
-  for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000], [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000]]) {
+  for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000],
+    [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000], [answerDeadlineMs, 180_000]]) {
     if (!Number.isInteger(value) || value < 1 || value > max) throw new TransportError(500, 'invalid_limit');
   }
   let activeUploads = 0;
@@ -220,7 +225,8 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
     const controller = new AbortController();
     req.on('error', () => controller.abort());
     const upload = req.method === 'POST' && req.url.split('?')[0] === '/v1/documents';
-    const timer = setTimeout(() => controller.abort(), upload ? uploadDeadlineMs : deadlineMs);
+    const answer = req.method === 'POST' && req.url === '/v1/answers';
+    const timer = setTimeout(() => controller.abort(), upload ? uploadDeadlineMs : answer ? answerDeadlineMs : deadlineMs);
     let reservedUpload = false;
     res.once('close', () => { if (!res.writableEnded) controller.abort(); });
     try {

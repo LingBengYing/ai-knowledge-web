@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDevServer, readConfiguration } from '../scripts/dev-server.mjs';
@@ -121,7 +121,7 @@ test('origin/Host/fetch metadata checks fail before forwarding or rewriting', as
 test('only current routes and methods forward; absolute, encoded and future API targets are rejected', async t => {
   let requests = 0;
   const { origin } = await fixture(t, (_req, res) => { requests++; res.end('{}'); });
-  for (const path of ['/v1/answers', '/v1/uploads', '/v1/management/documents/%2e%2e', '/v1/management/../session', '/v1/config#x', 'http://other.invalid/v1/config']) {
+  for (const path of ['/v1/visual-answers', '/v1/uploads', '/v1/management/documents/%2e%2e', '/v1/management/../session', '/v1/config#x', 'http://other.invalid/v1/config']) {
     assert.equal((await raw(origin, path)).status, 404, path);
   }
   assert.equal((await raw(origin, '/v1/config', { method: 'DELETE', headers: { Origin: origin } })).status, 405);
@@ -362,4 +362,126 @@ test('preview static module and local blob media are allowed without enabling re
   assert.match(response.headers['content-security-policy'], /connect-src 'self';/);
   assert.equal((await raw(origin, '/v1/documents/demo/content')).status, 404);
   assert.equal((await raw(origin, '/preview.mjs/more')).status, 404);
+});
+
+test('answers module is an exact static asset, not a directory or arbitrary script allowance', async t => {
+  const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-web-answers-')));
+  t.after(() => rm(publicDirectory, { recursive: true, force: true }));
+  await writeFile(join(publicDirectory, 'answers.mjs'), 'export const synthetic = true;');
+  const { origin } = await fixture(t, undefined, { publicDirectory });
+  const result = await raw(origin, '/answers.mjs');
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['content-type'], 'text/javascript; charset=utf-8');
+  assert.equal(result.body, 'export const synthetic = true;');
+  for (const path of ['/answers.mjs/more', '/answers.js', '/answers/', '/%61nswers.mjs']) {
+    assert.equal((await raw(origin, path)).status, 404, path);
+  }
+});
+
+test('answer POST preserves complete JSON scope, refusal responses and approved identity without retry', async t => {
+  const seen = [];
+  const { origin, backendOrigin } = await fixture(t, (req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      seen.push({ path: req.url, method: req.method, body: Buffer.concat(chunks).toString(), headers: req.headers });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': `${sessionPair}; Path=/; HttpOnly; SameSite=Strict` });
+      res.end(JSON.stringify({ answer_id: 'synthetic-answer', status: 'abstained', answer: '', reason: 'no_evidence', citations: [] }));
+    });
+  });
+  const bodies = [JSON.stringify({ question: '合成问题' }), JSON.stringify({ question: '合成问题', document_ids: ['doc-one', 'not-published'] }),
+    JSON.stringify({ question: '合成问题', document_ids: [] })];
+  for (const body of bodies) {
+    const result = await raw(origin, '/v1/answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json',
+      'X-Principal-Id': 'owner', 'X-Workspace-Id': 'org-main', Cookie: `unrelated=private; ${sessionPair}` }, body });
+    assert.equal(result.status, 200);
+    assert.equal(JSON.parse(result.body).reason, 'no_evidence');
+    assert.equal(result.headers['set-cookie'], undefined);
+  }
+  assert.deepEqual(seen.map(value => value.body), bodies);
+  assert.equal(seen.length, 3);
+  for (const request of seen) {
+    assert.equal(request.path, '/v1/answers');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.headers.origin, backendOrigin);
+    assert.equal(request.headers.cookie, sessionPair);
+    assert.equal(request.headers['x-principal-id'], 'owner');
+    assert.equal(request.headers['x-workspace-id'], 'org-main');
+  }
+});
+
+test('answer and source transport permits only exact methods, unencoded IDs and source numbers 1..32', async t => {
+  const seen = [];
+  const { origin } = await fixture(t, (req, res) => { seen.push(req.url); req.resume(); res.end('{}'); });
+  for (const path of ['/v1/sources/answer-one/1', `/v1/sources/${'a'.repeat(128)}/32`]) {
+    assert.equal((await raw(origin, path)).status, 200, path);
+  }
+  for (const path of ['/v1/sources', '/v1/sources/answer-one', '/v1/sources/answer-one/0', '/v1/sources/answer-one/01',
+    '/v1/sources/answer-one/33', '/v1/sources/answer-one/-1', '/v1/sources/answer-one/1/more', '/v1/sources/answer.one/1',
+    '/v1/sources/%61nswer-one/1', '/v1/sources/answer-one/%31', `/v1/sources/${'a'.repeat(129)}/1`,
+    '/v1/answers/more', '/v1/%61nswers']) {
+    assert.equal((await raw(origin, path, { headers: { Origin: origin } })).status, 404, path);
+  }
+  for (const path of ['/v1/answers', '/v1/sources/answer-one/1']) {
+    const method = path === '/v1/answers' ? 'POST' : 'GET';
+    for (const suffix of ['?', '?unknown=1']) {
+      assert.equal((await raw(origin, path + suffix, { method, headers: { Origin: origin, 'Content-Type': 'application/json' },
+        body: method === 'POST' ? '{}' : undefined })).status, 400, path + suffix);
+    }
+    assert.equal((await raw(origin, path, { method: method === 'GET' ? 'POST' : 'GET', headers: { Origin: origin } })).status, 405);
+    assert.equal((await raw(origin, path, { method, headers: { Origin: 'http://other.invalid', 'Content-Type': 'application/json' } })).status, 403);
+    assert.equal((await raw(origin, path, { method, headers: { Origin: origin, Authorization: 'Bearer synthetic', Cookie: sessionPair } })).status, 400);
+  }
+  assert.equal((await raw(origin, '/v1/answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'text/plain' }, body: '{}' })).status, 415);
+  assert.equal((await raw(origin, '/v1/sources/answer-one/1', { headers: { 'Content-Length': '2' }, body: '{}' })).status, 400);
+  assert.equal(seen.length, 2);
+});
+
+test('answer deadline is independent while request/response limits and ordinary deadline stay unchanged', async t => {
+  let calls = 0;
+  const { origin } = await fixture(t, (req, res) => {
+    calls++;
+    req.resume();
+    if (req.url === '/v1/sources/large/1') res.end('x'.repeat(65));
+    else setTimeout(() => res.end('{}'), 75);
+  }, { requestBytes: 32, responseBytes: 64, deadlineMs: 30, uploadDeadlineMs: 500, answerDeadlineMs: 500 });
+  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
+  assert.equal((await raw(origin, '/v1/answers', options)).status, 200);
+  assert.equal((await raw(origin, '/v1/config')).status, 504);
+  assert.equal((await raw(origin, '/v1/answers', { ...options, body: 'x'.repeat(33) })).status, 413);
+  assert.equal((await raw(origin, '/v1/sources/large/1')).status, 502);
+  assert.equal(calls, 3);
+});
+
+test('answer deadline covers incoming body and complete response; upstream errors never cause retries', async t => {
+  let calls = 0;
+  const { origin } = await fixture(t, (req, res) => {
+    calls++;
+    req.resume();
+    if (calls === 1) res.write('{}');
+    else req.socket.destroy();
+  }, { deadlineMs: 30, answerDeadlineMs: 80 });
+  const incoming = await new Promise((resolveResult, rejectResult) => {
+    const req = http.request(`${origin}/v1/answers`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' } }, res => {
+      res.resume();
+      res.on('end', () => { resolveResult(res.statusCode); req.end(); });
+    });
+    req.on('error', rejectResult);
+    req.write('{');
+  });
+  assert.equal(incoming, 504);
+  assert.equal(calls, 0);
+  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
+  assert.equal((await raw(origin, '/v1/answers', options)).status, 504);
+  assert.equal((await raw(origin, '/v1/answers', options)).status, 502);
+  assert.equal(calls, 2);
+});
+
+test('answer deadline has a hard 180 second maximum and accepts only positive integer limits', async () => {
+  for (const answerDeadlineMs of [0, -1, 1.5, 180_001, NaN]) {
+    await assert.rejects(async () => {
+      const server = await startDevServer({ port: 0, answerDeadlineMs });
+      await new Promise(resolveClosed => server.close(resolveClosed));
+    }, error => error.code === 'invalid_limit');
+  }
 });

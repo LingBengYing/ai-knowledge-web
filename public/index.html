@@ -15,6 +15,7 @@
     <nav class="primary-nav" aria-label="主要导航">
       <a id="nav-documents" href="#/documents" aria-current="page">资料库</a>
       <a id="nav-tasks" href="#/tasks">处理任务</a>
+      <a id="nav-answers" href="#/answers">知识问答</a>
       <a id="nav-settings" href="#/settings">设置</a>
     </nav>
     <span class="development">开发环境 · 非生产</span>
@@ -44,7 +45,7 @@
         </div>
       </form>
       <div class="list-summary"><span id="list-count">尚未加载资料</span><span id="current-folder">全部资料</span></div>
-      <div id="batch-tools" class="batch-bar" hidden aria-label="当前页批量操作"><strong id="selection-count">已选 0 项</strong><span class="muted">仅当前页</span><button id="batch-move" type="button" disabled>移动到目录</button><button id="batch-tag" type="button" disabled>添加标签</button><button id="clear-selection" type="button" disabled>清空选择</button></div>
+      <div id="batch-tools" class="batch-bar" hidden aria-label="当前页批量操作"><strong id="selection-count">已选 0 项</strong><span class="muted">仅当前页</span><button id="batch-ask" type="button" disabled>在选中资料中提问</button><button id="batch-move" type="button" disabled>移动到目录</button><button id="batch-tag" type="button" disabled>添加标签</button><button id="clear-selection" type="button" disabled>清空选择</button></div>
       <p id="list-error" class="notice error" role="alert" hidden></p>
       <div class="table-scroll" id="table-region" aria-busy="false">
         <table><thead><tr><th class="check-cell"><input id="select-page" type="checkbox" aria-label="全选当前页资料" disabled></th><th scope="col">名称 / 原文件名</th><th scope="col" class="optional">类型 / 大小</th><th scope="col" class="optional">目录 / 标签</th><th scope="col">状态</th><th scope="col" class="optional">更新 / 权限</th><th scope="col" class="action-cell">操作</th></tr></thead><tbody id="document-rows"></tbody></table>
@@ -73,6 +74,38 @@
       </section>
     </div></div>
   </section>
+  <section id="view-answers" class="standalone-view answers-view" aria-labelledby="answers-heading" hidden>
+    <div class="page-heading"><p class="eyebrow">WORKSPACE / KNOWLEDGE</p><h1 id="answers-heading" tabindex="-1">知识问答</h1><p class="page-description">基于已发布的原始证据回答，逐条核对来源。</p></div>
+    <div class="answer-layout">
+      <div class="answer-workspace">
+        <form id="answer-form" class="answer-composer">
+          <div class="section-heading"><h2>向知识库提问</h2><span class="evidence-label">证据优先</span></div>
+          <div class="answer-scope"><strong id="answer-scope-label">全部可访问的已发布资料</strong><button id="answer-all" type="button" hidden>改问全库</button></div>
+          <ul id="answer-scope-documents" class="scope-documents" hidden></ul>
+          <p id="answer-availability" class="help-text">正在读取问答能力…</p>
+          <label for="answer-question">你的问题</label>
+          <textarea id="answer-question" rows="4" maxlength="4096" required placeholder="例如：资料中规定的退货时限是多少？" aria-describedby="answer-question-help answer-availability" disabled></textarea>
+          <p id="answer-question-help" class="help-text">最多4096 UTF-8字节。问题和所选证据将由服务器发送至配置的模型；没有足够证据时拒答。</p>
+          <p id="answer-error" class="notice error" role="alert" hidden></p>
+          <div class="answer-actions"><p id="answer-status" role="status" aria-live="polite"></p><button id="answer-cancel" type="button" hidden>停止等待</button><button id="answer-submit" class="primary" type="submit" disabled>检索并回答</button></div>
+        </form>
+        <section id="answer-result" class="answer-result" aria-labelledby="answer-result-heading" hidden>
+          <div class="section-heading"><h2 id="answer-result-heading" tabindex="-1">回答</h2><span id="answer-outcome" class="status-badge"></span></div>
+          <p id="answer-text" class="evidence-text"></p>
+          <p id="answer-reason" class="help-text" hidden></p>
+          <p id="answer-trace" class="answer-trace"></p>
+          <div id="answer-citations-section" hidden><h3>引用证据</h3><p class="help-text">点击来源，以当前身份重新核对文件版本与原文。</p><ol id="answer-citations" class="answer-citations"></ol></div>
+        </section>
+        <div id="answer-empty" class="empty-state"><strong>从一个具体问题开始</strong><p>可以直接问全库，也可回到资料库选择一份或多份资料。</p><a href="#/documents">选择资料范围</a></div>
+      </div>
+      <aside id="source-panel" class="source-panel" aria-labelledby="source-heading">
+        <p class="eyebrow">SOURCE / VERIFY</p><h2 id="source-heading" tabindex="-1">来源回读</h2>
+        <p id="source-status" class="help-text" role="status" aria-live="polite">回答后，点击一条引用查看服务器校验的原文。</p>
+        <p id="source-error" class="notice error" role="alert" hidden></p>
+        <div id="source-content" hidden><h3 id="source-filename"></h3><p id="source-quote" class="evidence-text source-quote"></p><dl id="source-metadata" class="metadata"></dl></div>
+      </aside>
+    </div>
+  </section>
   <section id="view-settings" class="standalone-view settings-view" aria-labelledby="settings-heading" hidden>
     <div class="page-heading"><p class="eyebrow">WORKSPACE / SETTINGS</p><h1 id="settings-heading" tabindex="-1">设置</h1><p class="page-description">管理当前访问身份，查看服务连接与已开放能力。</p></div>
     <section class="settings-section"><h2>访问身份</h2><p class="section-description">身份决定你可以查看和整理的资料范围。</p>
@@ -90,7 +123,7 @@
     </section>
     <section class="settings-section"><div class="section-heading"><h2>服务与能力</h2><button id="reconnect" type="button">重新连接</button></div>
   <div class="scope-notice"><strong id="scope-title">当前可用：资料整理</strong><span id="scope-description">合成资料会单独标识；能力以Java服务配置为准，当前不提供检索问答。</span></div>
-      <dl class="capability-list"><div><dt>资料整理</dt><dd>目录、标签、改名及批量操作，不改变原始证据。</dd></div><div><dt>文本处理</dt><dd>上传、解析和索引分别由服务器开放，已解析不等于已发布。</dd></div><div><dt>检索问答与多模态</dt><dd>当前版本尚未接通。当前页面不提供问答、来源预览或媒体理解。</dd></div></dl>
+      <dl class="capability-list"><div><dt>资料整理</dt><dd>目录、标签、改名及批量操作，不改变原始证据。</dd></div><div><dt>文本处理</dt><dd>上传、解析和索引分别由服务器开放，已解析不等于已发布。</dd></div><div><dt>知识问答</dt><dd>服务器启用后可提问与回读文本引用，无证据时拒答。多模态问答、媒体来源和摘要网页仍待接入。</dd></div></dl>
     </section>
   </section>
   </main>

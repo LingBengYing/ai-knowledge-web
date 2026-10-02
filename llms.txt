@@ -1,6 +1,6 @@
 # AI Knowledge Web
 
-> Native JavaScript knowledge-management frontend with capability-gated PDF/TXT/MD upload and asynchronous parsing tasks for AI Knowledge Java. Current workspace 0003 adds explicit indexing tasks and server-authoritative publication display, status IMPLEMENTATION and unpublished. Parsed alone does not prove indexing; answers remain unavailable. Not a complete RAG or production application.
+> Native JavaScript knowledge workbench for AI Knowledge Java: capability-gated PDF/TXT/MD upload, asynchronous parsing/indexing tasks, grounded text answers for the full library or complete selected scope, and current-authorized citation rereads. Current workspace 0006 is locally implemented and browser-verified against current Java sources with isolated Spring/SQLite and loopback model/vector protocol fixtures; it is not committed, pushed or deployed. Real-provider/Milvus quality, multimodal web integration and production remain incomplete. Java owns ACL, retrieval, models and evidence authority.
 
 - [README](README.md): capabilities and local startup
 - [AI Context](docs/AI_CONTEXT.md): source map and implementation boundaries
@@ -8,8 +8,9 @@
 - [API Connection](docs/API_CONNECTION.md): Java connection and allowed routes
 - [Agent Instructions](AGENTS.md): versioned AI-Native workflow
 - [Verification](docs/VERIFICATION.md): actual evidence and limitations
-- [Provenance](docs/PROVENANCE.md): historical export plus explicit current six-asset synchronization
-- [Current Change](docs/changes/0003-text-index-publication/spec.md): unpublished index task and publication UI contract
+- [Provenance](docs/PROVENANCE.md): historical export and explicit earlier asset synchronization; no automatic Java asset sync
+- [Current Change](docs/changes/0006-grounded-answers/spec.md): grounded text answers, complete scope and server-source contract
+- [Current Verification](docs/changes/0006-grounded-answers/verification.md): local browser flow, 139 passing tests and unverified production boundaries
 - [Security](SECURITY.md): secrets, cookies and local-only transport
 - [Backend](https://github.com/LingBengYing/ai-knowledge): Java authority and persistence
 

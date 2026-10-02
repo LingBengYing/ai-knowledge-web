@@ -14,3 +14,13 @@ test('all four supported document types are actual selectable option elements', 
 test('HTML closing tags cannot contain accidental opening-tag attributes', () => {
   assert.doesNotMatch(html, /<\/[\w-]+\s+[^>\s]/u);
 });
+
+test('grounded answers have a real navigation destination, labelled question and separate source reader', () => {
+  assert.match(html, /id="nav-answers" href="#\/answers"/u);
+  assert.match(html, /id="view-answers"[^>]*aria-labelledby="answers-heading"/u);
+  assert.match(html, /<label for="answer-question"/u);
+  assert.match(html, /<textarea id="answer-question"/u);
+  assert.match(html, /id="answer-status"[^>]*role="status"/u);
+  assert.match(html, /id="source-panel"[^>]*aria-labelledby="source-heading"/u);
+  assert.match(html, /id="batch-ask"/u);
+});

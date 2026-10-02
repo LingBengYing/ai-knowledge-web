@@ -1,6 +1,7 @@
 import { createApi, ApiError, validateUpload } from './api.mjs';
 import { WorkbenchState, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel } from './workbench-state.mjs';
 import { showNotice } from './notices.mjs';
+import { AnswerSession, answersEnabled } from './answers.mjs';
 
 const $ = id => document.getElementById(id);
 const state = new WorkbenchState();
@@ -26,6 +27,12 @@ let currentView = 'documents';
 let taskFilter = 'all';
 let detailBaseline = null;
 let filterSnapshot = null;
+let answerScope = null;
+let answerScopeNames = [];
+const answerSession = new AnswerSession((path, options) => api(path, options), {
+  onChange: () => renderAnswers(),
+  onAuthenticationFailure: error => authenticationFailed(error),
+});
 
 function detailDraftChanged() {
   if (!detailBaseline || !$('detail-name')) return false;
@@ -47,7 +54,7 @@ function closeDetailPanel({ discard = true } = {}) {
 }
 
 function showView(view, { focus = true } = {}) {
-  const names = { documents: '资料库', tasks: '处理任务', settings: '设置' };
+  const names = { documents: '资料库', tasks: '处理任务', answers: '知识问答', settings: '设置' };
   const destination = Object.hasOwn(names, view) ? view : 'documents';
   if (destination === 'settings' && !allowDetailLeave()) {
     if (globalThis.history) globalThis.history.replaceState(null, '', `#/${currentView}`);
@@ -117,7 +124,7 @@ function initNavigation() {
     const hash = globalThis.location.hash;
     if (hash.endsWith('-heading')) return;
     const requested = hash.replace(/^#\//u, '');
-    const view = ['documents', 'tasks', 'settings'].includes(requested) ? requested : 'documents';
+    const view = ['documents', 'tasks', 'answers', 'settings'].includes(requested) ? requested : 'documents';
     if (hash !== `#/${view}`) globalThis.history.replaceState(null, '', `#/${view}`);
     showView(view);
   };
@@ -160,6 +167,84 @@ function messageFor(error) {
   return '服务返回的数据暂时不可用，请刷新后重试。';
 }
 
+function openAnswers(ids = null) {
+  if (!connected || state.mutating || !answersEnabled(config)) return;
+  answerScope = ids === null ? null : [...ids];
+  answerScopeNames = (ids ?? []).map(id => state.items.find(item => item.document_id === id)?.display_name ?? id);
+  answerSession.reset();
+  navigate('answers');
+  $('answer-question').focus();
+}
+
+function renderAnswerControls() {
+  const enabled = connected && answersEnabled(config);
+  const waiting = answerSession.value.phase === 'loading';
+  $('batch-ask').disabled = !enabled || state.mutating || loading || state.selected.size === 0;
+  $('batch-ask').hidden = !answersEnabled(config);
+  $('answer-question').disabled = !enabled || waiting;
+  $('answer-submit').disabled = !enabled || waiting || !$('answer-question').value.trim();
+  $('answer-cancel').hidden = !waiting;
+  $('answer-all').hidden = answerScope === null;
+  $('answer-all').disabled = !enabled;
+  $('answer-form').setAttribute('aria-busy', String(waiting));
+  $('answer-availability').textContent = !answersEnabled(config)
+    ? '当前Java服务未启用文本问答与来源功能，请在设置中确认后端能力。'
+    : !connected ? '请先在设置中确认访问身份。' : '仅检索当前身份可访问的已发布文本证据；解析完成不等于索引发布。';
+  for (const node of document.querySelectorAll('[data-answer-document]')) node.disabled = !enabled || state.mutating || loading;
+}
+
+const refusalReasons = {
+  empty_scope: '未选择任何资料，请重新选择范围。', no_evidence: '没有找到足够的原文证据。',
+  incomplete_evidence: '现有证据不足以完整回答问题。', conflicting_evidence: '资料中存在冲突证据。',
+  unsupported_question: '当前证据不能支持这个问题。', unsafe_evidence: '证据未通过安全核验。',
+  invalid_quote: '摘录未通过原文校验。', model_refused: '模型未给出可核验的回答。',
+  scope_changed: '资料范围已变化，请核对后重新提问。', configuration_changed: '服务配置已变化，请重新连接。',
+  upstream_unavailable: '上游模型暂时不可用。', upstream_invalid: '上游模型未返回有效结果。',
+  processing_timeout: '处理超时，本次没有可验证答案。', evidence_capacity_exceeded: '证据超过当前处理容量。',
+};
+
+function renderAnswers() {
+  const value = answerSession.value;
+  renderAnswerControls();
+  $('answer-scope-label').textContent = answerScope === null ? '全部可访问的已发布资料' : `仅所选 ${answerScope.length} 份资料（不会回退全库）`;
+  $('answer-scope-documents').hidden = answerScope === null;
+  $('answer-scope-documents').replaceChildren(...answerScopeNames.map(name => element('li', name)));
+  notice('answer-error', value.error ? messageFor(value.error) : '');
+  $('answer-status').textContent = value.phase === 'loading' ? '正在检索和核验证据，请稍候…' : value.phase === 'answered' ? '回答已生成，可逐条核对来源。' : value.phase === 'abstained' ? '本次未给出有据回答。' : '';
+  const result = value.result;
+  $('answer-result').hidden = !result;
+  $('answer-empty').hidden = !!result || value.phase === 'loading';
+  $('answer-text').textContent = result?.answer ?? '';
+  $('answer-outcome').textContent = result?.status === 'answered' ? '有据回答' : '证据不足 / 拒答';
+  $('answer-reason').hidden = result?.status !== 'abstained';
+  const reasonText = result?.reason === 'empty_scope' && answerScope === null
+    ? '当前范围没有可访问的已发布资料，请先导入并完成索引。'
+    : refusalReasons[result?.reason] ?? '本次结果未通过证据核验。';
+  $('answer-reason').textContent = result?.status === 'abstained' ? `${reasonText} 原因代码：${result.reason}` : '';
+  $('answer-trace').textContent = result ? `回答编号：${result.answer_id}` : '';
+  $('answer-citations-section').hidden = !result?.citations?.length;
+  $('answer-citations').replaceChildren(...(result?.citations ?? []).map(citation => {
+    const item = element('li', undefined, 'citation-card');
+    item.value = citation.number;
+    const read = button(`${citation.filename} · 查看来源`, async () => {
+      await answerSession.readSource(citation.number);
+      if (currentView === 'answers') $('source-heading').focus();
+    }, 'citation-link');
+    read.disabled = !connected || value.sourcePhase === 'loading';
+    item.append(read, element('p', `第 ${citation.page} 页 · 版本 ${citation.revision_id}`, 'help-text'), element('p', citation.quote, 'evidence-text citation-quote'));
+    return item;
+  }));
+  $('source-panel').setAttribute('aria-busy', String(value.sourcePhase === 'loading'));
+  $('source-status').textContent = value.sourcePhase === 'loading' ? '正在向服务器回读并核对来源…' : value.sourcePhase === 'ready' ? '来源已按当前身份与文档版本重新校验。' : value.sourcePhase === 'error' ? '来源回读未完成，旧摘录不能视为当前验证成功。' : '回答后，点击一条引用查看服务器校验的原文。';
+  notice('source-error', value.sourceError ? messageFor(value.sourceError) : '');
+  $('source-content').hidden = value.sourcePhase !== 'ready';
+  $('source-filename').textContent = value.source?.filename ?? '';
+  $('source-quote').textContent = value.source?.quote ?? '';
+  const source = value.source;
+  $('source-metadata').replaceChildren();
+  if (source) for (const [label, text] of [['引用编号', source.number], ['页码', source.page], ['文档版本', source.revision_id], ['解析版本', source.parser_revision], ['字符区间', `${source.start}–${source.end}（Unicode码点，右端不含）`], ['原文件 SHA-256', source.source_sha256], ['摘录 SHA-256', source.quote_sha256]]) $('source-metadata').append(element('dt', label), element('dd', text));
+}
+
 function clearFeedback() {
   $('operation-feedback').hidden = true;
   $('feedback-items').replaceChildren();
@@ -167,6 +252,8 @@ function clearFeedback() {
 
 function resetContext({ identity = false } = {}) {
   if (identity) document.dispatchEvent?.(new Event('knowledge-context-reset'));
+  if (identity) { answerScope = null; answerScopeNames = []; $('answer-question').value = ''; }
+  answerSession.reset();
   clearTimeout(searchTimer);
   stopTaskPolling();
   state.invalidate();
@@ -342,6 +429,7 @@ function renderControls() {
   $('dialog-cancel').disabled = busy;
   $('close-detail').disabled = busy;
   renderTaskList();
+  renderAnswerControls();
 }
 
 function renderFolders() {
@@ -400,7 +488,7 @@ function appendIndexControl(container, item, className) {
 function indexDialog(id) {
   const item = state.items.find(row => row.document_id === id);
   if (loading || !canStartIndexing(config, item)) return;
-  showDialog('建立文本索引', `将把“${item.display_name}”的解析文本发送到服务器配置的嵌入模型和Milvus，可能产生调用费用。服务器验证完整索引后才发布版本；本次不会接通问答。`, [], { kind: 'index-create', documentId: id }, '确认建立索引');
+  showDialog('建立文本索引', `将把“${item.display_name}”的解析文本发送到服务器配置的嵌入模型和Milvus，可能产生调用费用。服务器验证完整索引后才发布版本；问答能力以服务配置为准。`, [], { kind: 'index-create', documentId: id }, '确认建立索引');
 }
 
 function openDetail(id) {
@@ -464,6 +552,12 @@ function renderRows() {
     const action = element('td'); action.append(button('详情', () => openDetail(item.document_id), 'row-detail'));
     if (ingestionEnabled() && item.latest_job) action.append(button('解析任务', () => openTask(item), 'row-detail'));
     appendIndexControl(action, item, 'row-detail');
+    // Legacy management can_answer is a false placeholder; this opens a scope, not an eligibility claim.
+    if (answersEnabled(config)) {
+      const ask = button('提问', () => openAnswers([item.document_id]), 'row-detail');
+      ask.dataset.answerDocument = item.document_id;
+      action.append(ask);
+    }
     row.append(checkCell, name, type, classification, status, updated, action);
     rows.append(row);
   }
@@ -563,6 +657,7 @@ function renderDetailEvidence() {
   controls.replaceChildren();
   if (ingestionEnabled() && item.latest_job) controls.append(button('查看解析任务', () => openTask(item), 'detail-task'));
   appendIndexControl(controls, item, 'detail-task');
+  if (answersEnabled(config)) controls.append(button('在本资料中提问', () => openAnswers([item.document_id]), 'detail-task'));
   metadata.replaceChildren();
   for (const [label, value] of [['原文件名', item.filename], ['类型 / 大小', `${item.media_info?.mime_type ?? '不可得'} / ${sizeLabel(item.media_info?.size_bytes)}`], ['当前权限', roles[item.current_role] ?? item.current_role], ['处理状态', documentStatusLabel(item)], ['更新于', dateLabel(item.updated_at)], ['资料 ID', item.document_id], ['已发布版本', item.active_revision_id ?? '尚未发布'], ['索引发布编号', item.index_publication_id ?? '尚未发布'], ['内容 SHA-256', item.media_info?.sha256 ?? '不可得']]) metadata.append(element('dt', label), element('dd', value));
 }
@@ -606,11 +701,11 @@ function renderTask() {
   $('task-cancel').textContent = index ? '取消索引' : '取消解析';
   $('task-retry').textContent = index ? '重试索引' : '重试解析';
   $('task-boundary').textContent = index
-    ? task.state === 'indexed' ? '索引任务已完成。已发布版本由服务器资料列表核对；有证问答和来源功能尚未接通。'
+    ? task.state === 'indexed' ? '索引任务已完成。已发布版本由服务器资料列表核对；问答入口以服务能力和当前授权状态为准。'
       : task.state === 'failed' || task.state === 'cancelled' ? '未发布索引，原解析证据保留。不会自动重试；重试会再次调用配置的嵌入模型和Milvus，最多3次尝试。'
         : '正在向配置的嵌入模型和Milvus建立文本索引。完成完整性验证后才由服务器发布；收起面板不会取消任务。'
     : task.state === 'parsed'
-    ? '原文件已解析并保存版本化结果。索引与发布状态以当前资料列表为准；有证问答和来源功能尚未接通。'
+    ? '原文件已解析并保存版本化结果。请建立索引；发布后才可使用已启用的问答与来源功能。'
     : task.state === 'failed' || task.state === 'cancelled'
       ? '不会自动重试。只有服务器允许时才能显式重试；最多3次尝试。'
       : '任务已接收不代表解析完成。关闭或收起此页面不会取消服务器任务，请使用“取消解析”。';
@@ -661,7 +756,8 @@ async function loadTask() {
     renderRows();
     if (state.detail?.document_id === task.document_id) renderDetailEvidence();
     renderControls();
-    if (kind === 'indexing' && currentTask().state === 'indexed') await loadDocuments({ preserveDetail: true });
+    if ((kind === 'indexing' && currentTask().state === 'indexed')
+      || (kind === 'ingestion' && currentTask().state === 'parsed')) await loadDocuments({ preserveDetail: true });
   } catch (error) {
     if (error.name === 'AbortError' || !state.isCurrent(ticket)) return;
     if (authenticationFailed(error)) return;
@@ -683,7 +779,7 @@ function taskAction(action) {
   const before = currentTask();
   if (!['cancel', 'retry'].includes(action) || !before || state.mutating || !taskEnabled() || (action === 'cancel' ? !before.can_cancel : !before.can_retry)) return;
   if (taskKind === 'indexing' && action === 'retry') {
-    showDialog('重试文本索引', '将再次把本资料的解析文本发送到服务器配置的嵌入模型和Milvus，可能产生调用费用。最多3次尝试；索引完成后问答仍不可用。', [], { kind: 'index-retry', task: before }, '确认重试索引');
+    showDialog('重试文本索引', '将再次把本资料的解析文本发送到服务器配置的嵌入模型和Milvus，可能产生调用费用。最多3次尝试；问答能力以服务配置和发布状态为准。', [], { kind: 'index-retry', task: before }, '确认重试索引');
     return;
   }
   submitTaskAction(action, before);
@@ -842,6 +938,16 @@ $('task-retry').addEventListener('click', () => taskAction('retry'));
 $('task-dismiss').addEventListener('click', () => watchTask(null));
 $('batch-move').addEventListener('click', () => batchDialog('move'));
 $('batch-tag').addEventListener('click', () => batchDialog('tag'));
+$('batch-ask').addEventListener('click', () => openAnswers([...state.selected]));
+$('answer-all').addEventListener('click', () => openAnswers());
+$('answer-question').addEventListener('input', renderAnswerControls);
+$('answer-cancel').addEventListener('click', () => { answerSession.cancel(); $('answer-status').textContent = '已停止本地等待；服务器处理可能仍在进行，不会自动重试。'; });
+$('answer-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!connected || !answersEnabled(config) || answerSession.value.phase === 'loading') return;
+  await answerSession.ask($('answer-question').value, answerScope);
+  if (currentView === 'answers' && answerSession.value.result) $('answer-result-heading').focus();
+});
 $('dismiss-feedback').addEventListener('click', clearFeedback);
 $('close-detail').addEventListener('click', () => closeDetailPanel());
 $('details').addEventListener('cancel', event => { event.preventDefault(); closeDetailPanel(); });
@@ -933,11 +1039,12 @@ async function start() {
     config = await api('/v1/config');
     if (!['development_headers', 'jwt'].includes(config?.auth_mode) || !config.capabilities?.includes('management')) throw new Error('unsupported config');
     api = createApi(config, () => principal);
-    $('scope-title').textContent = indexingEnabled() ? '当前可用：资料整理 + 文本索引' : ingestionEnabled() ? '当前可用：资料整理 + 文本解析' : '当前可用：资料整理';
-    $('scope-description').textContent = indexingEnabled() ? '已解析的授权资料可显式建立索引。完整验证后由服务器发布；有证问答与来源尚未接通，合成资料不参与索引。' : ingestionEnabled() ? '支持PDF/TXT/Markdown真实上传。已解析不等于已索引，问答不可用；synthetic_fixture合成资料单独标识。' : '服务尚未启用文本上传。合成资料会单独标识，不代表已完成解析、索引或问答。';
+    $('scope-title').textContent = answersEnabled(config) ? '当前可用：资料整理 + 有据问答与来源' : indexingEnabled() ? '当前可用：资料整理 + 文本索引' : ingestionEnabled() ? '当前可用：资料整理 + 文本解析' : '当前可用：资料整理';
+    $('scope-description').textContent = answersEnabled(config) ? '问答使用当前授权的已发布文本证据。可以问全库或完整所选范围，引用由服务器核验；多模态网页仍待接入。' : indexingEnabled() ? '已解析的授权资料可显式建立索引。完整验证后由服务器发布；服务尚未启用问答与来源，合成资料不参与索引。' : ingestionEnabled() ? '支持PDF/TXT/Markdown真实上传。已解析不等于已索引；synthetic_fixture合成资料单独标识。' : '服务尚未启用文本上传。合成资料会单独标识，不代表已完成解析、索引或问答。';
     $('dev-identity').hidden = config.auth_mode !== 'development_headers';
     $('jwt-identity').hidden = config.auth_mode !== 'jwt';
     connected = true;
+    renderAnswers();
     $('identity-status').textContent = config.auth_mode === 'development_headers' ? `开发身份：${principal} · 组织：${config.workspace_id}` : `组织：${config.workspace_id} · 会话身份由服务器校验`;
     renderFolders();
     await loadData();
