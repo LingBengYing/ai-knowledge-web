@@ -175,7 +175,10 @@ export function canStartIndexing(config, item) {
 
 export function documentStatusLabel(item) {
   if (item.status !== 'parsed') return item.status === 'ready' ? '演示就绪' : taskLabel(item.status);
-  if (!item.synthetic_fixture && item.active_revision_id && item.index_publication_id) return '已解析 · 已索引';
+  if (!item.synthetic_fixture && item.active_revision_id && item.index_publication_id) {
+    if (taskPending(item.latest_index_job)) return `已解析 · 已索引 · ${item.latest_index_job.state === 'queued' ? '等待重建' : '正在重建'}`;
+    return '已解析 · 已索引';
+  }
   const indexState = item.index_status ?? 'not_indexed';
   return `已解析 · ${indexState === 'not_indexed' ? '未索引' : indexTaskLabel(indexState)}`;
 }

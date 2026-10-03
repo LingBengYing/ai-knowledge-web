@@ -1,5 +1,22 @@
 # Architecture
 
+0016新增`audio-vectors.mjs`隐藏十字段验证、独立GET/POST、身份/资料/权限epoch、忙碌与停止后的结果未知状态。app以当前indexed audio及实际audio能力装配独立详情panel，刷新保留整理form/草稿，图片与音频panel分别匹配资料类型。两个代理仅增加精确模块资产和audio-vector GET/POST，POST180秒、GET普通期限，原信任和上传预算保持。问答仍由旧附件/AnswerSession发送完整scope和打开服务器库内来源。
+
+0014新增voice-question.mjs，Session隐藏文件读取、编码、原字节/全文SHA、独立POST、取消和预览。app只接显式控件并在确认后调用旧answerRequest验证，填入问题后由原AnswerSession完成问答/来源；语音准备和问答互斥。dev/external代理分别为voice精确路由维持独立大小/期限/容量，不扩大普通请求预算，后端0025只依赖现有AudioCompilationService。
+
+0013新增tag-suggestions.mjs控制读取/选择/保存，候选和合并由Java authority拥有。app详情只安全渲染文本、检查当前摘要/权限与草稿，迟到响应不更新新资料。dev/external代理增加一个静态模块和两个精确GET/POST路由，无新依赖或长请求例外。
+
+[0012 PDF来源](changes/0012-pdf-sources/spec.md)复用AnswerSession的source生命周期和现有原文件路由；只有先通过答案来源、document/revision/filename/SHA及MIME/大小/全字节校验，才生成可撤销Blob URL。app仅用服务器页码设置PDF片段，机器OCR文本不是PDF字符坐标。原后端权限/完整scope/无证拒答不变。
+
+0011文件摘要增量：`file-synopsis.mjs`的`SynopsisSession`提供open/create/refresh/readSource/close，隐藏独立持久任务轮询、当前文档/publication/revision/SHA检查、typed来源及Blob释放。`app.js`只在详情独立区域显示，任务刷新不重建整理表单，离页/身份/版本变化停止旧请求。创建复用Java已有显式POST，不使用答案trace或入库接口。`api.mjs`与两个Node代理仅新增精确摘要元数据/任务/来源路由，原文件20MiB/帧10MiB，普通10秒不变。
+
+0010查询附件增量：`query-attachments.mjs`负责临时File全批次校验、完整有界base64、证据模式映射及附件处理说明校验；`AnswerSession`复用原问题/scope、epoch与typed结果校验。附件读取纳入loading，取消或上下文变化后不POST；无附件仍用旧四入口。app仅持有当前问答选择，离页/身份变化释放，不持久化或自行证明答案。两个代理各自新增精确`/v1/attachment-answers`，该入口28MiB/180秒/2在途，普通JSON与来源预算保持。
+
+0008当前结构：api.mjs负责明确音频/视频上传MIME和有界二进制读取；media-sources.mjs校验typed时间/帧/转录/OCR/字幕；AnswerSession校验完整来源身份与原媒体/帧SHA，维护Blob生命周期；app.js提供模式和引用播放器。external-server.mjs为独立JWT外部入口，显式HTTPS Origin握手与会话回读，保留开发代理原边界。四类合同/限额见[API_CONNECTION](API_CONNECTION.md)，本机证据见[整合验证](changes/deployment-external-entry/integration.md)。下方未接媒体或全部响应4MiB为历史文字阶段。
+
+0007当前增量：api.mjs支持能力门禁的10MiB图片原始上传与精确content二进制有界读取；answers.mjs增加显式visual模式、typed来源和SHA校验/Blob URL生命周期；app.js绘制整图与服务器归一化OCR词框。开发代理增加visual-answers/visual-sources与两类content；content独享10MiB响应，普通JSON仍4MiB，视觉POST复用180秒期限。下方0006“所有响应4MiB/不解释image”描述只适用于原文本合同。
+
+
 当前0006已实现文本证据问答网页闭环，未提交、推送或部署。前端独立演进，不自动同步Java内置资产。浏览器已核对隔离Spring/SQLite与loopback模型/向量夹具的正常路径，不能据此认证真实provider/Milvus质量、多模态网页或生产。
 
 ```text

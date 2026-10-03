@@ -1,5 +1,40 @@
 # API Connection
 
+2026-10-03当前基础修复0033：已有文字索引后，仅更换生成或重排模型可以保存、单独测试并明确应用；嵌入配置及投影不变时不重建资料索引。实际新角色与新trace、原索引/旧来源、连续切换及重启均已本机验证；真正嵌入或投影变化仍拒绝，legacy媒体按实际完整profile判定。最终3058 Java、1013格式、原LINE/BRANCH双80与架构、六Native各1通过；1029后端输入相同、761生产class稳定。前端64及后端18 Node/static输入字节不变，430/check与73明确复用此前实跑证据。新交接.tools/model-role-switch-handoff以实际manifest/VALIDATION为准；未部署、0新增真实provider调用、页面用户验收、真实ASR未宣称修复，目标active。历史记录保留。
+
+0021新增`model_configuration`与`retrieval_test`实际能力：设置中的GET/PUT `/v1/model-configuration`、POST同路径`/test`及`/activate`采用独立配置Session；POST `/v1/retrieval-tests`采用完整范围和片段SHA校验。写结果未知后只读核对，不自动重发；读取已应用版本后同身份刷新能力/授权行并保留整理草稿。角色测试单次请求，召回不生成；同版本原文件沿既有完整SHA校验打开。流程与失败恢复见[MODEL_SETUP_AND_RETRIEVAL](MODEL_SETUP_AND_RETRIEVAL.md)及[0021合同](changes/0021-model-setup-retrieval-test/spec.md)。
+
+0016新增`audio_vector_retrieval`能力及精确GET/POST `/v1/documents/{id}/audio-vector`，均无query/body。响应精确十字段status/document_id/publication_id/source_revision_id/source_sha256/profile_fingerprint/model_revision/dimensions/vector_generation_id/manifest_sha256；missing最后两项为null，available必须完整绑定，维度2..3072。当前editor显式POST，reader只GET；停止后明确GET核对，任何写操作不自动重试。AUDIO附件完整scope缺receipt显示`audio_vector_required`，query附件预算与typed原音频来源不变。
+
+0014新增能力voice_questions与精确POST /v1/voice-questions（无query），请求仅filename/media_type/content_base64单音频；响应必须精确八字段transcript/transcript_sha256/source_sha256/decoder_revision/model_revision/compiler_revision/duration_ms/policy_revision。核对full SHA和java-voice-question-v1后显示完整≤65536 UTF8字节预览；确认沿旧4096字节问题约束，随后仍发原问答端点与完整document_ids。独立28MiB/180秒/2在途，默认关闭且需当前证据模式answers/sources，不要求query_attachments。
+
+0013新增GET /v1/documents/{id}/tag-suggestions及POST同路径/apply；能力tag_suggestions与file_synopsis/synopsis_sources共同有效且摘要available才显示建议流程。响应绑定当前摘要身份，POST只发suggestion_fingerprint和ordinals，成功返回既有资料行；409/404后显式刷新，不自动重发。普通JSON体积和期限保持。
+
+0012 PDF引用：文字模式且document_originals启用时，先GET原sources验证引用，再GET `/v1/documents/{id}/original`并匹配引用document_id/revision_id/filename/source_sha256。只接受document/application/pdf及精确pinned内容URL、1..20MiB；完整MIME/大小/SHA通过后以服务器page设置本地Blob `#page`。无新API/代理/限额，读取失败不能保留旧校验来源；`pdf_ocr_upload`只是后端0023实际逐页OCR上传能力，普通文本路径保持。
+
+## 文件摘要（0011）
+
+`file_synopsis`与`synopsis_sources`同时启用时，真实已发布资料详情自动GET `/v1/documents/{id}/synopsis`。当前编辑者显式确认模型处理后可POST同一路径，不发送body/query；返回202任务（task_id/document_id/publication_id/state/error_code/created_at/updated_at）。queued/processing约1.5秒GET `/v1/synopsis-tasks/{id}`，available后读取持久摘要，unavailable/cancelled终止；网络错误暂停待手动刷新。不自动重试写请求，不制造取消/重试路由。
+
+摘要绑定document/publication/revision/source_sha256，并含overview/topic/term/timeline、最多32条及每条1..8个原始依据。专用GET `/v1/synopsis-sources/{synopsisId}/{entryOrdinal}/{sourceOrdinal}`采用一基编号；支持text/image_ocr/image/audio_transcript/video_frame/video_transcript/video_ocr/video_subtitle。网页核对身份、引用SHA、服务器页/CP/微秒时间及精确content/frame路径，重新读取完整原文件并核对摘要的源SHA；文字和video_frame另核对各自证据SHA。video_ocr帧由专用授权接口提供，当前HTTP未含其独立帧SHA，客户端不声称独立验证该哈希。
+
+新元数据/任务路由与其GET/POST无query/body，普通10秒/128KiB请求/4MiB JSON响应；只有精确`/content`允许20MiB原文件、`/frame`允许10MiB PNG/JPEG，完整200，不转发Range。来源可打开/下载、PDF按页显示、图片/OCR词框、音视频按时间播放、视频原帧和字幕轨定位。切换详情、身份、发布版本或离开资料页停止轮询/播放并撤销URL；刷新摘要保留整理草稿。Java配置及完整长文件生成见后端0015/0016，部署开关仍默认关闭，本轮不改变配置。
+
+## 查询附件（0010）
+
+Java声明`query_attachments`且当前证据模式的answers/sources启用时，可添加最多3个原始图片/音频/视频，总计20MiB（图片单文件10MiB）。`POST /v1/attachment-answers`无query，JSON为原`question`、完整可选`document_ids`、`mode`和`attachments:[{filename,media_type,content_base64}]`。原问题不改写，显式空scope不回退全库；附件仅辅助检索，不能充当库内引用。网页显式选择附件类型，MP4/WebM不猜测模态。
+
+证据模式：网页`text/visual/audio/video-visual/video-transcript/video-joint/video-ocr/video-subtitle`映射到`text/image/audio/video_visual/video_transcript/video_joint/video_ocr/video_subtitle`。响应`mode/result/query_attachments`逐项核对ordinal、media_kind、prepared/failed、visual_sampled及稳定reason，`result`再经过原typed答案校验。来源仍走旧sources路径与SHA核验。无附件使用原四入口，不改变旧JSON。
+
+开发与外部代理只给此精确POST独立28MiB请求、180秒总期限及最多2个在途；JSON响应4MiB，其他JSON请求128KiB、普通请求10秒、资料上传30秒保持。读取文件开始即防重复，取消或上下文改变使旧读取/请求失效，不自动重试。离页或身份改变清空临时选择。Java开关默认关闭，配置依赖及hash-only审计见后端`docs/QUERY_ATTACHMENTS.md`；这次网页接线不代替部署者启用配置或真实质量验收。
+
+0009原文件详情：基础能力`document_originals`提供精确GET `/v1/documents/{id}/original`（八字段metadata）及其pinned `/v1/documents/{id}/revisions/{revision}/content`。当前详情身份、版本、文件名、类型、MIME、SHA、大小及URL均校验，完整原字节SHA通过后才创建Blob URL；1..20MiB、普通10秒，不能使用query/Range或任意文件路径。PDF原生预览/打开/下载、TXT/MD纯文本、图片显示、音视频播放/下载；关闭与离开资料页停止媒体、取消请求、撤销URL。解析/索引或问答关闭不影响真实保存原文件读取。两个代理只增精确GET和静态Module，认证边界保持。导航到问答/设置清除旧详情，取消脏表单离开不改变问答scope；任务页既有草稿行为保留。详见[0009验证](changes/0009-document-originals/verification.md)。
+
+0008当前音视频合同：明确audio/video上传类型。音频WAV/MP3/FLAC/OGG/M4A/MP4/WebM用octet-stream；视频MP4/MOV/WebM/MKV用严格匹配video MIME；1..20MiB，图片仍10MiB。精确POST `/v1/audio-answers`、`/v1/video-answers`（mode=visual/transcript/joint/ocr/subtitle），GET对应`/{answer_id}/{1..32}` sources、`/content`以及video `/frame`。四种answers POST180秒，metadata/content/frame10秒；JSON4MiB、图片/帧10MiB、原音视频20MiB。完整原文件SHA校验后Blob本地seek，不转发HTTP Range。external-server同步以上合同并增加GET session、JWT会话保护和精确HTTPS Origin，内部health不对外。详见[外部入口](EXTERNAL_ENTRY.md)。下方0006/0007为对应阶段合同，认证/完整scope/拒答保持。
+
+0007当前图片合同：上传在image_text_upload或visual_image_upload与ingestions启用时允许PNG/JPEG，octet-stream、1..10MiB，后台校验1200万像素；文本仍20MiB。新增POST `/v1/visual-answers`、GET `/v1/visual-sources/{answer_id}/{1..32}`及图片两类来源的精确`/content`。视觉POST180秒，metadata/content10秒；仅content响应10MiB，其余JSON4MiB。OCR原图读取还要求source_image_content。点击来源后当前身份回读metadata与原图，匹配SHA后显示/下载；不公开自由文件路径、不支持图像Range。下方0006只解释文本的条款由本条图片增量扩展，认证/Host/Origin/限额和不重试保持。
+
+
 ## 连接契约
 
 浏览器只访问前端 origin 的相对路径；Node 开发服务默认绑定 `127.0.0.1:18085` 并转发至显式可信的 `http://127.0.0.1:18084`。后端必须由你单独启动，不自动发现、不复用其他数据库、不代理 Python 业务。

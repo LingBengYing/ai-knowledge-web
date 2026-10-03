@@ -33,6 +33,7 @@
     </aside>
     <section class="workspace" aria-labelledby="documents-heading">
       <div class="section-heading page-heading"><div><p class="eyebrow">WORKSPACE / LIBRARY</p><h1 id="documents-heading" tabindex="-1">资料库</h1><p class="page-description">归档、整理和管理团队知识资料。</p></div><div class="header-actions"><button id="preview-local" type="button">本地文件预览</button><button id="refresh" type="button" disabled>刷新</button><button id="upload" type="button" class="primary" disabled title="服务未启用文本上传">上传资料</button></div></div>
+      <div id="model-library-guidance" class="scope-notice" hidden><span id="model-library-guidance-text"></span><button id="model-library-settings" type="button">打开模型设置</button></div>
       <form id="filters" class="filters" aria-label="资料筛选">
         <label class="search-field" for="search">搜索资料<input id="search" name="q" type="search" maxlength="200" placeholder="按显示名称或原文件名搜索"></label>
         <button id="toggle-filters" type="button" aria-expanded="false" aria-controls="advanced-filters">筛选条件</button>
@@ -45,13 +46,19 @@
         </div>
       </form>
       <div class="list-summary"><span id="list-count">尚未加载资料</span><span id="current-folder">全部资料</span></div>
-      <div id="batch-tools" class="batch-bar" hidden aria-label="当前页批量操作"><strong id="selection-count">已选 0 项</strong><span class="muted">仅当前页</span><button id="batch-ask" type="button" disabled>在选中资料中提问</button><button id="batch-move" type="button" disabled>移动到目录</button><button id="batch-tag" type="button" disabled>添加标签</button><button id="clear-selection" type="button" disabled>清空选择</button></div>
+      <div id="batch-tools" class="batch-bar" hidden aria-label="当前页批量操作"><strong id="selection-count">已选 0 项</strong><span class="muted">仅当前页</span><button id="batch-ask" type="button" disabled>在选中资料中提问</button><button id="batch-move" type="button" disabled>移动到目录</button><button id="batch-tag" type="button" disabled>添加标签</button><button id="batch-cleanup" type="button" hidden disabled>清理选中资料</button><button id="clear-selection" type="button" disabled>清空选择</button></div>
       <p id="list-error" class="notice error" role="alert" hidden></p>
       <div class="table-scroll" id="table-region" aria-busy="false">
         <table><thead><tr><th class="check-cell"><input id="select-page" type="checkbox" aria-label="全选当前页资料" disabled></th><th scope="col">名称 / 原文件名</th><th scope="col" class="optional">类型 / 大小</th><th scope="col" class="optional">目录 / 标签</th><th scope="col">状态</th><th scope="col" class="optional">更新 / 权限</th><th scope="col" class="action-cell">操作</th></tr></thead><tbody id="document-rows"></tbody></table>
         <div id="list-empty" class="empty-state"><strong>连接 Java 资料服务</strong><p>配置和身份确认后显示当前有权访问的资料。</p></div>
       </div>
       <footer class="pagination"><label for="page-size">每页<select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><span id="page-label">第 0 / 0 页</span><button id="previous-page" type="button" disabled>上一页</button><button id="next-page" type="button" disabled>下一页</button></footer>
+      <section id="cleanup-records" class="feedback" hidden aria-labelledby="cleanup-heading">
+        <div class="section-heading"><h2 id="cleanup-heading">受控清理记录</h2><button id="cleanup-refresh" type="button">刷新授权记录</button><button id="cleanup-stop" type="button" hidden>停止本地等待</button></div>
+        <p class="help-text">受理后即撤下；待完成、受阻或失败均不代表已清除。停止仅停止本地等待，不会撤销服务器操作。只显示当前有权管理的记录。</p>
+        <p id="cleanup-error" class="notice error" role="alert" hidden></p><ul id="cleanup-items" aria-live="polite"></ul>
+        <div class="pagination"><span id="cleanup-page"></span><button id="cleanup-previous" type="button" disabled>上一页记录</button><button id="cleanup-next" type="button" disabled>下一页记录</button></div>
+      </section>
     </section>
   </div>
   </section>
@@ -83,17 +90,55 @@
           <div class="answer-scope"><strong id="answer-scope-label">全部可访问的已发布资料</strong><button id="answer-all" type="button" hidden>改问全库</button></div>
           <ul id="answer-scope-documents" class="scope-documents" hidden></ul>
           <p id="answer-availability" class="help-text">正在读取问答能力…</p>
+          <label for="answer-mode">证据类型</label>
+          <select id="answer-mode"><option id="answer-mode-text" value="text">文字证据（含图片OCR）</option><option id="answer-mode-visual" value="visual">原图视觉</option><option id="answer-mode-audio" value="audio">音频转录</option><option id="answer-mode-sound" value="sound">声音理解（含非语音）</option><option id="answer-mode-video-visual" value="video-visual">视频画面</option><option id="answer-mode-video-transcript" value="video-transcript">视频语音转录</option><option id="answer-mode-video-joint" value="video-joint">视频画面与语音</option><option id="answer-mode-video-ocr" value="video-ocr">视频画面文字（OCR）</option><option id="answer-mode-video-subtitle" value="video-subtitle">视频内嵌字幕</option><option id="answer-mode-video-av-visual" value="video-av-visual">连续视频画面</option><option id="answer-mode-video-av-audio" value="video-av-audio">视频原声（含非语音）</option><option id="answer-mode-video-av-joint" value="video-av-joint">原视频音画</option></select>
           <label for="answer-question">你的问题</label>
           <textarea id="answer-question" rows="4" maxlength="4096" required placeholder="例如：资料中规定的退货时限是多少？" aria-describedby="answer-question-help answer-availability" disabled></textarea>
           <p id="answer-question-help" class="help-text">最多4096 UTF-8字节。问题和所选证据将由服务器发送至配置的模型；没有足够证据时拒答。</p>
+          <p id="answer-image-vector-help" class="help-text" hidden></p>
+          <p id="answer-audio-vector-help" class="help-text" hidden></p>
+          <p id="answer-sound-help" class="help-text" hidden></p>
+          <p id="answer-video-av-help" class="help-text" hidden></p>
+          <fieldset class="query-attachments" aria-describedby="answer-voice-help">
+            <legend>语音输入（可选）</legend>
+            <p id="answer-voice-help" class="help-text">正在读取语音输入能力…</p>
+            <label for="answer-voice-file">选择一个语音文件<input id="answer-voice-file" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a,.mp4,.webm" disabled></label>
+            <div class="query-attachment-summary"><span id="answer-voice-status" class="help-text" role="status" aria-live="polite">未选择语音</span><button id="answer-voice-transcribe" type="button" disabled>转成文字</button><button id="answer-voice-cancel" type="button" hidden>清除语音</button></div>
+            <div id="answer-voice-preview" hidden>
+              <label for="answer-voice-text">核对并编辑识别文字<textarea id="answer-voice-text" rows="4" aria-describedby="answer-voice-review-help"></textarea></label>
+              <p id="answer-voice-review-help" class="help-text">请核对完整问题，尤其是数字和编号。问题仍需满足4096 UTF-8字节；识别文字不会自动截短。</p>
+              <button id="answer-voice-use" type="button" disabled>用作问题（替换当前文字）</button>
+            </div>
+            <p id="answer-voice-error" class="notice error" role="alert" hidden></p>
+          </fieldset>
+          <fieldset class="query-attachments" aria-describedby="answer-attachment-help">
+            <legend>辅助检索附件（可选）</legend>
+            <p id="answer-attachment-help" class="help-text">正在读取查询附件能力…</p>
+            <div class="query-attachment-inputs">
+              <label for="answer-attachment-kind">附件类型<select id="answer-attachment-kind" disabled><option value="image">图片</option><option value="audio">音频</option><option value="video">视频</option></select></label>
+              <label for="answer-attachment-files">添加原文件<input id="answer-attachment-files" type="file" multiple accept=".png,.jpg,.jpeg" disabled></label>
+            </div>
+            <div class="query-attachment-summary"><span id="answer-attachment-count" class="help-text">未添加附件</span><button id="answer-attachment-clear" type="button" hidden>清空附件</button></div>
+            <ul id="answer-attachment-list" class="query-attachment-list" aria-label="本次查询附件"></ul>
+            <p id="answer-attachment-error" class="notice error" role="alert" hidden></p>
+          </fieldset>
           <p id="answer-error" class="notice error" role="alert" hidden></p>
           <div class="answer-actions"><p id="answer-status" role="status" aria-live="polite"></p><button id="answer-cancel" type="button" hidden>停止等待</button><button id="answer-submit" class="primary" type="submit" disabled>检索并回答</button></div>
         </form>
+        <section id="retrieval-panel" class="answer-result" aria-labelledby="retrieval-heading" hidden>
+          <h2 id="retrieval-heading">测试召回</h2>
+          <p id="retrieval-help" class="help-text">检查当前完整问题和范围中的文字/OCR片段，不调用生成模型，不生成答案。RRF与重排分只用于排序，不是概率或事实置信度。</p>
+          <div class="query-attachment-inputs"><label for="retrieval-count">返回片段数<input id="retrieval-count" type="number" min="1" max="20" value="5"></label><label for="retrieval-rerank">重排<select id="retrieval-rerank"><option value="true">启用</option><option value="false">关闭</option></select></label></div>
+          <div class="answer-actions"><button id="retrieval-run" type="button">测试当前问题与范围</button><button id="retrieval-stop" type="button" hidden>停止召回等待</button><button id="retrieval-continue" type="button" hidden>保留问题与范围，继续问答</button></div>
+          <p id="retrieval-status" class="help-text" role="status" aria-live="polite"></p><p id="retrieval-error" class="notice error" role="alert" hidden></p>
+          <ol id="retrieval-matches" class="answer-citations"></ol><div id="retrieval-original" hidden></div>
+        </section>
         <section id="answer-result" class="answer-result" aria-labelledby="answer-result-heading" hidden>
           <div class="section-heading"><h2 id="answer-result-heading" tabindex="-1">回答</h2><span id="answer-outcome" class="status-badge"></span></div>
           <p id="answer-text" class="evidence-text"></p>
           <p id="answer-reason" class="help-text" hidden></p>
           <p id="answer-trace" class="answer-trace"></p>
+          <ul id="answer-attachment-status" class="query-attachment-status help-text" aria-label="附件处理结果" hidden></ul>
           <div id="answer-citations-section" hidden><h3>引用证据</h3><p class="help-text">点击来源，以当前身份重新核对文件版本与原文。</p><ol id="answer-citations" class="answer-citations"></ol></div>
         </section>
         <div id="answer-empty" class="empty-state"><strong>从一个具体问题开始</strong><p>可以直接问全库，也可回到资料库选择一份或多份资料。</p><a href="#/documents">选择资料范围</a></div>
@@ -102,7 +147,7 @@
         <p class="eyebrow">SOURCE / VERIFY</p><h2 id="source-heading" tabindex="-1">来源回读</h2>
         <p id="source-status" class="help-text" role="status" aria-live="polite">回答后，点击一条引用查看服务器校验的原文。</p>
         <p id="source-error" class="notice error" role="alert" hidden></p>
-        <div id="source-content" hidden><h3 id="source-filename"></h3><p id="source-quote" class="evidence-text source-quote"></p><dl id="source-metadata" class="metadata"></dl></div>
+        <div id="source-content" hidden><h3 id="source-filename"></h3><p id="source-quote" class="evidence-text source-quote"></p><div id="source-image-panel" hidden></div><div id="source-media-panel" hidden></div><div id="source-pdf-panel" hidden></div><dl id="source-metadata" class="metadata"></dl></div>
       </aside>
     </div>
   </section>
@@ -121,13 +166,25 @@
     </form>
   </section>
     </section>
+    <section id="model-settings" class="settings-section" aria-labelledby="model-heading" hidden>
+      <div class="section-heading"><h2 id="model-heading">文字模型 · 硅基流动</h2><button id="model-refresh" type="button">读取当前配置</button></div>
+      <p class="help-text">依次保存草稿、显式测试各角色，再应用到文字索引、问答和召回。保存和应用不会自动测试或重建。测试使用固定合成输入，可能产生模型费用。密钥只写入服务器，提交后清空输入。</p>
+      <p id="model-status" role="status" aria-live="polite"></p><p id="model-error" class="notice error" role="alert" hidden></p>
+      <form id="model-form" autocomplete="off">
+        <fieldset><legend>嵌入模型</legend><label for="model-embedding-name">模型名称<input id="model-embedding-name" maxlength="256" required></label><label for="model-embedding-dimensions">向量维度<input id="model-embedding-dimensions" type="number" min="2" max="8192" required></label><label for="model-embedding-revision">明确模型版本<input id="model-embedding-revision" maxlength="160" required aria-describedby="model-revision-help"></label><p id="model-revision-help" class="help-text">用于绑定索引身份；模型或版本变化可能需要另行重建，不能填写 latest、default 或 unknown。</p><p id="model-embedding-key-status" class="help-text"></p><label for="model-embedding-key">写入或更新密钥<input id="model-embedding-key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false"></label><button id="model-test-embedding" type="button">测试已保存的嵌入模型</button><p id="model-test-embedding-status" role="status"></p></fieldset>
+        <fieldset><legend>重排模型</legend><label for="model-rerank-name">模型名称<input id="model-rerank-name" maxlength="256" required></label><p id="model-rerank-key-status" class="help-text"></p><label for="model-rerank-key">写入或更新密钥<input id="model-rerank-key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false"></label><button id="model-test-rerank" type="button">测试已保存的重排模型</button><p id="model-test-rerank-status" role="status"></p></fieldset>
+        <fieldset><legend>生成模型</legend><label for="model-generation-name">模型名称<input id="model-generation-name" maxlength="256" required></label><p id="model-generation-key-status" class="help-text"></p><label for="model-generation-key">写入或更新密钥<input id="model-generation-key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false"></label><button id="model-test-generation" type="button">测试已保存的生成模型</button><p id="model-test-generation-status" role="status"></p></fieldset>
+        <div class="answer-actions"><button id="model-save" type="submit" class="primary">保存草稿</button><button id="model-activate" type="button">应用已保存配置</button><button id="model-stop" type="button" hidden>停止等待</button></div>
+      </form>
+      <h3>服务器向量库</h3><p id="model-projection-status" class="help-text"></p><button id="model-test-projection" type="button">只读测试向量库连接</button><p id="model-test-projection-status" role="status"></p><p id="model-index-guidance" class="help-text"></p>
+    </section>
     <section class="settings-section"><div class="section-heading"><h2>服务与能力</h2><button id="reconnect" type="button">重新连接</button></div>
   <div class="scope-notice"><strong id="scope-title">当前可用：资料整理</strong><span id="scope-description">合成资料会单独标识；能力以Java服务配置为准，当前不提供检索问答。</span></div>
-      <dl class="capability-list"><div><dt>资料整理</dt><dd>目录、标签、改名及批量操作，不改变原始证据。</dd></div><div><dt>文本处理</dt><dd>上传、解析和索引分别由服务器开放，已解析不等于已发布。</dd></div><div><dt>知识问答</dt><dd>服务器启用后可提问与回读文本引用，无证据时拒答。多模态问答、媒体来源和摘要网页仍待接入。</dd></div></dl>
+      <dl class="capability-list"><div><dt>资料整理</dt><dd>目录、标签、改名及批量操作，不改变原始证据。</dd></div><div><dt>文件摘要</dt><dd>服务启用后，可在已索引资料详情生成和读取概览、主题、术语及媒体时间线，并打开各条原始依据。</dd></div><div><dt>文本处理</dt><dd>上传、解析和索引分别由服务器开放，已解析不等于已发布。</dd></div><div><dt>知识问答</dt><dd>按服务能力选择文字、图片、音频或视频证据，回读原文件与来源，无证据时拒答。启用查询附件后可添加临时媒体辅助检索。</dd></div></dl>
     </section>
   </section>
   </main>
-    <dialog id="details" class="details" aria-labelledby="detail-heading"><div class="section-heading"><h2 id="detail-heading">资料详情</h2><button id="close-detail" type="button" hidden>关闭</button></div><div id="detail-content" class="detail-empty"><strong>选择一份资料</strong><p>点击列表中的名称，查看文件信息并修改显示名称、目录或标签。</p><p>真实上传资料可查看解析任务，尚无正文、摘要和来源预览。</p></div></dialog>
+    <dialog id="details" class="details" aria-labelledby="detail-heading"><div class="section-heading"><h2 id="detail-heading">资料详情</h2><button id="close-detail" type="button" hidden>关闭</button></div><div id="detail-content" class="detail-empty"><strong>选择一份资料</strong><p>点击列表中的名称，查看原文件并修改显示名称、目录或标签。</p><p>完成索引且服务启用摘要后，可阅读文件摘要并核对原始依据。</p></div></dialog>
   <dialog id="preview-dialog" class="file-preview" aria-labelledby="preview-title">
     <header class="preview-header"><div><p class="eyebrow">FILE VIEWER</p><h2 id="preview-title">本地文件预览</h2><p id="preview-info" class="help-text"></p></div><button id="preview-close" type="button">关闭预览</button></header>
     <p class="preview-boundary">本地文件仅在当前浏览器打开，不上传，不代表已读取库内资料。关闭后释放本页资源。</p>

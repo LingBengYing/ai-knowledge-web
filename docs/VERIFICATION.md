@@ -1,5 +1,7 @@
 # Verification
 
+当前本机[0016原声向量入口](changes/0016-audio-vector-retrieval/verification.md)：新module7项、真实app DOM3项和代理2项，共新增12项；最终299项全通过，语法检查通过，旧287项保留。后端0027最终2042 Java/716格式/原覆盖门禁通过，4项单列native验证实际Spring/FFmpeg原声构建→召回→证明→时间来源及旧链。网页验收由用户负责，本轮无浏览器操作、真实模型调用或部署。下方为历史快照。
+
 ## 当前0006文本证据问答 · 本机实现 · 2026-10-02
 
 - 当前工作区新增知识问答视图、Answer Module及精确answers/sources代理，完整所选范围不裁剪、不回退全库，拒答和来源失效明确展示。解析parsed终态自动回读授权列表取得索引入口，indexed终态仍回读服务器发布版本；旧管理can_answer=false兼容占位不再被误用为问答入口资格。

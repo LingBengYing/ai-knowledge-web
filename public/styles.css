@@ -1477,6 +1477,11 @@ dialog.details::backdrop {
 .document-preview-status h3 { font-size: 14px; margin: 0 0 10px; }
 .document-preview-status p { font-size: 12px; line-height: 1.8; margin-bottom: 12px; }
 .document-preview-status button { margin-bottom: 10px; }
+.original-actions { display: flex; flex-wrap: wrap; gap: 16px; margin-block: 10px; }
+.original-pdf { display: block; width: 100%; height: min(62vh, 660px); min-height: 320px; border: 1px solid var(--line); }
+.original-image { display: block; max-width: 100%; max-height: 65vh; margin-block: 12px; object-fit: contain; }
+.original-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 55vh; overflow: auto; padding: 14px; background: #fff; }
+#detail-original-media { display: block; width: 100%; max-height: 60vh; margin-block: 12px; }
 @media(max-width:760px) {
   .file-preview { inset: 0; margin: 0; width: 100vw; height: 100dvh; max-height: 100dvh; padding: 16px; border-radius: 0; }
   .preview-header h2 { font-size: 16px; }
@@ -1532,3 +1537,42 @@ dialog.details::backdrop {
   .answer-scope { flex-wrap: wrap; }
   .answer-actions #answer-status { flex-basis: 100%; }
 }
+
+/* Server-verified original image and normalized OCR word rectangles share one aspect ratio. */
+.source-image-canvas { position: relative; width: 100%; margin-block: 1rem; }
+.source-image-canvas img { display: block; width: 100%; height: auto; border-radius: .5rem; }
+.source-image-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.source-image-canvas rect { fill: #fbbf2433; stroke: #b45309; stroke-width: 2px; vector-effect: non-scaling-stroke; }
+#source-image-panel > button { margin: .75rem; }
+#answer-mode { margin-bottom: .75rem; }
+#source-media-panel audio, #source-media-panel video { display: block; width: 100%; max-height: 360px; margin-block: 1rem; }
+#source-media-panel > button, #source-media-panel > a { display: inline-block; margin: .35rem .6rem .35rem 0; }
+
+.query-attachments { min-width: 0; margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; }
+.query-attachments legend { padding-inline: .4rem; font-weight: 600; }
+.query-attachment-inputs { display: flex; flex-wrap: wrap; gap: .75rem; margin-block: .75rem; }
+.query-attachment-inputs label { min-width: 0; }
+.query-attachment-inputs label:last-child { flex: 1 1 230px; }
+.query-attachment-summary, .query-attachment-list li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.query-attachment-summary { flex-wrap: wrap; }
+.query-attachment-list { list-style: none; padding: 0; margin: .5rem 0 0; }
+.query-attachment-list li { padding-block: .5rem; border-top: 1px solid var(--line); }
+.query-attachment-list span { min-width: 0; overflow-wrap: anywhere; }
+.query-attachment-status { margin-block: .75rem; padding-left: 1.25rem; overflow-wrap: anywhere; }
+
+.detail-synopsis { border-top: 1px solid var(--line); padding-block: 1rem; margin-top: 1rem; min-width: 0; }
+.detail-synopsis > p { margin-block: .6rem; overflow-wrap: anywhere; }
+.synopsis-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; }
+.synopsis-group { margin-block: 1rem; }
+.synopsis-group h4 { margin: 0 0 .5rem; font-size: 13px; }
+.synopsis-group ol { padding-left: 1.5rem; margin: 0; }
+.synopsis-group li { padding-block: .5rem; }
+.synopsis-source { padding: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); overflow-wrap: anywhere; }
+.synopsis-source h4 { margin-top: 0; }
+.synopsis-source > p { margin-block: .75rem; }
+.synopsis-quote { white-space: pre-wrap; overflow-wrap: anywhere; }
+.synopsis-source audio, .synopsis-source video { display: block; width: 100%; max-height: 380px; margin-block: 1rem; }
+.synopsis-source > button { margin: .5rem .5rem .5rem 0; }
+
+.tag-suggestion-choice { display: inline-flex; align-items: center; gap: .45rem; padding: .5rem .65rem; border: 1px solid var(--line); border-radius: .5rem; }
+.tag-suggestion-choice input { width: auto; margin: 0; }

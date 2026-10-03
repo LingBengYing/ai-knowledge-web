@@ -52,3 +52,30 @@ Java使用JDK21。文本本机联调的最小业务配置为test环境、develop
 ## 尚未完成的真实目标
 
 图片/音视频网页、持久摘要与附件问答网页尚未接通；完整真实provider/Milvus质量、同生产镜像验收及目标主机生产发布均未完成。0019音视频真实评测累计6/20、下一具名实验未获自动继续授权，失败即停/无重试、安全样本与金标保持，不因为换机重置台账或复跑。生产gate不解除，不能把本地功能测试、git push或设备环境安装当作上线完成。
+
+## Mac mini 续接：0007图片稳定切片（2026-10-02）
+
+用户已明确继续接力，Air任务停写且最终前端基线f200f0b已同步。上方暂停、0007仅规划、0006待推送为历史；当前只改独立前端，Java基线仍26f9c43c，未改生产Java/Python或旧数据库。
+
+图片切片已实现：PNG/JPEG能力门禁上传→原有解析/索引→显式文字/OCR或原图视觉提问→typed来源→原图字节SHA复核→显示/下载，OCR显示服务器词框，视觉定位整图。当前Java Spring/SQLite及真实Tesseract、前端createApi/AnswerSession/开发代理两条完整链实测通过，模型/Milvus是loopback协议夹具。页面函数回归通过，本轮尚未实际浏览器验收。详见[0007 verification](changes/0007-image-library/verification.md)。本机工具沿用项目根安装，无重装。
+
+用户最终主线验收：四类素材都须导入/处理/索引→检索匹配→打开对应原文件/来源，适用时有页码或时间片段。现状：
+
+| 类型 | 当前实证 | 下一步／未完成 |
+| --- | --- | --- |
+| 文档 | 0006合成PDF网页问答/页码原文回读 | 真实provider/Milvus和公网检索；不能把文本摘录视作通用原PDF下载 |
+| 图片 | 本切真实Java/原生OCR+前端模块OCR及视觉链、原图SHA一致；页面显示回归 | 当前浏览器显示、真实图片检索质量及公网原图访问 |
+| 音频 | Java已有audio-answers/audio-sources、服务器时间段与原音频Range | 前端上传/显式音频提问/原媒体播放器与时间定位未接，属于主线 |
+| 视频 | Java已有显式视频上传及visual/transcript/joint/ocr/subtitle、typed帧/时间/原视频 | 前端视频模式/检索/帧与原视频播放未接，属于主线 |
+
+按用户最新优先级，先顺序完成图片→音频→视频，保留必要构建/针对性功能验证，全面评测后置，不新增付费实验或检查任务。公网四类真实检索与原素材验收由协调任务浏览器执行。部署任务仅改隔离快照，不能写本live工作树；不触碰其目录。
+
+0007待Git任务处理的稳定文件：AGENTS.md、README.md、docs/AI_CONTEXT.md、docs/ARCHITECTURE.md、docs/API_CONNECTION.md、docs/HANDOFF.md、0007的plan/REVIEW/verification、public/api.mjs、public/answers.mjs、public/app.js、public/index.html、public/styles.css、scripts/dev-server.mjs、tests/dev-server.test.mjs、ui-tests/task-detail.test.mjs、ui-tests/image-answers.test.mjs。验证记录新增，其余0007 intent/spec未更改。无音视频WIP混入。主任务在Git快照完成前暂停写这些live文件，只读核对后续接口；由协调方确认快照后继续，开发任务不执行Git写入。
+
+## 2026-10-02 音视频与认证入口整合稳定点
+
+0008已接音视频上传、显式证据模式、原媒体/帧SHA、播放器片段定位和释放；外部入口已与四类精确路由/预算整合。当前Node173、Java28针对性、JAR认证1项、JWT入口真实Java/native七条正常链通过，详情见[整合验证](changes/deployment-external-entry/integration.md)。上方“音视频未接/只改前端”是历史；本轮后端仅小范围0020入口补丁，Python/旧数据/部署隔离源目录未改，Java静态资源未同步。
+
+本地只读导出依据在项目根.tools/four-type-entry-handoff：完整SOURCE-MANIFEST、变更文件快照与哈希、源补丁导入记录及当前JAR指纹。图片.tools/image-handoff-snapshot和音视频整合前.tools/media-pre-entry-snapshot均保留。导出必须匹配live清单，不以HEAD的旧文本快照代替未提交四类改动；Git任务仍需相应授权/发布扫描，不绕过自动审批拒绝。
+
+真实模型端点/模型名/凭据及embedding维度revision、真实隔离Milvus database/java_集合、服务器native工具、JWT/TLS/公开Origin均尚未注入/验收。没有真实付费调用；公网四类浏览器验收由协调方负责，整体生产未完成。

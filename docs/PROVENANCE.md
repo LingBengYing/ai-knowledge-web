@@ -1,5 +1,11 @@
 # Source Provenance
 
+2026-10-03当前0024在既有app/workbench及两代理增加明确重建入口、状态与publication回读；向量状态只收紧当前入口，无新增管理请求/第三方依赖。450/check实际通过，旧435保留，累计61产品文件对0030副本实际补丁验证通过。后端0035配套，未部署；Dify仅作设计参考，未复制源码。详见[验证](changes/0024-saved-source-reindex/verification.md)。
+
+2026-10-03基础操作增量0023：沿当前app.js与原DOM夹具，独立范围资格允许retrieval_test，当前text可用时不误切visual；行/批量/详情/all及能力提示同步。没有引入Dify源码、库或新协议。仅app产品变化、4新DOM原文追加；435全量和syntax实际通过，旧431完整保留。0034已冻结且独立PASS，本切后端输入与JAR一致、明确复用实跑证据；前端新交接`.tools/retrieval-scope-handoff`的实际manifest/补丁为准。未部署、用户验收页面、0真实模型调用；旧来源记录保留。
+
+0022本机增量仅修改现有app.js视觉来源能力回调，保留完整来源校验和新问答资格；同一新增DOM实际RED→GREEN，完整431/syntax通过。配套后端0034，独立前端累计补丁在0030的全部public/scripts公开副本实际dry-run/apply后核对27文件与当前一致。新补丁及源码绑定见工作区`.tools/media-role-switch-handoff`实际manifest；不宣称已适配免登录现网fork或部署。原导出来源和历史记录如下。
+
 导出基线：[ai-knowledge commit 85aa6aa77f8b2977145902ebd7225bfd2d3ae030](https://github.com/LingBengYing/ai-knowledge/tree/85aa6aa77f8b2977145902ebd7225bfd2d3ae030)，2026-09-06。这里只记录前端来源，不复制Java、Python、数据库、运行配置或原Git历史。
 
 ## 0001历史发布基线（不认证当前UI）

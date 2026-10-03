@@ -1,0 +1,5 @@
+# Review
+
+独立构建解决现有索引任务无法重建已发布图片的问题；前端不把parsed、文字indexed或已有caption宣称为原图向量已就绪。用户明确点击新操作，结果需绑定当前资料和publication，保留整理草稿及原答案scope。模型/authority资格由Java负责。
+
+pdf_config独立只读复核捕获停止构建等待时错误missing文案；root先增加实际DOM RED，再修正为未知、服务器可能仍处理，显式刷新核对，不自动POST。pdf_ingestion完成补测后只读复核前后端IV07–09正常链，确认完整scope/receipt复验、候选完整authority映射后融合以及前端mode/reason/reader/迟到隔离，未发现实际主线缺陷。最终287项前端与语法通过，证据见verification.md。

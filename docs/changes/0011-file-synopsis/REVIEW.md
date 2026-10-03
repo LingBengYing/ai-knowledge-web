@@ -1,0 +1,7 @@
+# 限定审查
+
+开工证据：Java已实现持久摘要/长文件分层/八类来源，前端详情仍明确显示摘要未开放。Synopsis source的sha256是引用文本或引用图像SHA，不是原媒体SHA；原文件SHA来自当前摘要publication。video_ocr帧未提供独立帧SHA，不能偷用OCR文本SHA验证帧。新Session必须区分这些身份。
+
+任务无cancel/retry专用路由，重复显式POST按后端当前publication/model/policy复用pending/available，失败新建任务。读取已有摘要无模型调用；404不证明不存在或允许生成。聚焦正常闭环，通用权限/异常组合后置。
+
+状态：本机实现和限定审查完成，主线阻断0。当前完整237项前端回归和40输入SHA绑定通过，实际证据见[verification](verification.md)。Root核对真实Java协议与新Session的证据SHA/原文件SHA职责，修复图片引用SHA未与原图SHA一致的具体问题（先RED后GREEN）。Source不开自由URL，任务不影响原索引或答案流程，app只替换摘要区域并保留整理表单。两个代理仅加精确路径，API仅放行专用有界来源二进制，未扩旧信任边界。无额外检查代理或真实模型/浏览器验收。

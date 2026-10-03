@@ -1,0 +1,5 @@
+# Review：具体调用路径
+
+状态：LOCAL_VERIFIED。A初始只读确认app.js视觉canReadImage调用answersEnabled，同时要求visual_answers/visual_sources；AnswerSession完成metadata读取后因此拒绝原图。引用按钮及其他媒体来源无该二次新答案门禁。
+
+A于2026-10-03实际读取后端六份与前端五份合同，限定合同审查无阻断。其后同一DOM实际RED→GREEN，仅app.js视觉回调改变，原430用例全部保留并加1项；root实际431和syntax通过。后端误报及最小三文件审查独立保留在0034，不把旧POST原已有保护写成新功能。用户页面与真实模型仍NOT_RUN。

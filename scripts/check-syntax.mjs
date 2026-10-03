@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-for (const directory of ['public', 'scripts', 'tests', 'ui-tests']) {
+for (const directory of ['public', 'entry-public', 'scripts', 'tests', 'ui-tests', 'deployment-tests']) {
   for (const entry of readdirSync(new URL(`../${directory}/`, import.meta.url), { withFileTypes: true })) {
     if (!entry.isFile() || !/\.(?:mjs|js)$/.test(entry.name)) continue;
     const path = new URL(`../${directory}/${entry.name}`, import.meta.url);

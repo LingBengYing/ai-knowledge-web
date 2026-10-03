@@ -9,21 +9,72 @@ import { join, resolve } from 'node:path';
 
 const DEFAULT_PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const ASSETS = new Map([
+  ['/model-configuration.mjs', ['model-configuration.mjs', 'text/javascript; charset=utf-8']],
+  ['/retrieval-tests.mjs', ['retrieval-tests.mjs', 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/api.mjs', ['api.mjs', 'text/javascript; charset=utf-8']],
   ['/answers.mjs', ['answers.mjs', 'text/javascript; charset=utf-8']],
+  ['/query-attachments.mjs', ['query-attachments.mjs', 'text/javascript; charset=utf-8']],
+  ['/voice-question.mjs', ['voice-question.mjs', 'text/javascript; charset=utf-8']],
+  ['/file-synopsis.mjs', ['file-synopsis.mjs', 'text/javascript; charset=utf-8']],
+  ['/document-cleanup.mjs', ['document-cleanup.mjs', 'text/javascript; charset=utf-8']],
+  ['/tag-suggestions.mjs', ['tag-suggestions.mjs', 'text/javascript; charset=utf-8']],
+  ['/image-vectors.mjs', ['image-vectors.mjs', 'text/javascript; charset=utf-8']],
+  ['/audio-vectors.mjs', ['audio-vectors.mjs', 'text/javascript; charset=utf-8']],
+  ['/sound-library.mjs', ['sound-library.mjs', 'text/javascript; charset=utf-8']],
+  ['/video-av.mjs', ['video-av.mjs', 'text/javascript; charset=utf-8']],
+  ['/media-sources.mjs', ['media-sources.mjs', 'text/javascript; charset=utf-8']],
+  ['/document-originals.mjs', ['document-originals.mjs', 'text/javascript; charset=utf-8']],
   ['/preview.mjs', ['preview.mjs', 'text/javascript; charset=utf-8']],
   ['/notices.mjs', ['notices.mjs', 'text/javascript; charset=utf-8']],
   ['/workbench-state.mjs', ['workbench-state.mjs', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
 ]);
 const ROUTES = [
+  [/^\/v1\/model-configuration$/, ['GET', 'PUT'], 'model-configuration'],
+  [/^\/v1\/model-configuration\/(?:test|activate)$/, ['POST'], 'model-configuration'],
+  [/^\/v1\/retrieval-tests$/, ['POST'], 'retrieval'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/cleanup$/, ['GET', 'POST'], 'cleanup'],
+  [/^\/v1\/management\/document-cleanups$/, ['GET', 'POST'], 'cleanup-list'],
+  [/^\/v1\/video-av-documents$/, ['POST'], 'video-av-upload'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/, ['GET', 'POST'], 'video-av-index'],
+  [/^\/v1\/video-av-answers$/, ['POST'], 'answer'],
+  [/^\/v1\/video-av-query-answers$/, ['POST'], 'attachment'],
+  [/^\/v1\/video-av-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
+  [/^\/v1\/video-av-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'media'],
+  [/^\/v1\/sound-documents$/, ['POST'], 'sound-upload'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/, ['GET', 'POST'], 'sound-index'],
+  [/^\/v1\/sound-answers$/, ['POST'], 'answer'],
+  [/^\/v1\/sound-query-answers$/, ['POST'], 'attachment'],
+  [/^\/v1\/sound-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
+  [/^\/v1\/sound-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'media'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/, ['GET', 'POST'], 'image-vector'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/, ['GET', 'POST'], 'audio-vector'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/tag-suggestions$/, ['GET'], 'source'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/tag-suggestions\/apply$/, ['POST'], 'tag'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/synopsis$/, ['GET', 'POST'], 'synopsis'],
+  [/^\/v1\/synopsis-tasks\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'synopsis'],
+  [/^\/v1\/synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]$/, ['GET'], 'source'],
+  [/^\/v1\/synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/content$/, ['GET'], 'media'],
+  [/^\/v1\/synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/frame$/, ['GET'], 'content'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/original$/, ['GET'], 'source'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content$/, ['GET'], 'media'],
   [/^\/v1\/answers$/, ['POST'], 'answer'],
+  [/^\/v1\/attachment-answers$/, ['POST'], 'attachment'],
+  [/^\/v1\/voice-questions$/, ['POST'], 'voice'],
+  [/^\/v1\/visual-answers$/, ['POST'], 'answer'],
+  [/^\/v1\/(?:audio|video)-answers$/, ['POST'], 'answer'],
+  [/^\/v1\/(?:audio|video)-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
+  [/^\/v1\/(?:audio|video)-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'media'],
+  [/^\/v1\/video-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/frame$/, ['GET'], 'content'],
+  [/^\/v1\/visual-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
+  [/^\/v1\/(?:sources|visual-sources)\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'content'],
   [/^\/v1\/sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
   [/^\/v1\/documents$/, ['POST'], 'upload'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/index$/, ['POST'], 'index'],
+  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/reindex$/, ['POST'], 'reindex'],
   [/^\/v1\/indexings\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'index'],
   [/^\/v1\/indexings\/[A-Za-z0-9_-]{1,128}\/(?:cancel|retry)$/, ['POST'], 'index'],
   [/^\/v1\/ingestions\/[A-Za-z0-9_-]{1,128}$/, ['GET']],
@@ -103,6 +154,10 @@ function forwardedHeaders(req, backend, origin, requestId) {
     if (!/^rag_session=[A-Za-z0-9._~-]{0,4096}$/.test(sessions[0])) throw new TransportError(400, 'invalid_session');
     headers.Cookie = sessions[0];
   }
+  if (req.method === 'POST' && ['/v1/sound-documents', '/v1/video-av-documents'].includes(req.url)) {
+    const filename = singleHeader(req, 'x-filename');
+    if (filename !== undefined) headers['X-Filename'] = filename;
+  }
   if (origin) headers.Origin = backend.origin;
   return headers;
 }
@@ -145,27 +200,64 @@ function sessionCookies(values = []) {
   });
 }
 
-function validateUploadTarget(target) {
+function validateUploadTarget(target, contentType) {
   try {
     decodeURIComponent(target);
     const parameters = new URL(target, 'http://127.0.0.1').searchParams;
     const filename = parameters.get('filename');
     if ([...parameters].length !== 1 || !parameters.has('filename') || !filename || filename.length > 255
-      || /[/\\\u0000-\u001f\u007f]/u.test(filename) || !/\.(?:pdf|txt|md)$/iu.test(filename)) throw new Error('invalid upload target');
+      || /[/\\\u0000-\u001f\u007f]/u.test(filename)) throw new Error('invalid upload target');
+    const extension = filename.split('.').at(-1).toLowerCase();
+    const videoTypes = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' };
+    if (contentType?.startsWith('video/')) {
+      if (videoTypes[extension] !== contentType) throw new Error('invalid video type');
+    } else if (!/\.(?:pdf|txt|md|png|jpe?g|wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(filename)) throw new Error('invalid upload target');
+    return /\.(?:png|jpe?g)$/iu.test(filename);
+  } catch { throw new TransportError(400, 'invalid_upload_filename'); }
+}
+
+function validateSoundFilename(encoded) {
+  try {
+    if (typeof encoded !== 'string' || !/^[\x21-\x7e]+$/u.test(encoded)) throw new Error('invalid filename');
+    const filename = decodeURIComponent(encoded);
+    if (!filename.trim() || filename.length > 255 || /[/\\\u0000-\u001f\u007f]/u.test(filename)
+      || !/\.(?:wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(filename)) throw new Error('invalid filename');
+  } catch { throw new TransportError(400, 'invalid_upload_filename'); }
+}
+
+function validateVideoAvFilename(encoded) {
+  try {
+    if (typeof encoded !== 'string' || !/^[\x21-\x7e]+$/u.test(encoded)) throw new Error('invalid filename');
+    const filename = decodeURIComponent(encoded);
+    if (!filename.trim() || filename.length > 255 || /[/\\\u0000-\u001f\u007f]/u.test(filename)
+      || !/\.(?:mp4|mov|webm|mkv)$/iu.test(filename)) throw new Error('invalid filename');
   } catch { throw new TransportError(400, 'invalid_upload_filename'); }
 }
 
 async function proxy(req, res, backend, headers, limits, signal, kind) {
-  const bodyless = kind === 'empty' || kind === 'index';
-  if (['index', 'answer', 'source'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
-  if (kind === 'upload') {
-    validateUploadTarget(req.url);
+  if (kind === 'cleanup-list') {
+    if (req.method === 'POST' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+    const parameters = new URL(req.url, 'http://127.0.0.1').searchParams;
+    for (const [key, value] of parameters) {
+      if (!['page', 'page_size'].includes(key) || parameters.getAll(key).length !== 1 || !/^[1-9][0-9]*$/u.test(value)
+          || !Number.isSafeInteger(Number(value)) || Number(value) > (key === 'page_size' ? 100 : 2147483647)) throw new TransportError(400, 'query_denied');
+    }
+  }
+  const bodyless = kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
+  if (['model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'attachment', 'voice', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+  if (['sound-upload', 'video-av-upload'].includes(kind)) {
+    if (kind === 'sound-upload') validateSoundFilename(headers['X-Filename']);
+    else validateVideoAvFilename(headers['X-Filename']);
     if (headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
+  } else if (kind === 'upload') {
+    const type = headers['content-type']?.toLowerCase();
+    if (validateUploadTarget(req.url, type)) limits.requestBytes = Math.min(limits.requestBytes, limits.imageUploadBytes);
+    if (!['application/octet-stream', 'video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'].includes(type)) throw new TransportError(415, 'binary_file_required');
   } else if (!bodyless && !['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
     throw new TransportError(415, 'json_required');
   }
   const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
-  if (kind === 'upload' && !body.length) throw new TransportError(400, 'empty_upload');
+  if (['upload', 'sound-upload', 'video-av-upload'].includes(kind) && !body.length) throw new TransportError(400, 'empty_upload');
   if (bodyless && body.length) throw new TransportError(400, 'request_body_denied');
   if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
   headers['Content-Length'] = String(body.length);
@@ -210,24 +302,37 @@ async function serveAsset(res, asset, publicDirectory, head) {
 export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084', port = 18085,
   publicDirectory = DEFAULT_PUBLIC, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
   deadlineMs = 10_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000,
-  answerDeadlineMs = 180_000 } = {}) {
+  attachmentBytes = 28 * 1024 * 1024, voiceBytes = 28 * 1024 * 1024, voiceDeadlineMs = 180_000, imageVectorDeadlineMs = 180_000, audioVectorDeadlineMs = 180_000,
+  modelTestDeadlineMs = 70_000, retrievalDeadlineMs = 180_000, answerDeadlineMs = 180_000, imageUploadBytes = 10 * 1024 * 1024, contentBytes = 10 * 1024 * 1024, mediaBytes = 20 * 1024 * 1024 } = {}) {
   const backend = backendAddress(backendOrigin);
   if (!Number.isInteger(port) || port < 0 || port === 80 || port > 65535) throw new TransportError(500, 'invalid_port');
   for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000],
-    [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000], [answerDeadlineMs, 180_000]]) {
+    [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000], [answerDeadlineMs, 180_000], [modelTestDeadlineMs, 70_000], [retrievalDeadlineMs, 180_000], [attachmentBytes, 28 * 1024 * 1024], [voiceBytes, 28 * 1024 * 1024], [voiceDeadlineMs, 180_000], [imageVectorDeadlineMs, 180_000], [audioVectorDeadlineMs, 180_000],
+    [imageUploadBytes, 10 * 1024 * 1024], [contentBytes, 10 * 1024 * 1024], [mediaBytes, 20 * 1024 * 1024]]) {
     if (!Number.isInteger(value) || value < 1 || value > max) throw new TransportError(500, 'invalid_limit');
   }
   let activeUploads = 0;
+  let activeAttachments = 0;
+  let activeVoices = 0;
   const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
     const requestId = randomUUID();
     for (const [name, value] of Object.entries(SAFE_HEADERS)) res.setHeader(name, value);
     res.setHeader('X-Request-Id', requestId);
     const controller = new AbortController();
     req.on('error', () => controller.abort());
-    const upload = req.method === 'POST' && req.url.split('?')[0] === '/v1/documents';
-    const answer = req.method === 'POST' && req.url === '/v1/answers';
-    const timer = setTimeout(() => controller.abort(), upload ? uploadDeadlineMs : answer ? answerDeadlineMs : deadlineMs);
+    const upload = req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
+    const answer = req.method === 'POST' && ['/v1/answers', '/v1/attachment-answers', '/v1/visual-answers', '/v1/audio-answers', '/v1/video-answers', '/v1/sound-answers', '/v1/sound-query-answers', '/v1/video-av-answers', '/v1/video-av-query-answers'].includes(req.url);
+    const voice = req.method === 'POST' && req.url === '/v1/voice-questions';
+    const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
+    const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
+    const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);
+    const videoAvIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/.test(req.url);
+    const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
+    const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
+    const timer = setTimeout(() => controller.abort(), modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : voice ? voiceDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex) ? answerDeadlineMs : deadlineMs);
     let reservedUpload = false;
+    let reservedAttachment = false;
+    let reservedVoice = false;
     res.once('close', () => { if (!res.writableEnded) controller.abort(); });
     try {
       const origin = validateBrowserBoundary(req, server.address().port);
@@ -235,6 +340,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
       const asset = ASSETS.get(path);
       if (asset) {
+        if (['/model-configuration.mjs', '/retrieval-tests.mjs', '/query-attachments.mjs', '/voice-question.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if (!['GET', 'HEAD'].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         await serveAsset(res, asset, publicDirectory, req.method === 'HEAD');
       } else {
@@ -242,12 +348,22 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
         if (!route) throw new TransportError(404, 'route_not_found');
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         const headers = forwardedHeaders(req, backend, origin, requestId);
-        if (route[2] === 'upload') {
+        if (['upload', 'sound-upload', 'video-av-upload'].includes(route[2])) {
           if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached');
           activeUploads += 1;
           reservedUpload = true;
         }
-        await proxy(req, res, backend, headers, { requestBytes: route[2] === 'upload' ? uploadBytes : requestBytes, responseBytes }, controller.signal, route[2]);
+        if (route[2] === 'attachment') {
+          if (activeAttachments >= 2) throw new TransportError(429, 'attachment_capacity_reached');
+          activeAttachments += 1;
+          reservedAttachment = true;
+        }
+        if (route[2] === 'voice') {
+          if (activeVoices >= 2) throw new TransportError(429, 'voice_capacity_reached');
+          activeVoices += 1; reservedVoice = true;
+        }
+        await proxy(req, res, backend, headers, { requestBytes: ['upload', 'sound-upload', 'video-av-upload'].includes(route[2]) ? uploadBytes : route[2] === 'attachment' ? attachmentBytes : route[2] === 'voice' ? voiceBytes : requestBytes,
+          imageUploadBytes, responseBytes: route[2] === 'media' ? mediaBytes : route[2] === 'content' ? contentBytes : responseBytes }, controller.signal, route[2]);
       }
     } catch (error) {
       const known = error instanceof TransportError;
@@ -258,7 +374,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
           detail: status >= 500 ? '开发连接未完成，请确认 Java 服务后重试。' : '开发请求不符合安全约束。', request_id: requestId }));
       }
       req.resume();
-    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; }
+    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedAttachment) activeAttachments -= 1; if (reservedVoice) activeVoices -= 1; }
   });
   server.maxHeadersCount = 40;
   await new Promise((resolveListening, rejectListening) => {
