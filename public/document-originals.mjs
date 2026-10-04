@@ -11,12 +11,12 @@ const types = {
 };
 const idle = () => ({ phase: 'idle', original: null, error: null });
 const invalid = () => new ApiError(502, '原文件身份、版本、类型或完整性不一致，请刷新资料后重试。');
-const identity = item => JSON.stringify([item?.document_id, item?.latest_job?.revision_id ?? item?.active_revision_id ?? item?.registered_revision_id,
+const identity = item => JSON.stringify([item?.document_id, item?.active_revision_id ?? item?.latest_job?.revision_id ?? item?.registered_revision_id,
   item?.filename, item?.document_type, item?.media_info?.mime_type, item?.media_info?.sha256,
   item?.media_info?.size_bytes, item?.synthetic_fixture]);
 
 function expected(item) {
-  const revision = item?.latest_job?.revision_id ?? item?.active_revision_id ?? item?.registered_revision_id;
+  const revision = item?.active_revision_id ?? item?.latest_job?.revision_id ?? item?.registered_revision_id;
   const media = item?.media_info;
   if (item?.synthetic_fixture || !id.test(item?.document_id ?? '') || !id.test(revision ?? '')
     || typeof item?.filename !== 'string' || !item.filename || item.filename.length > 255

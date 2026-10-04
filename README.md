@@ -1,5 +1,9 @@
 # AI Knowledge Web · 知识库工作台
 
+2026-10-04当前主线：网页可保存嵌入/重排/生成配置、手动连接测试、明确应用及召回预览；逐角色provider、生成/重排切换、嵌入模型全库重建、同资料原文件更新、已配置媒体接网页有效文字配置及当前页批量文本重建已实现。最新交付为工作区`.tools/batch-text-reindex-mainline`，01:32:29 +08仅后端skiptests package成功，未运行测试/检查、未部署，页面由用户验收。使用[模型配置](docs/MODEL_SETUP_AND_RETRIEVAL.md)、[媒体配置](docs/MANAGED_MEDIA_SETUP.md)和[批量重建](docs/BATCH_TEXT_REINDEX.md)；下方历史测试结果不认证新增源码。
+
+2026-10-03当前0025前端本机验证：[已有媒体向量资料的文本重建](docs/changes/0025-reindex-vector-continuation/verification.md)。新text_reindex_with_vectors与原能力及服务器资格一起开放行/详情入口；明确文字模型/向量服务费用，已有图片/音频向量完整核对后继续使用，不重新生成媒体向量或ASR。合法旧发布在重建任务中及失败/取消后可读，成功仅在授权回读新publication后清旧来源并提示重查，保留问题、完整范围与整理草稿。实际10DOM旧产品8FAIL/2PASS→同10GREEN，12模块是实现后补测；472完整/check通过，65输入稳定，旧450身份/断言保留。后端0036门禁与最终交接尚待root，未部署，用户验收页面，0新增真实provider，完整目标ACTIVE。下方保留历史记录。
+
 2026-10-03当前0024：[保存材料重建](docs/changes/0024-saved-source-reindex/verification.md)。已发布资料可明确重建保存的完整文本索引，处理期间旧索引可用，成功才切换；失败、取消和重启中断保留旧版本。入口核对真实能力及当前资格，成功后提示重新查询，保留问题、范围与整理草稿。模型配置、逐角色测试、明确应用和召回测试继续沿既有流程。首切不支持已有独立图片/音频向量的资料及真正嵌入/投影迁移；后续receipt迁移与原文件版本替换继续保留。未部署，页面用户验收，0新增真实provider调用，完整目标ACTIVE。
 
 2026-10-03当前基础修复[0023召回范围](docs/changes/0023-retrieval-scope/verification.md)：仅启用文字召回时，资料行、完整多选及详情均可进入指定范围测试；明确点击才切全库，文字模式保持，正式生成仍禁用。四项实际RED→GREEN、435全量和syntax通过，旧431完整保留；后端1032输入/JAR一致，明确复用0034实跑。未部署，页面用户验收，0真实provider调用；完整开发目标继续。下方保留历史记录。
@@ -42,7 +46,7 @@
 
 保留[0005本地文件预览](docs/changes/0005-media-preview/verification.md)：图片缩放/旋转、音视频播放、PDF与纯文本阅读，文件留在浏览器，不上传或关联库内记录。库内多模态上传和typed来源由0007/0008接入，查询附件网页由0010接入，持久摘要网页由0011接入。此本地预览与库内来源是独立功能。
 
-For AI agents: this repository contains the standalone native JavaScript knowledge workbench, including capability-gated grounded text answers and current-authorized source rereads. Java owns retrieval, models, ACL and evidence verification. Start with [0006 change artifacts](docs/changes/0006-grounded-answers/), [AI_CONTEXT](docs/AI_CONTEXT.md), [AGENTS](AGENTS.md), and [API_CONNECTION](docs/API_CONNECTION.md). Multimodal web integration, real-provider quality and production remain incomplete.
+For AI agents: this repository contains the standalone native JavaScript knowledge workbench, including capability-gated grounded text answers and current-authorized source rereads. Java owns retrieval, models, ACL and evidence verification. Start with [0006 change artifacts](docs/changes/0006-grounded-answers/), [AI_CONTEXT](docs/AI_CONTEXT.md), [AGENTS](AGENTS.md), and [API_CONNECTION](docs/API_CONNECTION.md). Multimodal web entry points are implemented; current browser acceptance, real-provider quality and production remain pending.
 
 ## 本地运行
 
@@ -52,7 +56,7 @@ For AI agents: this repository contains the standalone native JavaScript knowled
 
 需要真实文本上传时，使用支持`0003-text-ingestion`的Java版本，在独立本机数据目录启动并显式设置`RAG_INGESTION_ENABLED=true`。该能力默认关闭且只允许loopback；前端必须看到Java的`text_upload`与`ingestions`两个capability才开启按钮。旧后端仍可用于资料管理，但不会自动获得上传能力；不要为此直接复用或替换其他服务的数据目录。
 
-索引入口要求Java显式启用`RAG_INDEXING_ENABLED=true`并返回`text_index/indexings`，且当前资料行允许索引。模型与独立Java Milvus集合由后端配置，页面不接受provider key。点击“建立索引”或“重试索引”先说明外部处理与调用费用，确认后才发送请求。parsed终态自动回读授权列表取得索引权限，indexed终态回读服务器发布版本；前端不会自行设置active证据版本。
+索引入口要求Java显式启用`RAG_INDEXING_ENABLED=true`并返回`text_index/indexings`，且当前资料行允许索引。管理员可在设置页保存、手动测试并应用文字provider配置；独立Milvus连接和媒体资源由服务端提供，参见[模型设置](docs/MODEL_SETUP_AND_RETRIEVAL.md)。点击“建立索引”或“重试索引”先说明外部处理与调用费用，确认后才发送请求。parsed终态自动回读授权列表取得索引权限，indexed终态回读服务器发布版本；前端不会自行设置active证据版本。
 
 文本问答还要求Java显式设置`RAG_ANSWERS_ENABLED=true`并同时返回`answers/sources`。在“知识问答”问全库，或从资料行/批量工具进入完整所选范围；所选范围不会过滤未发布资料，也不在空范围或错误时回退全库。Java负责范围与证据可用性，配置及质量验收见后端项目文档。
 

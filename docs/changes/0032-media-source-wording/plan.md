@@ -1,0 +1,5 @@
+# 实现范围
+
+仅将public/app.js中renderSourceMedia的统一转录提示替换为现有typed来源的说明映射。既有媒体校验模块已经核对kind、proof_origin和time_precision，无需新增字段或修改后台。
+
+遵守停止全部自动化测试的指令，不新增或运行测试、检查、格式工具或审计。根代理负责一次静态发布及实际页面复验。

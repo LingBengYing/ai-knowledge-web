@@ -332,6 +332,7 @@ function appFixture(kind, initial = task(kind), rowChange = {}) {
     get modelSession() { return modelSession; }, get retrievalSession() { return retrievalSession; },
     enableModelSetup() { config.capabilities.push('model_configuration', 'retrieval_test'); renderControls(); },
     enableReindex() { config.capabilities.push('text_reindex'); renderControls(); renderRows(); if (state.detail) renderDetailEvidence(); },
+    setReceiptReindexCapability(enabled) { config.capabilities = config.capabilities.filter(name => name !== 'text_reindex_with_vectors'); if (enabled) config.capabilities.push('text_reindex_with_vectors'); renderControls(); renderRows(); if (state.detail) renderDetailEvidence(); },
     configureModelSetupOnly() { config.capabilities = ['management', 'text_upload', 'ingestions', 'model_configuration']; renderControls(); },
     enableCleanup() { config.capabilities.push('document_cleanup'); renderControls(); },
     get cleanupSession() { return cleanupSession; },
@@ -2103,5 +2104,191 @@ for (const kind of ['image', 'audio']) {
     assert.equal(fixture.get('edit-dialog').open, false, 'a previously captured detail button must not reopen reindex confirmation');
     assert.equal(calls.length, 2, 'the entire flow remains one vector GET and one explicit vector POST');
     assert.equal(fixture.get('detail-form'), originalForm); saved();
+  });
+}
+
+// New receipt-preserving reindex flows; the prior no-capability cases remain unchanged.
+function receiptReindexFixture(kind) {
+  const data = summaryData(kind);
+  const fixture = appFixture('indexing', task('indexing', 'indexed', { task_id: 'index-old' }), {
+    ...data.item, can_reindex: true,
+  });
+  fixture.app.enableReindex(); fixture.app.setReceiptReindexCapability(true);
+  const path = `/v1/documents/doc-one/${kind}-vector`;
+  const reply = kind === 'image' ? imageVectorReply : audioVectorReply;
+  const enable = () => fixture.app[kind === 'image' ? 'enableImageVectors' : 'enableAudioVectors']();
+  const session = () => fixture.app[kind === 'image' ? 'vectorSession' : 'audioVectorSession'];
+  return { fixture, data, path, reply, enable, session };
+}
+
+async function receiptReindexOldAnswer(fixture) {
+  fixture.app.enableAnswers(); fixture.app.enableModelSetup();
+  fixture.app.openAnswers(['doc-one', 'doc-tail']);
+  fixture.get('answer-question').value = '保留完整媒体问题';
+  fixture.app.setApi(async path => {
+    if (path === '/v1/answers') return textAnswer;
+    assert.equal(path, '/v1/sources/answer-one/1');
+    return { answer_id: textAnswer.answer_id, citation: textCitation };
+  });
+  fixture.get('answer-form').dispatch('submit'); await settleAnswer();
+  assert.equal(fixture.app.answerSession.value.result.answer_id, textAnswer.answer_id);
+  fixture.get('answer-citations').querySelector('button').dispatch('click'); await settleAnswer();
+  assert.equal(fixture.get('source-quote').textContent, textCitation.quote);
+  fixture.app.showView('documents'); fixture.app.openDetail('doc-one');
+  return fixture.app.answerSession.value.result;
+}
+
+for (const kind of ['image', 'audio']) {
+  test(`receipt reindex ${kind} available vector retains row and detail entries and confirms one text-only rebuild request`, async () => {
+    const { fixture, data, path, reply, enable, session } = receiptReindexFixture(kind);
+    const calls = [], oldRow = fixture.app.state.items[0], originalForm = fixture.get('detail-form');
+    const saved = editUnsaved(fixture);
+    const next = task('indexing', 'queued', { task_id: 'index-rebuild' });
+    let deliver;
+    fixture.app.setApi(async (route, options = {}) => {
+      calls.push({ route, options });
+      if (route === path) { assert.equal(options.method, undefined); return reply(oldRow, 'available'); }
+      if (route === '/v1/documents/doc-one/reindex') return new Promise(resolve => { deliver = resolve; });
+      if (route.startsWith('/v1/management/documents?')) return reindexPage(fixture, { latest_index_job: next, index_status: 'queued', can_reindex: false });
+      throw new Error(`unexpected receipt reindex route ${route}`);
+    });
+    enable(); await settleAnswer();
+    assert.equal(session().value.vector.status, 'available'); assert.equal(session().matches(oldRow), true);
+    const control = reindexEntry(fixture), detail = reindexEntry(fixture, true);
+    assert.ok(control, 'new capability and authorized current receipt must allow the row action');
+    assert.ok(detail, 'new capability must allow the same detail action');
+    assert.equal(control.disabled, false); assert.equal(detail.disabled, false);
+    assert.doesNotMatch(fixture.get(`detail-${kind}-vector`).textContent, /暂不支持重建文本索引/u);
+    control.dispatch('click');
+    const description = fixture.get('dialog-description').textContent;
+    assert.match(description, /嵌入模型.*Milvus/u); assert.match(description, /费用/u);
+    assert.match(description, /核对|核验/u); assert.match(description, /复用|继续使用/u);
+    assert.match(description, /图片.*音频.*向量|媒体向量/u);
+    assert.match(description, /不会重新生成|不重新生成/u);
+    assert.match(description, /不会重新解析.*转录.*替换原文件/u);
+    fixture.get('dialog-cancel').dispatch('click'); assert.equal(calls.length, 1);
+    detail.dispatch('click'); fixture.get('dialog-form').dispatch('submit'); fixture.get('dialog-form').dispatch('submit');
+    assert.equal(calls.length, 2); assert.equal(calls[1].route, '/v1/documents/doc-one/reindex');
+    assert.equal(calls[1].options.method, 'POST');
+    assert.deepEqual(JSON.parse(JSON.stringify(calls[1].options.body)), { base_publication_id: data.item.index_publication_id });
+    assert.equal(fixture.app.state.items[0].index_publication_id, data.item.index_publication_id);
+    assert.equal(fixture.get('detail-form'), originalForm); saved();
+    deliver(next); await settleMutation(fixture);
+    assert.equal(calls.filter(call => call.options.method === 'POST').length, 1);
+    assert.equal(calls.filter(call => call.route === path).length, 1, 'navigation must not create an extra media request');
+    assert.equal(fixture.app.state.items[0].index_publication_id, data.item.index_publication_id);
+    assert.equal(fixture.app.state.indexTask.task_id, 'index-rebuild');
+    assert.match(fixture.get('task-boundary').textContent, /旧.*继续/u); saved();
+  });
+
+  test(`receipt reindex ${kind} new publication rereads inherited vector and rejects the old delayed receipt without discarding drafts`, async () => {
+    const { fixture, data, path, reply, enable, session } = receiptReindexFixture(kind);
+    const oldAnswer = await receiptReindexOldAnswer(fixture);
+    const calls = [], oldRow = fixture.app.state.items[0], saved = editUnsaved(fixture);
+    const originalForm = fixture.get('detail-form');
+    const completed = task('indexing', 'indexed', { task_id: 'index-rebuild', can_cancel: false });
+    let oldReply, oldSignal, publish, vectorReads = 0;
+    fixture.app.setApi(async (route, options = {}) => {
+      calls.push({ route, options });
+      if (route === path) {
+        assert.equal(options.method, undefined); vectorReads++;
+        if (vectorReads === 2) { oldSignal = options.signal; return new Promise(resolve => { oldReply = resolve; }); }
+        return reply(fixture.app.state.items[0], 'available');
+      }
+      if (route === '/v1/indexings/index-rebuild') return completed;
+      if (route.startsWith('/v1/management/documents?')) return new Promise(resolve => { publish = resolve; });
+      throw new Error(`unexpected receipt publication route ${route}`);
+    });
+    enable(); await settleAnswer();
+    const generation = session().value.vector.vector_generation_id;
+    fixture.get(`${kind}-vector-refresh`).dispatch('click');
+    assert.equal(vectorReads, 2); assert.equal(session().value.phase, 'loading');
+    fixture.app.watchTask(task('indexing', 'processing', { task_id: 'index-rebuild' }), 'indexing');
+    const pending = fixture.app.loadTask(); await settleAnswer();
+    assert.equal(typeof publish, 'function');
+    assert.equal(fixture.app.state.items[0].index_publication_id, data.item.index_publication_id);
+    assert.equal(fixture.app.answerSession.value.result, oldAnswer, 'task completion cannot invalidate current sources before authorized publication read');
+    assert.equal(vectorReads, 2, 'same base must not create another vector GET while its existing refresh is pending');
+    publish(reindexPage(fixture, { latest_index_job: completed, index_status: 'indexed', index_publication_id: 'publication-new' }));
+    await pending; await settleAnswer();
+    assert.equal(vectorReads, 3, 'one ordinary GET must validate the new base association');
+    assert.equal(oldSignal.aborted, true);
+    assert.equal(session().value.phase, 'ready');
+    assert.equal(session().value.vector.publication_id, 'publication-new');
+    assert.equal(session().value.vector.vector_generation_id, generation, 'inheritance may retain the exact old physical generation');
+    assert.equal(session().matches(fixture.app.state.items[0]), true);
+    assert.equal(fixture.app.answerSession.value.result, null); assert.equal(fixture.app.retrievalSession.value.result, null);
+    oldReply({ ...reply(oldRow, 'available'), vector_generation_id: 'late-old-generation' }); await settleAnswer();
+    assert.equal(session().value.vector.publication_id, 'publication-new');
+    assert.equal(session().value.vector.vector_generation_id, generation);
+    assert.equal(fixture.app.state.items[0].active_revision_id, data.item.active_revision_id);
+    assert.equal(fixture.get('answer-question').value, '保留完整媒体问题');
+    assert.match(fixture.get('answer-scope-label').textContent, /仅所选 2 份/u);
+    assert.match(fixture.get('answer-error').textContent, /重新/u);
+    assert.equal(fixture.get('detail-form'), originalForm); saved();
+    assert.equal(calls.filter(call => call.options.method === 'POST').length, 0);
+  });
+
+  for (const terminal of ['failed', 'cancelled']) {
+    test(`receipt reindex ${kind} ${terminal} retains the old vector and source while preserving the editable detail`, async () => {
+      const { fixture, data, path, reply, enable, session } = receiptReindexFixture(kind);
+      const oldAnswer = await receiptReindexOldAnswer(fixture), calls = [];
+      const oldRow = fixture.app.state.items[0], originalForm = fixture.get('detail-form'), saved = editUnsaved(fixture);
+      const finished = task('indexing', terminal, { task_id: 'index-rebuild' });
+      fixture.app.setApi(async (route, options = {}) => {
+        calls.push({ route, options });
+        if (route === path) { assert.equal(options.method, undefined); return reply(fixture.app.state.items[0], 'available'); }
+        if (route === '/v1/indexings/index-rebuild') return finished;
+        if (route.startsWith('/v1/management/documents?')) return reindexPage(fixture, { latest_index_job: finished, index_status: terminal });
+        if (route === '/v1/sources/answer-one/1') return { answer_id: textAnswer.answer_id, citation: textCitation };
+        throw new Error(`unexpected receipt terminal route ${route}`);
+      });
+      enable(); await settleAnswer();
+      assert.equal(session().value.vector.status, 'available');
+      const oldGeneration = session().value.vector.vector_generation_id;
+      fixture.app.watchTask(task('indexing', 'processing', { task_id: 'index-rebuild' }), 'indexing');
+      await fixture.app.loadTask(); await settleAnswer();
+      assert.equal(fixture.app.state.items[0].index_publication_id, oldRow.index_publication_id);
+      assert.equal(fixture.app.state.items[0].active_revision_id, data.item.active_revision_id);
+      assert.equal(fixture.app.answerSession.value.result, oldAnswer);
+      assert.equal(session().value.phase, 'ready', 'an unsuccessful new job must not hide the still-published vector');
+      assert.equal(session().value.vector.publication_id, oldRow.index_publication_id);
+      assert.equal(session().value.vector.vector_generation_id, oldGeneration);
+      assert.match(fixture.get(`detail-${kind}-vector`).textContent, /已就绪/u);
+      assert.doesNotMatch(fixture.get(`detail-${kind}-vector`).textContent, /请先完成.*索引/u);
+      assert.match(fixture.get('task-boundary').textContent, /旧.*继续/u);
+      await fixture.app.answerSession.readSource(1);
+      assert.equal(fixture.get('source-quote').textContent, textCitation.quote, 'the old current answer source remains readable');
+      assert.equal(calls.filter(call => call.route === '/v1/sources/answer-one/1').length, 1);
+      assert.equal(calls.filter(call => call.options.method === 'POST').length, 0);
+      assert.equal(fixture.get('detail-form'), originalForm); saved();
+      assert.equal(fixture.get('answer-question').value, '保留完整媒体问题');
+      assert.match(fixture.get('answer-scope-label').textContent, /仅所选 2 份/u);
+    });
+  }
+
+  test(`receipt reindex ${kind} confirmation rechecks capability and server eligibility without fabricating a new row`, async () => {
+    const { fixture, path, reply, enable } = receiptReindexFixture(kind);
+    const calls = [], originalRow = fixture.app.state.items[0], saved = editUnsaved(fixture);
+    fixture.app.setApi(async (route, options = {}) => {
+      calls.push({ route, options }); assert.equal(route, path); assert.equal(options.method, undefined);
+      return reply(originalRow, 'available');
+    });
+    enable(); await settleAnswer();
+    const initial = reindexEntry(fixture, true); assert.ok(initial); initial.dispatch('click');
+    assert.equal(fixture.get('edit-dialog').open, true);
+    fixture.app.setReceiptReindexCapability(false);
+    fixture.get('dialog-form').dispatch('submit'); await settleAnswer();
+    assert.equal(calls.length, 1); assert.match(fixture.get('dialog-error').textContent, /变化.*刷新/u);
+    assert.equal(fixture.app.state.items[0], originalRow); assert.equal(originalRow.can_reindex, true);
+    fixture.get('dialog-cancel').dispatch('click');
+    initial.dispatch('click'); assert.equal(fixture.get('edit-dialog').open, false);
+    fixture.app.setReceiptReindexCapability(true);
+    const restored = reindexEntry(fixture, true); assert.ok(restored); restored.dispatch('click');
+    originalRow.can_reindex = false; // Simulate the currently authorized row changing, never a local receipt inference.
+    fixture.get('dialog-form').dispatch('submit'); await settleAnswer();
+    assert.equal(calls.length, 1); assert.match(fixture.get('dialog-error').textContent, /变化.*刷新/u);
+    assert.equal(fixture.app.state.items[0], originalRow); assert.equal(originalRow.can_reindex, false);
+    assert.equal(calls.filter(call => call.options.method === 'POST').length, 0); saved();
   });
 }

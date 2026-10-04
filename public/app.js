@@ -1,7 +1,8 @@
 import { ModelConfigurationSession, modelConfigurationEnabled } from './model-configuration.mjs';
+import { ModelRebuildSession, modelRebuildEnabled, modelRebuildPending, modelRebuildReason } from './model-rebuild.mjs';
 import { RetrievalSession, retrievalEnabled, matchCurrentOriginal } from './retrieval-tests.mjs';
 import { CleanupSession, cleanupEnabled, canRequestCleanup, cleanupLabel } from './document-cleanup.mjs';
-import { createApi, ApiError, validateUpload, imageUploadMode } from './api.mjs';
+import { createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode } from './api.mjs';
 import { WorkbenchState, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel } from './workbench-state.mjs';
 import { showNotice } from './notices.mjs';
 import { AnswerSession, answersEnabled, answerRequest } from './answers.mjs';
@@ -15,6 +16,7 @@ import { ImageVectorSession, imageVectorsEnabled, canReadImageVector } from './i
 import { AudioVectorSession, audioVectorsEnabled, canReadAudioVector } from './audio-vectors.mjs';
 import { VideoAvIndexSession, videoAvEnabled, canReadVideoAvIndex, checkedVideoAvUpload, videoAvModes, videoAvQueryAttachmentsEnabled } from './video-av.mjs';
 import { SoundIndexSession, soundEnabled, canReadSoundIndex, checkedSoundUpload } from './sound-library.mjs';
+import { DocumentReplacementSession, replacementsEnabled, replacementLabel, replacementAccept } from './document-replacements.mjs';
 
 const $ = id => document.getElementById(id);
 const state = new WorkbenchState();
@@ -63,6 +65,14 @@ const voiceQuestionSession = new VoiceQuestionSession({
 const originalSession = new DocumentOriginalSession((path, options) => api(path, options), {
   onChange: () => renderDetailOriginal(), onAuthenticationFailure: error => authenticationFailed(error),
 });
+const replacementSession = new DocumentReplacementSession((path, options) => api(path, options), {
+  onChange: () => renderDetailReplacement(), onAuthenticationFailure: error => authenticationFailed(error),
+  onPublished: value => {
+    if (currentView === 'documents' && connected && state.detail?.document_id === value.document_id) {
+      loadDocuments({ preserveDetail: true });
+    }
+  },
+});
 const synopsisSession = new SynopsisSession((path, options) => api(path, options), {
   onChange: () => { renderDetailSynopsis(); synchronizeTagSuggestions(); renderDetailTagSuggestions(); }, onAuthenticationFailure: error => authenticationFailed(error),
   setTimer: (callback, delay) => setTimeout(callback, delay), clearTimer: timer => clearTimeout(timer),
@@ -77,12 +87,18 @@ const cleanupSession = new CleanupSession((path, options) => api(path, options),
 });
 
 const modelRoles = ['embedding', 'rerank', 'generation'];
+const modelProviderLabels = { siliconflow: '硅基流动', deepseek: 'DeepSeek 官方' };
 let renderedModelVersion;
 let retrievalSourceSequence = 0;
 let retrievalSourceMatch = null;
 const modelSession = new ModelConfigurationSession((path, options) => api(path, options), {
   onChange: () => renderModelSettings(), onClearSecrets: clearModelSecrets,
   onAuthenticationFailure: error => authenticationFailed(error),
+  canWrite: () => !modelRebuildLocked(),
+});
+const modelRebuildSession = new ModelRebuildSession((path, options) => api(path, options), {
+  onChange: () => renderModelSettings(), onAuthenticationFailure: error => authenticationFailed(error),
+  onCompleted: job => completeModelRebuild(job),
 });
 const retrievalSession = new RetrievalSession((path, options) => api(path, options), {
   onChange: () => renderRetrieval(), onAuthenticationFailure: error => authenticationFailed(error),
@@ -95,14 +111,54 @@ function clearModelSecrets() {
   for (const role of modelRoles) { const input = $(`model-${role}-key`); if (input) input.value = ''; }
 }
 
+function modelRebuildLocked() {
+  return modelRebuildEnabled(config) && (modelRebuildPending(modelRebuildSession.value.status?.job)
+    || ['starting', 'unknown'].includes(modelRebuildSession.value.phase));
+}
+
+async function loadModelSettings() {
+  const epoch = state.epoch;
+  const result = await modelSession.load();
+  if (result && epoch === state.epoch && connected && currentView === 'settings' && modelRebuildEnabled(config)) await modelRebuildSession.load();
+  return epoch === state.epoch ? result : null;
+}
+
+async function completeModelRebuild(job) {
+  const epoch = state.epoch;
+  if (!connected || currentView !== 'settings' || modelSession.value.dirty) return false;
+  try {
+    const result = await modelSession.load();
+    if (!result || epoch !== state.epoch || currentView !== 'settings' || result.active_version !== job.target_version) {
+      if (epoch === state.epoch && currentView === 'settings') notice('model-rebuild-error', '批次已完成，尚未确认当前有效配置。请刷新批次状态核对。');
+      return false;
+    }
+    await refreshModelCapabilities();
+    if (epoch !== state.epoch || !connected || currentView !== 'settings') return false;
+    answerSession.reset(); resetRetrieval();
+    notice('answer-error', '新的嵌入配置与索引已应用，请重新测试召回或提问。当前问题与完整范围已保留。');
+    renderModelRebuild();
+    return true;
+  } catch (error) {
+    if (epoch === state.epoch && !authenticationFailed(error)) notice('model-rebuild-error', '批次结果尚未完成回读，请刷新批次状态核对。');
+    return false;
+  }
+}
+
 function modelIndexGuidance() {
   const saved = modelSession.value.configuration;
   if (!modelConfigurationEnabled(config)) return '';
   if (!saved) return '请在设置中读取模型状态；解析完成不等于已索引。';
+  if (modelRebuildLocked()) return '索引重建期间继续使用旧配置和已发布资料。请等待批次结束后再导入或更改配置。';
   if (saved.state === 'unconfigured') return '尚未配置文字模型，请在设置中填写并保存三个角色。';
-  if (saved.active_version === null) return '模型草稿尚未应用；应用后再建立文字索引。';
-  if (!saved.projection.configured) return '服务器尚未配置向量库，请由服务管理员补充连接配置。';
+  if (!saved.projection.configured) return '模型可继续保存和测试。应用前请由服务管理员配置向量库，再点击“读取当前配置”。';
+  if (saved.active_version === null) return '模型草稿尚未应用；应用后可导入资料并建立文字索引。';
   return '索引使用已应用版本；解析完成后仍须显式建立索引。模型目标变更可能需要另行重建。';
+}
+
+function canImportConfiguredDocuments() {
+  const value = modelSession.value;
+  return connected && value.configuration?.active_version != null && ingestionEnabled()
+    && !state.mutating && !value.dirty && !modelRebuildLocked() && !['loading', 'saving', 'testing', 'activating', 'unknown'].includes(value.phase);
 }
 
 function renderModelSettings() {
@@ -110,26 +166,38 @@ function renderModelSettings() {
   panel.hidden = !connected || !modelConfigurationEnabled(config); if (panel.hidden) return;
   const value = modelSession.value, saved = value.configuration;
   const busy = ['loading', 'saving', 'testing', 'activating'].includes(value.phase);
-  const writable = saved?.can_edit === true && !busy && value.phase !== 'unknown';
+  const writable = saved?.can_edit === true && !busy && value.phase !== 'unknown' && !modelRebuildLocked();
   $('model-refresh').disabled = busy; $('model-stop').hidden = !busy;
   $('model-status').textContent = value.phase === 'unknown' ? '操作结果未知。请读取当前配置核对；不会自动再次提交。'
     : busy ? ({ loading: '正在读取配置…', saving: '正在保存草稿…', testing: '正在测试所选角色…', activating: '正在应用已保存版本…' })[value.phase]
       : saved ? `${saved.can_edit ? '模型管理员' : '只读'} · 已保存版本 ${saved.version ?? '无'} · 已应用版本 ${saved.active_version ?? '无'}${value.dirty ? ' · 有未保存改动，旧测试已失效' : ''}` : '尚未读取配置。';
   notice('model-error', value.error ? `${value.error.message}${value.error.field ? `（字段：${value.error.field}）` : ''}` : '');
   if ((!value.dirty && saved && renderedModelVersion !== saved.version) || !saved) {
-    for (const role of modelRoles) $(`model-${role}-name`).value = saved?.[role].model ?? '';
+    for (const role of modelRoles) {
+      $(`model-${role}-name`).value = saved?.[role].model ?? '';
+      $(`model-${role}-provider`).value = saved?.[role].provider ?? 'siliconflow';
+    }
     $('model-embedding-dimensions').value = saved?.embedding.dimensions ?? '';
     $('model-embedding-revision').value = saved?.embedding.revision ?? '';
     renderedModelVersion = saved?.version;
   }
   for (const role of modelRoles) {
+    const provider = $(`model-${role}-provider`).value;
+    const providerChanged = provider !== (saved?.[role].provider ?? 'siliconflow');
+    $(`model-${role}-provider`).disabled = !writable;
     $(`model-${role}-name`).disabled = !writable; $(`model-${role}-key`).disabled = !writable;
-    $(`model-${role}-key-status`).textContent = saved?.[role].has_key ? '已保存密钥；留空保留，填写新值则更新。' : '尚未保存密钥，首次配置必须填写。';
+    $(`model-${role}-key-status`).textContent = providerChanged
+      ? `服务商已更换为${modelProviderLabels[provider]}，请重新填写对应密钥；原服务商密钥不会沿用。`
+      : saved?.[role].has_key ? `已保存${modelProviderLabels[provider]}密钥；同一服务商留空保留，填写新值则更新。` : `尚未保存密钥，请填写${modelProviderLabels[provider]}的密钥。`;
   }
+  $('model-generation-name-help').textContent = $('model-generation-provider').value === 'deepseek'
+    ? '填写 DeepSeek 官方控制台提供的模型 ID，并使用 DeepSeek 官方密钥。切换服务商不会自动修改模型名称。'
+    : '填写硅基流动控制台提供的完整模型 ID，保留斜杠及大小写，并使用硅基流动密钥。';
   $('model-embedding-dimensions').disabled = !writable; $('model-embedding-revision').disabled = !writable;
   const ready = writable && !value.dirty && saved.state !== 'unconfigured';
   $('model-save').disabled = !writable || !value.dirty;
-  $('model-activate').disabled = !ready || saved?.active_version === saved?.version;
+  const rebuildRequired = modelRebuildEnabled(config) && modelRebuildSession.value.status?.target_version === saved?.version && modelRebuildSession.value.status?.required;
+  $('model-activate').disabled = !ready || !saved.projection.configured || saved?.active_version === saved?.version || rebuildRequired;
   for (const role of [...modelRoles, 'projection']) {
     $(`model-test-${role}`).disabled = !ready || role === 'projection' && !saved.projection.can_test;
     const result = value.tests[role];
@@ -137,13 +205,52 @@ function renderModelSettings() {
   }
   $('model-projection-status').textContent = saved?.projection.configured ? `已预置向量库 · 维度 ${saved.projection.dimension ?? '未提供'}` : '向量库尚未由服务器配置；页面不接收连接地址或凭据。';
   $('model-index-guidance').textContent = modelIndexGuidance();
+  $('model-import').disabled = !canImportConfiguredDocuments();
+  $('model-import').title = value.dirty ? '请先保存模型改动，再进入导入流程。' : '配置已应用且服务启用上传后，可选择原文件导入。';
+  renderModelRebuild();
+}
+
+function renderModelRebuild() {
+  const panel = $('model-rebuild'); if (!panel) return;
+  panel.hidden = !connected || !modelRebuildEnabled(config); if (panel.hidden) return;
+  const value = modelRebuildSession.value, status = value.status, job = status?.job, saved = modelSession.value.configuration;
+  const busy = ['loading', 'starting'].includes(value.phase), pending = modelRebuildPending(job);
+  const current = saved && status?.target_version === saved.version;
+  const modelBusy = ['loading', 'saving', 'testing', 'activating', 'unknown'].includes(modelSession.value.phase);
+  $('model-rebuild-refresh').disabled = busy || modelBusy;
+  $('model-rebuild-start').disabled = busy || modelBusy || pending || value.phase !== 'ready' || !current
+    || !saved.can_edit || modelSession.value.dirty || status?.can_start !== true || state.mutating;
+  $('model-rebuild-start').hidden = status && !status.required && !pending;
+  $('model-rebuild-guidance').textContent = modelSession.value.dirty ? '请先保存草稿，再核对重建资格。'
+    : !current ? '读取已保存配置后，刷新本次重建资格。'
+      : pending ? '旧配置和已发布资料仍可查询、打开来源及整理。重建期间暂停配置保存、导入和索引写入；离开页面不取消后台批次。'
+        : status.required ? `当前草稿需要重建 ${status.total_documents} 份资料的索引后才能应用。将使用保存的解析材料，不重新解析或转录。`
+          : modelRebuildReason(status.reason) || '当前草稿无需重建，可使用普通应用入口。';
+  const labels = { queued: '等待重建', running: '正在重建索引', applying: '正在核对并应用', completed: '批次已完成', failed: '重建未完成' };
+  $('model-rebuild-status').textContent = value.phase === 'starting' ? '正在创建后台批次…'
+    : value.phase === 'unknown' ? '提交结果未知，请刷新批次状态；不会自动重复提交。'
+      : job ? `配置版本 ${job.target_version} · ${labels[job.state]} · 已构建 ${job.completed_documents} / ${job.total_documents} 份${pending ? ' · 自动刷新中' : ''}`
+        : busy ? '正在读取重建资格…' : '尚无重建批次。';
+  if (job?.state === 'completed' && saved?.active_version === job.target_version) $('model-rebuild-status').textContent += ' · 新配置已确认生效，请重新测试召回或提问。';
+  const reason = job?.state === 'failed' ? modelRebuildReason(job.error_code)
+    : current && !pending && status?.can_start !== true && status?.required ? modelRebuildReason(status.reason) : '';
+  notice('model-rebuild-error', value.error?.message ?? reason);
+}
+
+function modelRebuildDialog() {
+  const status = modelRebuildSession.value.status, saved = modelSession.value.configuration;
+  if (!connected || currentView !== 'settings' || !modelRebuildEnabled(config) || modelRebuildLocked() || state.mutating
+    || ['loading', 'saving', 'testing', 'activating', 'unknown'].includes(modelSession.value.phase)
+    || modelSession.value.dirty || !saved?.can_edit || status?.target_version !== saved.version || !status.can_start) return;
+  showDialog('重建索引并应用配置', `将为本次 ${status.total_documents} 份资料使用已保存的解析材料重新建立索引，调用新的嵌入模型与向量服务，可能产生费用。处理中仍使用旧配置与已发布资料；全部完成后自动应用版本 ${saved.version}，失败保留旧配置。已有图片/音频独立向量会核验后继续使用，不重新生成媒体向量。`, [],
+    { kind: 'model-rebuild', version: saved.version, epoch: state.epoch }, '确认重建并应用');
 }
 
 function modelDraft() {
   const result = {};
   for (const role of modelRoles) {
     const key = $(`model-${role}-key`).value;
-    result[role] = { model: $(`model-${role}-name`).value, ...(key ? { api_key: key } : {}) };
+    result[role] = { provider: $(`model-${role}-provider`).value, model: $(`model-${role}-name`).value, ...(key ? { api_key: key } : {}) };
   }
   result.embedding.dimensions = Number($('model-embedding-dimensions').value);
   result.embedding.revision = $('model-embedding-revision').value;
@@ -229,24 +336,48 @@ async function openRetrievalDetail(match) {
 }
 
 $('model-form').addEventListener('input', () => modelSession.edit());
+for (const role of modelRoles) $(`model-${role}-provider`).addEventListener('change', () => {
+  $(`model-${role}-key`).value = '';
+  modelSession.edit();
+});
 $('model-library-settings').addEventListener('click', () => navigate('settings'));
 $('model-form').addEventListener('submit', async event => {
   event.preventDefault(); if (!connected || currentView !== 'settings') return;
-  try { await modelSession.save(modelDraft()); } catch (error) { notice('model-error', messageFor(error)); }
+  const epoch = state.epoch;
+  try {
+    const result = await modelSession.save(modelDraft());
+    if (result && epoch === state.epoch && currentView === 'settings' && modelRebuildEnabled(config)) await modelRebuildSession.load();
+  } catch (error) { notice('model-error', messageFor(error)); }
 });
 $('model-refresh').addEventListener('click', async () => {
   if (!connected || currentView !== 'settings' || !modelConfigurationEnabled(config)) return;
   const epoch = state.epoch;
   renderedModelVersion = undefined;
   try {
-    const result = await modelSession.load();
+    const result = await loadModelSettings();
     if (result && result.active_version !== null && epoch === state.epoch && connected && currentView === 'settings') await refreshModelCapabilities();
   } catch (error) { if (!authenticationFailed(error)) notice('model-error', messageFor(error)); }
 });
 $('model-stop').addEventListener('click', () => modelSession.stop());
 for (const role of [...modelRoles, 'projection']) $(`model-test-${role}`).addEventListener('click', async () => { try { await modelSession.test(role); } catch {} });
 $('model-activate').addEventListener('click', async () => {
-  try { const result = await modelSession.activate(); if (result) await refreshModelCapabilities(); } catch (error) { if (!authenticationFailed(error)) notice('model-error', messageFor(error)); }
+  try {
+    const result = await modelSession.activate();
+    if (result) { await refreshModelCapabilities(); if (currentView === 'settings' && modelRebuildEnabled(config)) await modelRebuildSession.load(); }
+  } catch (error) {
+    if (!authenticationFailed(error)) {
+      notice('model-error', messageFor(error));
+      if (error.errorCode === 'model_rebuild_required' && currentView === 'settings' && modelRebuildEnabled(config)) await modelRebuildSession.load();
+    }
+  }
+});
+$('model-rebuild-start').addEventListener('click', modelRebuildDialog);
+$('model-rebuild-refresh').addEventListener('click', () => {
+  if (connected && currentView === 'settings' && modelRebuildEnabled(config)) modelRebuildSession.load();
+});
+$('model-import').addEventListener('click', () => {
+  if (currentView !== 'settings' || !canImportConfiguredDocuments()) return;
+  if (navigate('documents')) showUpload();
 });
 $('retrieval-run').addEventListener('click', () => {
   if (!connected || !retrievalEnabled(config) || answerMode !== 'text' || queryAttachments.length || answerSession.value.phase === 'loading') return;
@@ -301,12 +432,21 @@ const imageVectorSession = new ImageVectorSession((path, options) => api(path, o
   onChange: () => { renderDetailImageVector(); renderVectorReindexControls(); }, onAuthenticationFailure: error => authenticationFailed(error),
 });
 
+function vectorReadOptions(item) {
+  return { allowPublishedDuringReindex: config?.capabilities?.includes('text_reindex_with_vectors') === true
+    && item?.status === 'parsed' && item.latest_job?.state === 'parsed'
+    && item.latest_job.document_id === item.document_id && item.latest_job.revision_id === item.active_revision_id
+    && typeof item.active_revision_id === 'string' && item.active_revision_id.length > 0
+    && typeof item.index_publication_id === 'string' && item.index_publication_id.length > 0 };
+}
+
 function ensureDetailImageVector() {
   const item = synopsisDocument();
-  if (currentView !== 'documents' || !connected || !imageVectorsEnabled(config) || !canReadImageVector(item)) {
+  const options = vectorReadOptions(item);
+  if (currentView !== 'documents' || !connected || !imageVectorsEnabled(config) || !canReadImageVector(item, options)) {
     imageVectorSession.close(); return;
   }
-  if (!imageVectorSession.matches(item)) imageVectorSession.open(item);
+  if (!imageVectorSession.matches(item)) imageVectorSession.open(item, options);
 }
 
 function renderDetailImageVector() {
@@ -315,7 +455,7 @@ function renderDetailImageVector() {
   if (panel.hidden) return;
   panel.append(element('h3', '原图向量'), element('p', '建立后可用查询图片检索这份原图。建立操作将调用服务器配置的图片 embedding 模型，可能产生调用费用。读取状态不会重新建立。', 'help-text'));
   const item = synopsisDocument();
-  if (!canReadImageVector(item)) { panel.append(element('p', '请先完成真实 PNG / JPEG 原图解析及索引。', 'help-text')); return; }
+  if (!canReadImageVector(item, vectorReadOptions(item))) { panel.append(element('p', '请先完成真实 PNG / JPEG 原图解析及索引。', 'help-text')); return; }
   const value = imageVectorSession.value, busy = ['loading', 'building'].includes(value.phase);
   panel.setAttribute('aria-busy', String(busy));
   const status = value.phase === 'loading' ? '正在读取原图向量状态…' : value.phase === 'building' ? '正在建立并核对原图向量，请稍候…'
@@ -323,20 +463,23 @@ function renderDetailImageVector() {
       : value.phase === 'ready' && value.vector?.status === 'missing' ? '当前原图尚未建立此模型配置的向量。'
         : '状态尚未读取或已停止本地等待；服务器可能仍在处理，请刷新状态核对。';
   const statusNode = element('p', status, 'help-text'); statusNode.setAttribute('role', 'status'); panel.append(statusNode);
-  if (config?.capabilities?.includes('text_reindex') && hasReadyVectorReceipt(item)) panel.append(element('p', '当前资料已建立图片或音频向量，暂不支持重建文本索引。请刷新资料核对状态。', 'help-text'));
+  if (config?.capabilities?.includes('text_reindex') && hasReadyVectorReceipt(item)) panel.append(element('p', config.capabilities.includes('text_reindex_with_vectors')
+    ? '重建文本索引时，已有图片或音频向量会在完整核对后继续使用。'
+    : '当前资料已建立图片或音频向量，暂不支持重建文本索引。请刷新资料核对状态。', 'help-text'));
   if (value.vector?.status === 'missing') {
     const build = button('建立原图向量', () => {
       const current = synopsisDocument();
-      if (currentView !== 'documents' || !connected || loading || state.mutating || !imageVectorsEnabled(config) || !current?.can_edit) return;
+      if (currentView !== 'documents' || !connected || loading || state.mutating || !imageVectorsEnabled(config) || !current?.can_edit || !canReadImageVector(current)) return;
       imageVectorSession.build(current);
     });
-    build.id = 'image-vector-build'; build.disabled = !connected || loading || state.mutating || busy || !item.can_edit;
+    build.id = 'image-vector-build'; build.disabled = !connected || loading || state.mutating || busy || !item.can_edit || !canReadImageVector(item);
     panel.append(build);
   }
   if (!item.can_edit) panel.append(element('p', '当前身份只读，建立向量需要编辑权限。', 'help-text'));
   const refresh = button('刷新原图向量状态', () => {
     const current = synopsisDocument();
-    if (currentView === 'documents' && connected && imageVectorsEnabled(config) && canReadImageVector(current)) imageVectorSession.open(current);
+    const options = vectorReadOptions(current);
+    if (currentView === 'documents' && connected && imageVectorsEnabled(config) && canReadImageVector(current, options)) imageVectorSession.open(current, options);
   });
   refresh.id = 'image-vector-refresh'; refresh.disabled = !connected || busy; panel.append(refresh);
   if (value.phase === 'building') panel.append(button('停止等待', () => imageVectorSession.close()), element('p', '停止等待后，服务器可能仍在处理；再次建立前请刷新状态。', 'help-text'));
@@ -349,10 +492,11 @@ const audioVectorSession = new AudioVectorSession((path, options) => api(path, o
 
 function ensureDetailAudioVector() {
   const item = synopsisDocument();
-  if (currentView !== 'documents' || !connected || !audioVectorsEnabled(config) || standaloneSoundDocument(item) || !canReadAudioVector(item)) {
+  const options = vectorReadOptions(item);
+  if (currentView !== 'documents' || !connected || !audioVectorsEnabled(config) || standaloneSoundDocument(item) || !canReadAudioVector(item, options)) {
     audioVectorSession.close(); return;
   }
-  if (!audioVectorSession.matches(item)) audioVectorSession.open(item);
+  if (!audioVectorSession.matches(item)) audioVectorSession.open(item, options);
 }
 
 function renderDetailAudioVector() {
@@ -361,7 +505,7 @@ function renderDetailAudioVector() {
   if (panel.hidden) return;
   panel.append(element('h3', '原声向量'), element('p', '建立后可用查询音频检索这份音频。建立操作将调用服务器配置的原声 embedding 模型，处理全部可引用语音分段，可能产生调用费用。读取状态不会重新建立。', 'help-text'));
   const item = synopsisDocument();
-  if (!canReadAudioVector(item)) { panel.append(element('p', '请先完成真实音频解析及索引。', 'help-text')); return; }
+  if (!canReadAudioVector(item, vectorReadOptions(item))) { panel.append(element('p', '请先完成真实音频解析及索引。', 'help-text')); return; }
   const value = audioVectorSession.value, busy = ['loading', 'building'].includes(value.phase);
   panel.setAttribute('aria-busy', String(busy));
   const status = value.phase === 'loading' ? '正在读取原声向量状态…' : value.phase === 'building' ? '正在建立并核对原声向量，请稍候…'
@@ -369,20 +513,23 @@ function renderDetailAudioVector() {
       : value.phase === 'ready' && value.vector?.status === 'missing' ? '当前音频尚未建立此模型配置的向量。'
         : '状态尚未读取或已停止本地等待；服务器可能仍在处理，请刷新状态核对。';
   const statusNode = element('p', status, 'help-text'); statusNode.setAttribute('role', 'status'); panel.append(statusNode);
-  if (config?.capabilities?.includes('text_reindex') && hasReadyVectorReceipt(item)) panel.append(element('p', '当前资料已建立图片或音频向量，暂不支持重建文本索引。请刷新资料核对状态。', 'help-text'));
+  if (config?.capabilities?.includes('text_reindex') && hasReadyVectorReceipt(item)) panel.append(element('p', config.capabilities.includes('text_reindex_with_vectors')
+    ? '重建文本索引时，已有图片或音频向量会在完整核对后继续使用。'
+    : '当前资料已建立图片或音频向量，暂不支持重建文本索引。请刷新资料核对状态。', 'help-text'));
   if (value.vector?.status === 'missing') {
     const build = button('建立原声向量', () => {
       const current = synopsisDocument();
-      if (currentView !== 'documents' || !connected || loading || state.mutating || !audioVectorsEnabled(config) || !current?.can_edit) return;
+      if (currentView !== 'documents' || !connected || loading || state.mutating || !audioVectorsEnabled(config) || !current?.can_edit || !canReadAudioVector(current)) return;
       audioVectorSession.build(current);
     });
-    build.id = 'audio-vector-build'; build.disabled = !connected || loading || state.mutating || busy || !item.can_edit;
+    build.id = 'audio-vector-build'; build.disabled = !connected || loading || state.mutating || busy || !item.can_edit || !canReadAudioVector(item);
     panel.append(build);
   }
   if (!item.can_edit) panel.append(element('p', '当前身份只读，建立向量需要编辑权限。', 'help-text'));
   const refresh = button('刷新原声向量状态', () => {
     const current = synopsisDocument();
-    if (currentView === 'documents' && connected && audioVectorsEnabled(config) && canReadAudioVector(current)) audioVectorSession.open(current);
+    const options = vectorReadOptions(current);
+    if (currentView === 'documents' && connected && audioVectorsEnabled(config) && canReadAudioVector(current, options)) audioVectorSession.open(current, options);
   });
   refresh.id = 'audio-vector-refresh'; refresh.disabled = !connected || busy; panel.append(refresh);
   if (value.phase === 'building') panel.append(button('停止等待', () => audioVectorSession.close()), element('p', '停止等待后，服务器可能仍在处理；再次建立前请刷新状态。', 'help-text'));
@@ -736,16 +883,16 @@ function showView(view, { focus = true } = {}) {
     state.closeDetail(); detailBaseline = null; renderDetails(); renderRows();
   }
   if (destination !== 'documents' && $('details').open) $('details').close();
-  if (destination !== 'documents') { stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); }
+  if (destination !== 'documents') { stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close(); }
   if (currentView === 'answers' && destination !== 'answers') {
     voiceQuestionSession.reset();
     if (queryAttachments.length) clearQueryAttachments();
     else answerSession.closeSource();
   }
-  if (currentView === 'settings' && destination !== 'settings') { modelSession.close(); renderedModelVersion = undefined; }
+  if (currentView === 'settings' && destination !== 'settings') { modelRebuildSession.pause(); modelSession.close(); renderedModelVersion = undefined; }
   if (currentView === 'answers' && destination !== 'answers') resetRetrieval();
   currentView = destination;
-  if (currentView === 'settings' && connected && modelConfigurationEnabled(config) && modelSession.value.phase === 'idle') modelSession.load();
+  if (currentView === 'settings' && connected && modelConfigurationEnabled(config) && modelSession.value.phase === 'idle') loadModelSettings();
   for (const name of Object.keys(names)) {
     $(`view-${name}`).hidden = name !== currentView;
     $(`nav-${name}`).setAttribute('aria-current', name === currentView ? 'page' : 'false');
@@ -757,7 +904,7 @@ function showView(view, { focus = true } = {}) {
     if (!$('details').open) $('details').showModal();
     if (focus) $('detail-heading').focus();
     ensureDetailOriginal();
-    ensureDetailSynopsis(); ensureDetailImageVector(); renderDetailImageVector(); ensureDetailAudioVector(); renderDetailAudioVector(); ensureDetailSoundIndex(); renderDetailSoundIndex(); ensureDetailVideoAvIndex(); renderDetailVideoAvIndex();
+    ensureDetailSynopsis(); ensureDetailImageVector(); renderDetailImageVector(); ensureDetailAudioVector(); renderDetailAudioVector(); ensureDetailSoundIndex(); renderDetailSoundIndex(); ensureDetailVideoAvIndex(); renderDetailVideoAvIndex(); ensureDetailReplacement(); renderDetailReplacement();
   } else if (focus) $(`${currentView}-heading`).focus();
   return true;
 }
@@ -837,7 +984,21 @@ function canReindex(item) {
     && item.status === 'parsed' && !item.synthetic_fixture && item.latest_job?.state === 'parsed'
     && typeof item.active_revision_id === 'string' && item.active_revision_id === item.latest_job.revision_id
     && typeof item.index_publication_id === 'string' && item.index_publication_id.length > 0
-    && !taskPending(item.latest_index_job) && !reindexNeedsRefresh.has(item.document_id) && !hasReadyVectorReceipt(item);
+    && !taskPending(item.latest_index_job) && !reindexNeedsRefresh.has(item.document_id)
+    && (!hasReadyVectorReceipt(item) || config.capabilities.includes('text_reindex_with_vectors'));
+}
+function batchReindexEnabled() { return indexingEnabled() && config.capabilities.includes('text_reindex') && config.capabilities.includes('batch_text_reindex'); }
+function reindexFingerprint(item) {
+  const task = value => value ? [value.task_id, value.revision_id, value.state, value.attempt] : null;
+  return JSON.stringify([item.active_revision_id, item.index_publication_id, item.status, item.index_status,
+    item.media_info?.sha256, task(item.latest_job), task(item.latest_index_job)]);
+}
+function batchReindexUnavailable(item) {
+  if (!item) return '当前页已无此资料，请刷新核对。';
+  if (reindexNeedsRefresh.has(item.document_id)) return '上次提交结果待核对，请先刷新资料和索引任务。';
+  if (taskPending(item.latest_index_job)) return '已有索引任务正在处理。';
+  if (!item.active_revision_id || !item.index_publication_id) return '尚无已发布的文本索引。';
+  return '当前资料、权限或处理状态不满足文本重建条件，请刷新后在详情核对。';
 }
 function currentTask() { return taskKind === 'indexing' ? state.indexTask : state.task; }
 function taskEnabled() { return taskKind === 'indexing' ? indexingEnabled() : ingestionEnabled(); }
@@ -869,10 +1030,25 @@ function messageFor(error) {
   return '服务返回的数据暂时不可用，请刷新后重试。';
 }
 
+function singleDocumentAnswerMode(item) {
+  if (!item) return null;
+  const standalone = typeof item.registered_revision_id === 'string' && !item.latest_job;
+  if (item.document_type === 'audio') return standalone ? 'sound' : 'audio';
+  if (item.document_type === 'video') return standalone ? 'video-av-visual' : 'video-visual';
+  if (item.document_type === 'image') {
+    if (imageUploadMode(config) === 'ocr' && evidenceModeEnabled('text')) return 'text';
+    return answersEnabled(config, 'visual') ? 'visual' : 'text';
+  }
+  return 'text';
+}
+
 function openAnswers(ids = null) {
   if (!connected || state.mutating || !scopeSelectionEnabled()) return;
+  const singleMode = ids?.length === 1
+    ? singleDocumentAnswerMode(state.items.find(item => item.document_id === ids[0])) : null;
   if (!navigate('answers')) return;
-  if (!evidenceModeEnabled(answerMode)) answerMode = ['text', 'visual', ...mediaModes].find(evidenceModeEnabled);
+  if (singleMode) answerMode = singleMode;
+  else if (!evidenceModeEnabled(answerMode)) answerMode = ['text', 'visual', ...mediaModes].find(evidenceModeEnabled);
   answerScope = ids === null ? null : [...ids];
   answerScopeNames = (ids ?? []).map(id => state.items.find(item => item.document_id === id)?.display_name ?? id);
   voiceQuestionSession.reset();
@@ -1000,6 +1176,7 @@ const refusalReasons = {
   incomplete_evidence: '现有证据不足以完整回答问题。', conflicting_evidence: '资料中存在冲突证据。',
   unsupported_question: '当前证据不能支持这个问题。', unsafe_evidence: '证据未通过安全核验。',
   invalid_quote: '摘录未通过原文校验。', model_refused: '模型未给出可核验的回答。',
+  model_failure: '模型调用失败，本次未生成回答。请稍后重试，或检查模型连接。',
   scope_changed: '资料范围已变化，请核对后重新提问。', configuration_changed: '服务配置已变化，请重新连接。',
   upstream_unavailable: '上游模型暂时不可用。', upstream_invalid: '上游模型未返回有效结果。',
   processing_timeout: '处理超时，本次没有可验证答案。', evidence_capacity_exceeded: '证据超过当前处理容量。',
@@ -1010,12 +1187,14 @@ const refusalReasons = {
 
 function renderAnswers() {
   const value = answerSession.value;
+  const result = value.result;
+  const modelFailure = result?.status === 'abstained' && result.reason === 'model_failure';
   renderAnswerControls();
   $('answer-scope-label').textContent = answerScope === null ? (videoAvModes.includes(answerMode) ? '全部可访问的原视频资料（每份均需音画索引）' : answerMode === 'sound' ? '全部可访问的原声音资料（每份均需声音索引）' : '全部可访问的已发布资料') : `仅所选 ${answerScope.length} 份资料（不会回退全库）`;
   $('answer-scope-documents').hidden = answerScope === null;
   $('answer-scope-documents').replaceChildren(...answerScopeNames.map(name => element('li', name)));
   notice('answer-error', value.error ? messageFor(value.error) : '');
-  $('answer-status').textContent = value.phase === 'loading' ? queryAttachments.length ? '正在读取附件、检索和核对库内证据，请稍候…' : '正在检索和核验证据，请稍候…' : value.phase === 'answered' ? '回答已生成，可逐条核对来源。' : value.phase === 'abstained' ? '本次未给出有据回答。' : '';
+  $('answer-status').textContent = value.phase === 'loading' ? queryAttachments.length ? '正在读取附件、检索和核对库内证据，请稍候…' : '正在检索和核验证据，请稍候…' : value.phase === 'answered' ? '回答已生成，可逐条核对来源。' : value.phase === 'abstained' ? modelFailure ? '模型调用失败，本次未生成回答。' : '本次未给出有据回答。' : '';
   $('answer-attachment-status').hidden = !value.queryAttachments.length;
   $('answer-attachment-status').replaceChildren(...value.queryAttachments.map(item => {
     const label = queryAttachments[item.ordinal]?.file.name ?? `附件 ${item.ordinal + 1}`;
@@ -1026,11 +1205,10 @@ function renderAnswers() {
         : `未完成 · ${refusalReasons[item.reason] ?? '请核对附件并重新提问。'} 原因代码：${item.reason}`;
     return element('li', `${label}：${status}`);
   }));
-  const result = value.result;
   $('answer-result').hidden = !result;
   $('answer-empty').hidden = !!result || value.phase === 'loading';
-  $('answer-text').textContent = result?.answer ?? '';
-  $('answer-outcome').textContent = result?.status === 'answered' ? '有据回答' : '证据不足 / 拒答';
+  $('answer-text').textContent = modelFailure ? refusalReasons.model_failure : result?.answer ?? '';
+  $('answer-outcome').textContent = result?.status === 'answered' ? '有据回答' : modelFailure ? '模型调用失败' : '证据不足 / 拒答';
   $('answer-reason').hidden = result?.status !== 'abstained';
   const reasonText = result?.reason === 'empty_scope' && answerScope === null
     ? '当前范围没有可访问的已发布资料，请先导入并完成索引。'
@@ -1101,7 +1279,16 @@ function renderSourceMedia(source) {
   player.setAttribute('aria-label', `${source.filename}：服务器校验的原素材`);
   let playingExcerpt = false;
   const interval = source.kind === 'video_av_window' ? source.window : source;
-  const status = element('p', `引用时间 ${timeLabel(interval.start_ms)}–${timeLabel(interval.end_ms)}。${source.kind === 'video_av_window' ? '按服务器窗口回看完整原片；模型判断不代表逐帧或逐声事件精确定位。' : source.kind === 'sound_span' ? '声音模型判断按服务器窗口定位，不代表精确声事件起止。' : '音频转录按服务器分段定位，不代表逐词对齐。'}`, 'help-text');
+  const timeHelp = {
+    audio_span: '音频转录按服务器分段定位，不代表逐词对齐。',
+    video_frame: '视频画面引用定位到原始解码帧及服务器画面区间，请结合下方原帧核对。',
+    video_transcript: '视频中的语音转录按服务器分段定位，不代表逐词对齐。',
+    video_frame_ocr: '画面文字按原帧区间定位；高亮为OCR词框，不是逐字符框。',
+    video_subtitle: '内嵌字幕按原字幕条目起止定位，请结合字幕原文与视频核对。',
+    video_av_window: '按服务器窗口回看完整原片；模型判断不代表逐帧或逐声事件精确定位。',
+    sound_span: '声音模型判断按服务器窗口定位，不代表精确声事件起止。',
+  }[source.kind] ?? '按服务器返回的引用区间核对原素材。';
+  const status = element('p', `引用时间 ${timeLabel(interval.start_ms)}–${timeLabel(interval.end_ms)}。${timeHelp}`, 'help-text');
   const seek = () => { player.currentTime = interval.start_ms / 1000; };
   player.addEventListener('loadedmetadata', seek, { once: true });
   player.addEventListener('error', () => { status.textContent = '浏览器无法播放此媒体格式，可下载原文件后使用本机播放器按引用时间核对。'; });
@@ -1168,8 +1355,8 @@ function clearFeedback() {
 
 function resetContext({ identity = false } = {}) {
   voiceQuestionSession.reset();
-  stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close();
-  if (identity) { cleanupSession.close(); modelSession.close(); renderedModelVersion = undefined; }
+  stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close();
+  if (identity) { cleanupSession.close(); modelRebuildSession.close(); modelSession.close(); renderedModelVersion = undefined; }
   if (identity) document.dispatchEvent?.(new Event('knowledge-context-reset'));
   if (identity) {
     answerScope = null; answerScopeNames = []; $('answer-question').value = '';
@@ -1324,7 +1511,7 @@ function renderControls() {
   renderCleanupRecords(); renderModelSettings();
   $('model-library-guidance').hidden = !connected || !modelConfigurationEnabled(config) || indexingEnabled();
   $('model-library-guidance-text').textContent = modelIndexGuidance();
-  renderDetailTagSuggestions(); renderDetailImageVector(); renderDetailAudioVector(); renderDetailSoundIndex(); renderDetailVideoAvIndex();
+  renderDetailTagSuggestions(); renderDetailImageVector(); renderDetailAudioVector(); renderDetailSoundIndex(); renderDetailVideoAvIndex(); renderDetailReplacement();
   const busy = state.mutating;
   const unavailable = !connected || busy;
   const detail = state.items.find(row => row.document_id === state.detail?.document_id);
@@ -1340,6 +1527,8 @@ function renderControls() {
   $('select-page').checked = state.items.length > 0 && state.selected.size === state.items.length;
   $('select-page').indeterminate = state.selected.size > 0 && state.selected.size < state.items.length;
   $('batch-tools').hidden = state.selected.size === 0;
+  $('batch-reindex').hidden = !batchReindexEnabled();
+  $('batch-reindex').disabled = unavailable || loading || !state.selected.size;
   $('batch-cleanup').hidden = !cleanupEnabled(config);
   $('batch-cleanup').disabled = unavailable || loading || !state.selected.size || !state.items.some(item => state.selected.has(item.document_id) && canRequestCleanup(item));
   if ($('detail-cleanup')) { $('detail-cleanup').hidden = !cleanupEnabled(config); $('detail-cleanup').disabled = unavailable || loading || !canRequestCleanup(detail); }
@@ -1368,7 +1557,8 @@ function renderControls() {
     node.disabled = unavailable || loading || !canReindex(item);
   }
   for (const node of $('jwt-identity').querySelectorAll('button')) node.disabled = state.identityPending;
-  $('dialog-submit').disabled = busy;
+  $('dialog-submit').disabled = busy || dialogIntent?.kind === 'batch-reindex'
+    && (!dialogIntent.entries.length || dialogIntent.entries.some(entry => reindexNeedsRefresh.has(entry.documentId)));
   $('dialog-cancel').disabled = busy;
   $('close-detail').disabled = busy;
   renderTaskList();
@@ -1437,9 +1627,50 @@ function appendIndexControl(container, item, className) {
 function reindexDialog(id) {
   const item = state.items.find(row => row.document_id === id);
   if (!connected || loading || state.mutating || !canReindex(item)) return;
-  showDialog('重建文本索引', `将用“${item.display_name}”已保存的解析文本建立新索引，并发送到当前索引配置的嵌入模型和Milvus，可能产生费用。不会重新解析、转录或替换原文件。旧发布版本继续使用；新索引完整验证后才替换。失败或取消保留旧版本，成功后旧回答来源需重新查询。`, [],
+  const media = config.capabilities.includes('text_reindex_with_vectors')
+    ? '若已有图片或音频向量，服务器会完整核对后继续使用，不会重新生成这些媒体向量。' : '';
+  showDialog('重建文本索引', `将用“${item.display_name}”已保存的解析文本建立新索引，并发送到当前索引配置的嵌入模型和Milvus，可能产生费用。${media}不会重新解析、转录或替换原文件。旧发布版本继续使用；新索引完整验证后才替换。失败或取消保留旧版本，成功后旧回答来源需重新查询。`, [],
     { kind: 'index-rebuild', epoch: state.epoch, documentId: id, revisionId: item.latest_job.revision_id,
       publicationId: item.index_publication_id, latestTaskId: item.latest_index_job?.task_id ?? null }, '确认重建文本索引');
+}
+
+function batchReindexDialog() {
+  if (!connected || currentView !== 'documents' || loading || state.mutating || !batchReindexEnabled() || !state.selected.size) return;
+  const selectionIds = [...state.selected];
+  const entries = [], excluded = [];
+  for (const id of selectionIds) {
+    const item = state.items.find(row => row.document_id === id);
+    if (canReindex(item)) entries.push({ documentId: id, label: item.display_name, revisionId: item.latest_job.revision_id,
+      publicationId: item.index_publication_id, latestTaskId: item.latest_index_job?.task_id ?? null, fingerprint: reindexFingerprint(item) });
+    else excluded.push({ documentId: id, label: item?.display_name ?? id, reason: batchReindexUnavailable(item) });
+  }
+  const list = element('ul');
+  for (const entry of entries) list.append(element('li', `${entry.label} · 使用当前已发布的解析材料`));
+  const fields = [element('p', `本次提交 ${entries.length} 份合格资料：`), list,
+    element('p', `${excluded.length} 份不合格资料不会提交，仍保留选择。`)];
+  if (excluded.length) {
+    const skipped = element('ul');
+    for (const entry of excluded) skipped.append(element('li', `${entry.label}：${entry.reason}`));
+    fields.push(skipped);
+  }
+  const media = config.capabilities.includes('text_reindex_with_vectors')
+    ? '已有图片或音频向量将经完整核对后继续使用，不会重新生成媒体向量。' : '';
+  showDialog('重建选中文本索引', `仅为下列合格资料分别创建后台索引任务，将使用已保存的解析文本调用当前嵌入模型和Milvus，可能产生费用。${media}不会重新解析、转录或替换原文件。每份资料独立处理，旧发布继续可用，完整成功后才切换；失败或取消保留旧版本。`, fields,
+    { kind: 'batch-reindex', epoch: state.epoch, selectionIds, entries, excluded }, '确认创建重建任务');
+  $('dialog-submit').disabled = entries.length === 0;
+}
+
+function checkedBatchReindexItems(entries, result) {
+  return entries.map(entry => {
+    const matches = Array.isArray(result?.items) ? result.items.filter(item => item?.document_id === entry.documentId) : [];
+    const item = matches.length === 1 ? matches[0] : null;
+    if (!item || typeof item.ok !== 'boolean'
+      || item.ok && (item.receipt?.status !== 'queued' || item.receipt.document_id !== entry.documentId)) {
+      return { document_id: entry.documentId, ok: false, detail: '未收到有效创建回执，请刷新资料和任务核对；不会自动重试。' };
+    }
+    return { document_id: entry.documentId, ok: item.ok, detail: item.ok ? '后台重建任务已创建，尚未完成索引。'
+      : typeof item.detail === 'string' && item.detail.length <= 1000 ? item.detail : '任务未能创建，请刷新资料后核对。' };
+  });
 }
 
 function indexDialog(id) {
@@ -1545,6 +1776,91 @@ function checkedTags(value, requireNonempty = false) {
   return tags;
 }
 
+function replacementDocument() {
+  return state.items.find(row => row.document_id === state.detail?.document_id);
+}
+
+function replacementUploadReady(item, replacement) {
+  return replacement?.can_upload === true && (replacement.state !== 'published'
+    || replacement.candidate_revision_id === item?.active_revision_id && replacement.publication_id === item?.index_publication_id);
+}
+
+function ensureDetailReplacement() {
+  const item = replacementDocument();
+  if (currentView !== 'documents' || !connected || !replacementsEnabled(config) || !item || item.synthetic_fixture !== false) {
+    replacementSession.close(); return;
+  }
+  if (!replacementSession.matches(item)) replacementSession.open(item).catch(error => notice('detail-error', messageFor(error)));
+}
+
+function renderDetailReplacement() {
+  const panel = $('detail-replacement'); if (!panel) return;
+  const item = replacementDocument();
+  panel.replaceChildren();
+  panel.hidden = !connected || !replacementsEnabled(config) || !item || item.synthetic_fixture !== false;
+  if (panel.hidden) return;
+  const current = replacementSession.matches(item), value = replacementSession.value;
+  const replacement = current ? value.replacement : null;
+  const busy = current && ['loading', 'uploading', 'indexing'].includes(value.phase);
+  const waiting = ['queued', 'processing', 'indexing'].includes(replacement?.state);
+  panel.append(element('h4', '更新原文件'));
+  panel.append(element('p', '保留资料 ID、显示名称、目录、标签和权限。新文件先作为独立版本处理，明确建立索引并发布成功后才替换当前版本。', 'help-text'));
+  const status = element('p', busy ? ({ loading: '正在读取新版本状态…', uploading: '正在上传新原文件…', indexing: '正在提交新版本索引…' })[value.phase]
+    : current && value.phase === 'unknown' ? '提交结果未知，请刷新状态核对；不会自动重试。'
+      : replacement ? replacementLabel(replacement) : '正在读取新版本状态…');
+  status.id = 'replacement-status'; status.setAttribute('aria-live', 'polite'); panel.append(status);
+  if (replacement?.candidate_revision_id) {
+    panel.append(element('p', `新原文件：${replacement.filename} · ${sizeLabel(replacement.size_bytes)}`, 'help-text'));
+    if (replacement.ingestion_task) panel.append(element('p', `新版本解析：${taskLabel(replacement.ingestion_task.state)} · 第${replacement.ingestion_task.attempt}次`, 'help-text'));
+    if (replacement.index_task) panel.append(element('p', `新版本索引：${indexTaskLabel(replacement.index_task.state)} · 第${replacement.index_task.attempt}次`, 'help-text'));
+    const taskError = replacement.index_task?.error_code ?? replacement.ingestion_task?.error_code;
+    if (taskError) panel.append(element('p', `任务未完成（${taskError}）。当前版本保持不变。`, 'notice error'));
+    if (replacement.state === 'published') {
+      const currentPublication = item.index_publication_id === replacement.publication_id && item.active_revision_id === replacement.candidate_revision_id;
+      panel.append(element('p', currentPublication
+        ? '新版本已切换。请重新测试召回或提问，再打开新来源；问题与范围已保留。图片/音频独立向量需在下方面板重新建立。'
+        : '索引已发布，正在核对当前资料。回读确认前页面仍显示原版本；如未更新，请点击刷新新版本状态。', 'help-text'));
+    } else panel.append(element('p', waiting ? '任务自动刷新中，当前已发布版本仍可使用。' : '当前已发布版本仍可使用；新版本未发布不会替换旧来源。', 'help-text'));
+  }
+  if (current && value.error) panel.append(element('p', messageFor(value.error), 'notice error'));
+  const actions = element('div', undefined, 'detail-task-actions');
+  const upload = button('选择新原文件', () => replacementUploadDialog()); upload.id = 'replacement-upload';
+  upload.disabled = state.mutating || loading || busy || !current || value.phase !== 'ready' || item.can_edit !== true || !replacementUploadReady(item, replacement);
+  actions.append(upload);
+  if (replacement?.candidate_revision_id && replacement.state !== 'published') {
+    const index = button('建立新版本索引', () => replacementIndexDialog()); index.id = 'replacement-index';
+    index.disabled = state.mutating || loading || busy || value.phase !== 'ready' || item.can_edit !== true || replacement.can_index !== true;
+    actions.append(index);
+  }
+  const refresh = button('刷新新版本状态', async () => {
+    const row = replacementDocument();
+    if (!row || state.mutating || !connected || !replacementsEnabled(config)) return;
+    const alreadyPublished = replacementSession.value.replacement?.state === 'published';
+    await replacementSession.open(row);
+    if (alreadyPublished && state.detail?.document_id === row.document_id && replacementSession.matches(row)) await loadDocuments({ preserveDetail: true });
+  });
+  refresh.disabled = state.mutating || busy; actions.append(refresh); panel.append(actions);
+}
+
+function replacementUploadDialog() {
+  const item = replacementDocument(), value = replacementSession.value;
+  if (!connected || !replacementsEnabled(config) || !item?.can_edit || !replacementSession.matches(item)
+    || value.phase !== 'ready' || !replacementUploadReady(item, value.replacement) || state.mutating) return;
+  const file = element('input'); file.id = 'replacement-file'; file.type = 'file'; file.required = true; file.accept = replacementAccept(item.document_type);
+  showDialog('更新这份资料的原文件', '请选择与当前资料类型相同的新文件。名称整理、目录、标签和权限保持不变；上传及解析不会直接替换当前已发布版本。',
+    [field('新原文件', file), element('p', item.document_type === 'image' ? '图片最多10MiB。' : '文档、音频、视频最多20MiB。', 'help-text')],
+    { kind: 'replacement-upload', documentId: item.document_id, baseRevisionId: item.active_revision_id ?? item.latest_job?.revision_id ?? item.registered_revision_id, epoch: state.epoch }, '上传新版本');
+}
+
+function replacementIndexDialog() {
+  const item = replacementDocument(), value = replacementSession.value;
+  if (!connected || !replacementsEnabled(config) || !item?.can_edit || !replacementSession.matches(item)
+    || value.phase !== 'ready' || !value.replacement?.can_index || state.mutating) return;
+  showDialog('建立并发布新版本索引', '将调用已配置的模型与向量服务，可能产生费用。完整索引成功后切换到新文件；失败或取消时保留当前已发布版本。新版本不沿用旧图片/音频独立向量，发布后可按需要另行建立。', [],
+    { kind: 'replacement-index', documentId: item.document_id, baseRevisionId: value.replacement.base_revision_id,
+      candidateRevisionId: value.replacement.candidate_revision_id, epoch: state.epoch }, '确认建立新版本索引');
+}
+
 function renderDetails() {
   const container = $('detail-content');
   stopDetailMedia(); stopSynopsisMedia();
@@ -1554,7 +1870,7 @@ function renderDetails() {
   container.className = item ? '' : 'detail-empty';
   if (!item) {
     originalSession.close();
-    synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close();
+    synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close();
     detailBaseline = null;
     if ($('details').open) $('details').close();
     container.append(element('strong', '选择一份资料'), element('p', '点击列表中的名称，打开保存的原文件并修改显示名称、目录或标签。'));
@@ -1564,6 +1880,7 @@ function renderDetails() {
   const preview = element('section', undefined, 'document-preview-status');
   preview.id = 'detail-original';
   container.append(preview);
+  const replacementPanel = element('section', undefined, 'detail-synopsis'); replacementPanel.id = 'detail-replacement'; container.append(replacementPanel);
   const synopsis = element('section', undefined, 'detail-synopsis'); synopsis.id = 'detail-synopsis'; container.append(synopsis);
   const tagPanel = element('section', undefined, 'detail-synopsis'); tagPanel.id = 'detail-tag-suggestions'; container.append(tagPanel);
   const vectorPanel = element('section', undefined, 'detail-synopsis'); vectorPanel.id = 'detail-image-vector'; container.append(vectorPanel);
@@ -1629,7 +1946,7 @@ function renderDetailEvidence() {
   if (!item || !controls || !metadata) return;
   ensureDetailOriginal();
   ensureDetailSynopsis(); renderDetailSynopsis(); synchronizeTagSuggestions(); renderDetailTagSuggestions();
-  ensureDetailImageVector(); renderDetailImageVector(); ensureDetailAudioVector(); renderDetailAudioVector(); ensureDetailSoundIndex(); renderDetailSoundIndex(); ensureDetailVideoAvIndex(); renderDetailVideoAvIndex();
+  ensureDetailImageVector(); renderDetailImageVector(); ensureDetailAudioVector(); renderDetailAudioVector(); ensureDetailSoundIndex(); renderDetailSoundIndex(); ensureDetailVideoAvIndex(); renderDetailVideoAvIndex(); ensureDetailReplacement(); renderDetailReplacement();
   renderDetailTaskControls(item);
   metadata.replaceChildren();
   for (const [label, value] of [['原文件名', item.filename], ['类型 / 大小', `${item.media_info?.mime_type ?? '不可得'} / ${sizeLabel(item.media_info?.size_bytes)}`], ['当前权限', roles[item.current_role] ?? item.current_role], ['处理状态', documentStatusLabel(item)], ['更新于', dateLabel(item.updated_at)], ['资料 ID', item.document_id], ['已发布版本', item.active_revision_id ?? '尚未发布'], ['索引发布编号', item.index_publication_id ?? '尚未发布'], ['内容 SHA-256', item.media_info?.sha256 ?? '不可得']]) metadata.append(element('dt', label), element('dd', value));
@@ -1836,7 +2153,37 @@ $('dialog-form').addEventListener('submit', event => {
   event.preventDefault();
   const intent = dialogIntent;
   if (!intent || state.mutating || !connected) return;
-  if (intent.kind === 'upload') {
+  if (intent.kind === 'model-rebuild') {
+    const saved = modelSession.value.configuration, status = modelRebuildSession.value.status;
+    if (intent.epoch !== state.epoch || currentView !== 'settings' || !modelRebuildEnabled(config) || modelRebuildLocked()
+      || ['loading', 'saving', 'testing', 'activating', 'unknown'].includes(modelSession.value.phase)
+      || modelSession.value.dirty || !saved?.can_edit || saved.version !== intent.version || status?.target_version !== intent.version || !status.can_start) {
+      notice('dialog-error', '配置或重建资格已变化，请关闭此窗口并刷新状态。'); return;
+    }
+    mutate(() => modelRebuildSession.start(intent.version), result => {
+      if (result) closeDialog();
+      else notice('dialog-error', modelRebuildSession.value.error?.message ?? '尚未确认批次，请关闭此窗口并刷新状态。');
+    }, 'dialog-error');
+  } else if (intent.kind === 'replacement-upload' || intent.kind === 'replacement-index') {
+    const item = replacementDocument(), value = replacementSession.value;
+    const revision = item?.active_revision_id ?? item?.latest_job?.revision_id ?? item?.registered_revision_id;
+    if (intent.epoch !== state.epoch || currentView !== 'documents' || !replacementsEnabled(config)
+      || item?.document_id !== intent.documentId || revision !== intent.baseRevisionId || item.can_edit !== true
+      || !replacementSession.matches(item) || value.phase !== 'ready'
+      || (intent.kind === 'replacement-upload' ? !replacementUploadReady(item, value.replacement)
+        : value.replacement?.can_index !== true || value.replacement.candidate_revision_id !== intent.candidateRevisionId)) {
+      notice('dialog-error', '资料版本或任务状态已变化，请关闭此窗口并刷新新版本状态。'); return;
+    }
+    let file;
+    if (intent.kind === 'replacement-upload') {
+      try { file = validateReplacementUpload($('replacement-file').files[0], item.document_type); }
+      catch (error) { notice('dialog-error', messageFor(error)); return; }
+    }
+    mutate(() => intent.kind === 'replacement-upload' ? replacementSession.upload(item, file) : replacementSession.index(item), done => {
+      if (!done) { notice('dialog-error', replacementSession.value.error ? messageFor(replacementSession.value.error) : '状态已变化，请刷新后核对。'); return; }
+      closeDialog(); renderDetailReplacement();
+    }, 'dialog-error');
+  } else if (intent.kind === 'upload') {
     if (!ingestionEnabled()) return;
     let file;
     const uploadKind = $('upload-kind').value;
@@ -1914,6 +2261,49 @@ $('dialog-form').addEventListener('submit', event => {
       navigate('tasks'); $('task-heading').focus();
       return loadDocuments({ preserveDetail: true });
     }, 'dialog-error');
+  } else if (intent.kind === 'batch-reindex') {
+    if (intent.epoch !== state.epoch || currentView !== 'documents' || loading || !batchReindexEnabled()
+      || !intent.entries.length || state.selected.size !== intent.selectionIds.length
+      || intent.selectionIds.some(id => !state.selected.has(id))
+      || intent.entries.some(entry => {
+        const item = state.items.find(row => row.document_id === entry.documentId);
+        return !canReindex(item) || reindexFingerprint(item) !== entry.fingerprint;
+      })) {
+      notice('dialog-error', '选择、资料资格、发布版本或任务已变化，请关闭确认框并刷新列表后重新核对。'); return;
+    }
+    const ids = intent.entries.map(entry => entry.documentId);
+    const body = { action: 'reindex', document_ids: ids,
+      base_publication_ids: Object.fromEntries(intent.entries.map(entry => [entry.documentId, entry.publicationId])) };
+    mutate(async () => {
+      for (const id of ids) reindexNeedsRefresh.add(id);
+      try { return checkedBatchReindexItems(intent.entries, await api('/v1/management/document-actions', { method: 'POST', body })); }
+      catch (error) {
+        throw new ApiError(error instanceof ApiError ? error.status : 502,
+          `${messageFor(error)} 本次提交的全部资料均需先刷新资料和索引任务核对结果；不会自动重试。`,
+          { errorCode: error?.errorCode, field: error?.field });
+      }
+    }, async items => {
+      closeDialog();
+      const accepted = items.filter(item => item.ok);
+      for (const item of accepted) state.select(item.document_id, false);
+      const labels = new Map(intent.entries.map(entry => [entry.documentId, entry.label]));
+      feedback(`已创建 ${accepted.length} 个后台任务；${items.length - accepted.length} 项未创建或待核对；${intent.excluded.length} 项未提交`,
+        items.map(item => ({ ...item, detail: `${labels.get(item.document_id)}：${item.detail}` })));
+      for (const entry of intent.excluded) $('feedback-items').append(element('li', `未提交 · ${entry.label}：${entry.reason}`));
+      if (accepted.length) {
+        const entry = element('li');
+        entry.append(button('查看当前页索引任务', () => {
+          if (intent.epoch !== state.epoch || !connected || loading || state.mutating || !indexingEnabled()) return;
+          const current = state.items.find(item => accepted.some(result => result.document_id === item.document_id)
+            && item.latest_index_job && item.latest_index_job.revision_id === intent.entries.find(value => value.documentId === item.document_id)?.revisionId
+            && item.latest_index_job.task_id !== intent.entries.find(value => value.documentId === item.document_id)?.latestTaskId);
+          if (current) openTask(current, 'indexing');
+          else notice('global-error', '请先刷新资料列表，再从资料行或详情打开索引任务。');
+        }));
+        $('feedback-items').append(entry);
+      }
+      await loadDocuments({ preserveDetail: true });
+    }, 'dialog-error');
   } else if (intent.kind === 'index-retry') {
     const current = currentTask();
     if (taskKind !== 'indexing' || !indexingEnabled() || !current?.can_retry || current.task_id !== intent.task.task_id || current.attempt !== intent.task.attempt) {
@@ -1961,7 +2351,7 @@ $('dialog-form').addEventListener('submit', event => {
 $('dialog-cancel').addEventListener('click', () => { if (!state.mutating) closeDialog(); });
 $('edit-dialog').addEventListener('cancel', event => { if (state.mutating) event.preventDefault(); else dialogIntent = null; });
 $('new-folder').addEventListener('click', () => folderDialog('create'));
-$('upload').addEventListener('click', () => {
+function showUpload() {
   if (!ingestionEnabled()) return;
   const input = element('input'); input.id = 'upload-file'; input.type = 'file'; input.required = true;
   const mode = imageUploadMode(config);
@@ -1982,13 +2372,15 @@ $('upload').addEventListener('click', () => {
   const mediaHelp = choices.slice(1).some(([, , enabled]) => enabled) ? '音视频最多20MiB，请按素材类型选择，MP4/WebM不会自动判为视频。处理会使用服务器配置的转录或视觉模型，可能产生费用。' : '';
   const pdfHelp = config.capabilities.includes('pdf_ocr_upload') ? 'PDF使用服务器本机逐页OCR识别整页画面，支持扫描件；识别结果请按原页核对。' : '';
   showDialog('上传资料', `文本支持PDF/TXT/Markdown，最多20MiB。${pdfHelp}${mode ? '图片支持PNG/JPEG，最多10MiB、1200万像素。' : ''}${imageHelp}${mediaHelp}`, [field('资料类型', kind), field('选择原文件', input), uploadHelp], { kind: 'upload' }, kind.value === 'video-av' ? '保存原视频资料' : kind.value === 'sound' ? '保存原声音资料' : '上传并解析');
-});
+}
+$('upload').addEventListener('click', showUpload);
 $('task-refresh').addEventListener('click', () => { taskPollPaused = false; notice('task-error'); loadTask(); });
 $('task-cancel').addEventListener('click', () => taskAction('cancel'));
 $('task-retry').addEventListener('click', () => taskAction('retry'));
 $('task-dismiss').addEventListener('click', () => watchTask(null));
 $('batch-move').addEventListener('click', () => batchDialog('move'));
 $('batch-tag').addEventListener('click', () => batchDialog('tag'));
+$('batch-reindex').addEventListener('click', batchReindexDialog);
 $('batch-cleanup').addEventListener('click', () => cleanupDialog([...state.selected], true));
 $('cleanup-refresh').addEventListener('click', () => { if (connected && cleanupEnabled(config)) cleanupSession.loadPage(); });
 $('cleanup-stop').addEventListener('click', () => cleanupSession.stop());
@@ -2017,7 +2409,7 @@ $('answer-attachment-files').addEventListener('change', () => {
   finally { input.value = ''; }
 });
 $('answer-attachment-clear').addEventListener('click', clearQueryAttachments);
-globalThis.addEventListener?.('pagehide', () => { modelSession.close(); resetRetrieval(); cleanupSession.close(); voiceQuestionSession.reset(); clearQueryAttachments(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); });
+globalThis.addEventListener?.('pagehide', () => { modelRebuildSession.close(); modelSession.close(); resetRetrieval(); cleanupSession.close(); voiceQuestionSession.reset(); clearQueryAttachments(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close(); });
 $('answer-voice-file').addEventListener('change', () => {
   const input = $('answer-voice-file');
   if (!connected || !voiceQuestionsEnabled(config) || !answersEnabled(config, answerMode) || answerSession.value.phase === 'loading' || voiceQuestionSession.value.phase === 'loading') { input.value = ''; return; }
@@ -2152,7 +2544,7 @@ async function start() {
     $('identity-status').textContent = config.auth_mode === 'development_headers' ? `开发身份：${principal} · 组织：${config.workspace_id}` : `组织：${config.workspace_id} · 会话身份由服务器校验`;
     renderFolders();
     await loadData();
-    if (currentView === 'settings' && modelConfigurationEnabled(config)) modelSession.load();
+    if (currentView === 'settings' && modelConfigurationEnabled(config)) loadModelSettings();
   } catch (error) {
     connected = false;
     notice('global-error', messageFor(error));

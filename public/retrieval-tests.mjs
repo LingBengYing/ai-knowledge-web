@@ -44,7 +44,7 @@ export async function checkedRetrievalResult(value, command) {
 
 export function matchCurrentOriginal(match, item) {
   return Boolean(match && item && item.document_id === match.document_id && item.active_revision_id === match.revision_id
-    && (item.latest_job?.revision_id ?? item.active_revision_id) === match.revision_id && item.filename === match.filename && item.media_info?.sha256 === match.source_sha256);
+    && item.filename === match.filename && item.media_info?.sha256 === match.source_sha256);
 }
 
 /** Preview only. No answer trace or model-generated claim is created by this module. */

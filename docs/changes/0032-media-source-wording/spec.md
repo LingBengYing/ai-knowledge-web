@@ -1,0 +1,5 @@
+# 操作契约
+
+播放器依据已通过既有来源校验的kind显示定位说明：audio_span保留原音频分段转录文案；video_frame说明原始解码帧及服务器画面区间；video_transcript说明视频语音分段转录；video_frame_ocr说明原帧区间与OCR词框；video_subtitle说明字幕条目起止。
+
+sound_span及video_av_window保留原服务器窗口说明。引用时间、原件及帧身份、播放、下载、来源回读和全部权限流程保持，不新增模式或按钮。

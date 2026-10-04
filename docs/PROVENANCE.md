@@ -1,5 +1,7 @@
 # Source Provenance
 
+2026-10-03当前0025仅修改现有app.js、image-vectors.mjs、audio-vectors.mjs，增加明确兼容能力及旧active发布的可选读资格；Session真实身份/serial与build严格条件保持，未引入Dify源码、第三方库或新代理协议。10新增DOM实际8RED/2已有PASS→同10GREEN，另12模块为实现后补测；472/check实际通过、65输入稳定、旧450全部身份与断言保留。后端0036及最终交接以root实际后续证据为准，尚不宣称完整release；未部署、页面用户验收、0真实provider。详见[验证](changes/0025-reindex-vector-continuation/verification.md)。
+
 2026-10-03当前0024在既有app/workbench及两代理增加明确重建入口、状态与publication回读；向量状态只收紧当前入口，无新增管理请求/第三方依赖。450/check实际通过，旧435保留，累计61产品文件对0030副本实际补丁验证通过。后端0035配套，未部署；Dify仅作设计参考，未复制源码。详见[验证](changes/0024-saved-source-reindex/verification.md)。
 
 2026-10-03基础操作增量0023：沿当前app.js与原DOM夹具，独立范围资格允许retrieval_test，当前text可用时不误切visual；行/批量/详情/all及能力提示同步。没有引入Dify源码、库或新协议。仅app产品变化、4新DOM原文追加；435全量和syntax实际通过，旧431完整保留。0034已冻结且独立PASS，本切后端输入与JAR一致、明确复用实跑证据；前端新交接`.tools/retrieval-scope-handoff`的实际manifest/补丁为准。未部署、用户验收页面、0真实模型调用；旧来源记录保留。

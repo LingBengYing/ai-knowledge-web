@@ -13,8 +13,14 @@ export function audioVectorsEnabled(config) {
   return ['audio_vector_retrieval', 'audio_answers', 'audio_sources'].every(name => config?.capabilities?.includes(name));
 }
 
-function expected(row) {
-  if (!row || row.synthetic_fixture !== false || row.document_type !== 'audio' || row.index_status !== 'indexed'
+function expected(row, { allowPublishedDuringReindex = false } = {}) {
+  const retainedPublication = allowPublishedDuringReindex === true
+    && ['queued', 'processing', 'failed', 'cancelled'].includes(row?.index_status)
+    && row?.status === 'parsed' && row.latest_job?.state === 'parsed'
+    && row.latest_job.document_id === row.document_id && row.latest_job.revision_id === row.active_revision_id
+    && row.latest_index_job?.state === row.index_status && row.latest_index_job.document_id === row.document_id
+    && row.latest_index_job.revision_id === row.active_revision_id;
+  if (!row || row.synthetic_fixture !== false || row.document_type !== 'audio' || (row.index_status !== 'indexed' && !retainedPublication)
     || !id(row.document_id) || !id(row.index_publication_id) || !id(row.active_revision_id)
     || !['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'].includes(row.media_info?.mime_type) || !hash(row.media_info.sha256)
     || !Number.isSafeInteger(row.media_info.size_bytes) || row.media_info.size_bytes < 1 || row.media_info.size_bytes > 20 * 1024 * 1024
@@ -23,8 +29,8 @@ function expected(row) {
     source_sha256: row.media_info.sha256 };
 }
 
-export function canReadAudioVector(row) {
-  try { expected(row); return true; } catch { return false; }
+export function canReadAudioVector(row, options) {
+  try { expected(row, options); return true; } catch { return false; }
 }
 
 function checked(value, wanted, previous = null) {
@@ -55,8 +61,8 @@ export class AudioVectorSession {
     if (this.value.phase !== 'idle') this.emit(idle());
   }
 
-  async open(row) {
-    const wanted = expected(row);
+  async open(row, options) {
+    const wanted = expected(row, options);
     if (this.matches(row) && ['loading', 'building'].includes(this.value.phase)) return;
     this.close(); this.identity = identity(row);
     const serial = ++this.serial, controller = new AbortController(); this.controller = controller;

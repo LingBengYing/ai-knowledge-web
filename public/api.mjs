@@ -2,7 +2,7 @@ export class ApiError extends Error {
   constructor(status, message, { errorCode, field } = {}) {
     super(message); this.status = status;
     if (typeof errorCode === 'string' && /^[a-z][a-z0-9_]{0,95}$/u.test(errorCode)) this.errorCode = errorCode;
-    if (['request', 'base_version', 'version', 'role', 'embedding.model', 'embedding.dimensions', 'embedding.revision', 'embedding.api_key', 'rerank.model', 'rerank.api_key', 'generation.model', 'generation.api_key'].includes(field)) this.field = field;
+    if (['request', 'base_version', 'version', 'role', 'embedding.provider', 'embedding.model', 'embedding.dimensions', 'embedding.revision', 'embedding.api_key', 'rerank.provider', 'rerank.model', 'rerank.api_key', 'generation.provider', 'generation.model', 'generation.api_key'].includes(field)) this.field = field;
   }
 }
 
@@ -13,6 +13,18 @@ export function imageUploadMode(config) {
 }
 
 const videoTypes = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' };
+export function validateReplacementUpload(file, documentType) {
+  const extensions = { document: /\.(?:pdf|txt|md)$/iu, image: /\.(?:png|jpe?g)$/iu,
+    audio: /\.(?:wav|mp3|flac|ogg|m4a|mp4|webm)$/iu, video: /\.(?:mp4|mov|webm|mkv)$/iu };
+  if (!(file instanceof Blob) || typeof file.name !== 'string' || !file.name.trim() || file.name.length > 255
+    || /[/\\\u0000-\u001f\u007f]/u.test(file.name) || !extensions[documentType]?.test(file.name)
+    || file.size < 1 || file.size > (documentType === 'image' ? 10 : 20) * 1024 * 1024) {
+    throw new ApiError(422, '请选择与当前资料类型相同的原文件；图片最多10MiB，文档、音频、视频最多20MiB，文件不能为空。');
+  }
+  try { encodeURIComponent(file.name); } catch { throw new ApiError(422, '文件名包含不合法字符。'); }
+  return file;
+}
+
 export function validateUpload(file, config, uploadKind = 'document') {
   const image = typeof file?.name === 'string' && /\.(?:png|jpe?g)$/iu.test(file.name);
   const media = ['audio', 'video', 'sound', 'video-av'].includes(uploadKind);
@@ -31,7 +43,7 @@ export function validateUpload(file, config, uploadKind = 'document') {
 
 /** Cookies remain browser-owned; this client never stores a token. */
 export function createApi(config, principal, fetcher = globalThis.fetch) {
-  return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document' } = {}) {
+  return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document', replacement } = {}) {
     if (!path.startsWith('/v1/')) throw new Error('仅允许同源 API 请求。');
     if (binary && (method !== 'GET' || body !== undefined || file !== undefined
       || !/^\/v1\/(?:(?:sources|visual-sources|audio-sources|video-sources|sound-sources|video-av-sources)\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content|video-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/frame|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/(?:content|frame)|documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content)$/u.test(path))) {
@@ -42,7 +54,16 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
       headers['X-Workspace-Id'] = config.workspace_id;
       headers['X-Principal-Id'] = principal();
     }
-    if (file !== undefined) {
+    if (file !== undefined && replacement !== undefined) {
+      validateReplacementUpload(file, replacement.documentType);
+      const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
+      if (!config?.capabilities?.includes('document_replacements') || !validId(replacement.documentId) || !validId(replacement.baseRevisionId)
+        || method !== 'POST' || body !== undefined
+        || path !== `/v1/documents/${replacement.documentId}/replacement?filename=${encodeURIComponent(file.name)}&base_revision_id=${replacement.baseRevisionId}`) {
+        throw new ApiError(422, '新原文件只能提交到当前资料的指定版本更新接口。');
+      }
+      headers['Content-Type'] = replacement.documentType === 'video' ? videoTypes[file.name.split('.').at(-1).toLowerCase()] : 'application/octet-stream';
+    } else if (file !== undefined) {
       validateUpload(file, config, uploadKind);
       if (method !== 'POST' || body !== undefined || path !== (uploadKind === 'video-av' ? '/v1/video-av-documents' : uploadKind === 'sound' ? '/v1/sound-documents' : `/v1/documents?filename=${encodeURIComponent(file.name)}`)) {
         throw new ApiError(422, '原始文件仅允许发送到指定文本上传接口。');
