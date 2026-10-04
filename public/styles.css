@@ -1667,6 +1667,96 @@ dialog.source-panel::backdrop { background: #15251e30; backdrop-filter: blur(2px
 }
 @media(prefers-reduced-motion:reduce) { .thinking-dot { animation: none; } }
 
+/* 0036: product help keeps source excerpts and original reading in one place. */
+.product-help-page { background: #f7f9f8; }
+.product-help-page .topbar { background: #fff; border-bottom: 1px solid #e3e9e5; }
+.product-help-view { max-width: 1440px; padding: 38px 40px 56px; }
+.product-help-view .page-heading { margin-bottom: 30px; }
+.product-help-view .page-heading h1 { font-size: 28px; letter-spacing: -.6px; margin: 9px 0 12px; }
+.product-help-view .page-description { max-width: 680px; line-height: 1.8; }
+.product-help-layout { display: grid; grid-template-columns: minmax(280px,340px) minmax(0,1fr); gap: 30px; align-items: start; }
+.product-help-query { background: #fff; border: 1px solid #dfe7e1; border-radius: 14px; padding: 24px; }
+.product-help-step { font-size: 11px; color: #6d8676; letter-spacing: .7px; margin-bottom: 24px; }
+.product-help-query > label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 11px; }
+#product-help-question { width: 100%; min-height: 152px; resize: vertical; padding: 13px; border-radius: 9px; font: inherit; line-height: 1.8; }
+.product-help-examples { font-size: 11px; line-height: 1.8; color: var(--muted); margin: 10px 0 24px; }
+.product-help-scope { padding: 15px; background: #f4f8f5; border-radius: 9px; margin-bottom: 18px; }
+.product-help-scope > strong { display: block; font-size: 12px; line-height: 1.8; margin: 7px 0 10px; }
+.product-help-scope details { font-size: 11px; line-height: 1.8; }
+.product-help-scope summary { cursor: pointer; color: var(--accent); }
+.product-help-scope p { color: var(--muted); }
+.product-help-scope a,.product-help-scope button { display: inline-block; margin: 4px 8px 0 0; font-size: 11px; }
+#product-help-scope-documents { max-height: 160px; overflow: auto; padding-left: 18px; overflow-wrap: anywhere; }
+.product-help-parameters { font-size: 12px; padding: 0 0 16px; border-bottom: 1px solid var(--line); }
+.product-help-parameters > summary { cursor: pointer; padding: 6px 0; }
+.product-help-parameters .query-attachment-inputs { margin-top: 14px; }
+.product-help-query > .help-text { font-size: 11px; line-height: 1.8; margin-top: 17px; }
+.product-help-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.product-help-setup-actions button { flex: 1; min-width: 110px; font-size: 12px; padding: 10px; border-radius: 8px; }
+.product-help-draft-help { margin: 11px 0 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
+.product-help-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; }
+.product-help-actions .primary { flex: 1; border-radius: 9px; padding: 12px 14px; }
+.product-help-results { min-width: 0; }
+.product-help-results > .section-heading { align-items: flex-start; margin: 1px 0 16px; gap: 12px; }
+.product-help-results h2 { font-size: 16px; margin: 0 0 9px; }
+.product-help-results > .section-heading .help-text { margin: 0; font-size: 11px; }
+#product-help-ask { font-size: 11px; white-space: nowrap; }
+#product-help-status { font-size: 12px; line-height: 1.8; margin-bottom: 20px; }
+.product-help-groups { display: grid; gap: 24px; }
+.product-help-group { min-width: 0; background: #fff; border: 1px solid #e1e8e3; border-radius: 13px; overflow: hidden; }
+.product-help-group-heading { display: flex; align-items: center; gap: 10px; padding: 19px 22px; border-bottom: 1px solid #e9eeeb; }
+.product-help-group-heading h3 { font-size: 14px; margin: 0; flex: 1; }
+.product-help-kind { display: grid; place-items: center; width: 29px; height: 31px; background: #edf4ef; color: #64836f; border-radius: 6px; font-size: 12px; }
+.product-help-empty { padding: 27px 22px 31px; }
+.product-help-empty strong { font-size: 13px; font-weight: 500; color: #617469; }
+.product-help-empty p { font-size: 12px; color: #8a978f; line-height: 1.9; margin: 9px 0 0; max-width: 520px; }
+.product-help-matches { margin: 0; padding: 0; list-style: none; }
+.product-help-matches li { padding: 22px; border-bottom: 1px solid #e9eeeb; }
+.product-help-matches li:last-child { border-bottom: 0; }
+.product-help-match-heading { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+.product-help-match-heading h4 { margin: 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.product-help-locator { flex-shrink: 0; color: var(--accent); font-size: 11px; line-height: 1.8; padding: 3px 8px; background: #f0f6f2; border-radius: 5px; }
+.product-help-matches .evidence-text { font-size: 13px; line-height: 1.95; margin: 14px 0; max-height: 280px; overflow: auto; padding: 0; background: transparent; }
+.product-help-match-footer { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.product-help-match-footer .help-text { font-size: 11px; margin: 0; }
+.product-help-match-footer button { font-size: 11px; border-radius: 7px; }
+.product-help-loading { padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #fff; margin-bottom: 20px; }
+.product-help-loading div { height: 11px; background: #edf2ee; border-radius: 4px; margin-bottom: 11px; }
+.product-help-loading div:nth-child(2) { width: 70%; }
+.product-help-loading span { font-size: 12px; color: var(--muted); }
+#product-help-source-content { overflow-wrap: anywhere; }
+#product-help-source-content h3 { font-size: 15px; line-height: 1.7; }
+#product-help-source-content .evidence-text { font-size: 13px; line-height: 1.9; }
+#product-help-source-content video,#product-help-source-content img { width: 100%; max-height: 55dvh; object-fit: contain; margin: 16px 0; }
+#product-help-source-content .original-pdf { width: 100%; height: 60dvh; margin-top: 16px; }
+.product-help-page .primary-nav { flex-wrap: wrap; }
+@media(max-width:1050px) {
+  .product-help-view { padding: 30px 24px; }
+  .product-help-layout { grid-template-columns: minmax(255px,300px) minmax(0,1fr); gap: 20px; }
+  .product-help-match-heading { flex-wrap: wrap; gap: 8px; }
+}
+@media(max-width:760px) {
+  .topbar .primary-nav { gap: 4px; flex-wrap: wrap; }
+  .topbar .primary-nav a { padding: 8px 9px; font-size: 12px; }
+  .product-help-page .topbar { height: auto; padding: 14px 18px; flex-wrap: wrap; gap: 12px; }
+  .product-help-page .development { display: none; }
+  .product-help-view { padding: 26px 18px; }
+  .product-help-view .page-heading h1 { font-size: 24px; line-height: 1.45; }
+  .product-help-layout { grid-template-columns: 1fr; gap: 30px; }
+  .product-help-query { padding: 21px; }
+  .product-help-results > .section-heading { flex-wrap: wrap; }
+  .product-help-matches li,.product-help-group-heading,.product-help-empty { padding-left: 18px; padding-right: 18px; }
+}
+
+/* 0037: preparation stays within the knowledge conversation. */
+.answer-setup-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.answer-setup-actions .quiet-button { white-space: nowrap; }
+@media(max-width:760px) {
+  .chat-toolbar { flex-wrap: wrap; gap: 8px; }
+  .answer-setup-actions { gap: 2px; }
+  .answer-setup-actions .quiet-button { font-size: 11px; padding: 7px 8px; }
+}
+
 /* 0035: knowledge management, separated from daily conversation. */
 .management-page { background: #f7f9f8; }
 .management-page .topbar { height: 68px; background: #fff; border-bottom: 1px solid #e7ece8; }

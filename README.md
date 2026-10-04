@@ -1,5 +1,7 @@
 # AI Knowledge Web · 知识库工作台
 
+当前增量[0037统一知识问答](docs/changes/0037-unified-knowledge-answers/spec.md)：产品操作说明并入`#/answers`默认综合问答，不再单列功能。后端检索文档与视频文字证据后由大模型综合回复，前端显示最终答案及按页码/时间定位的混合引用；不自行调用模型或把候选片段当生成答案。需后端0049的`knowledge_answers`能力；实际实现、页面和未验证范围见[0037记录](docs/changes/0037-unified-knowledge-answers/REVIEW.md)，不以历史测试认证新增功能。
+
 2026-10-04当前主线：网页可保存嵌入/重排/生成配置、手动连接测试、明确应用及召回预览；逐角色provider、生成/重排切换、嵌入模型全库重建、同资料原文件更新、已配置媒体接网页有效文字配置及当前页批量文本重建已实现。最新交付为工作区`.tools/batch-text-reindex-mainline`，01:32:29 +08仅后端skiptests package成功，未运行测试/检查、未部署，页面由用户验收。使用[模型配置](docs/MODEL_SETUP_AND_RETRIEVAL.md)、[媒体配置](docs/MANAGED_MEDIA_SETUP.md)和[批量重建](docs/BATCH_TEXT_REINDEX.md)；下方历史测试结果不认证新增源码。
 
 2026-10-03当前0025前端本机验证：[已有媒体向量资料的文本重建](docs/changes/0025-reindex-vector-continuation/verification.md)。新text_reindex_with_vectors与原能力及服务器资格一起开放行/详情入口；明确文字模型/向量服务费用，已有图片/音频向量完整核对后继续使用，不重新生成媒体向量或ASR。合法旧发布在重建任务中及失败/取消后可读，成功仅在授权回读新publication后清旧来源并提示重查，保留问题、完整范围与整理草稿。实际10DOM旧产品8FAIL/2PASS→同10GREEN，12模块是实现后补测；472完整/check通过，65输入稳定，旧450身份/断言保留。后端0036门禁与最终交接尚待root，未部署，用户验收页面，0新增真实provider，完整目标ACTIVE。下方保留历史记录。

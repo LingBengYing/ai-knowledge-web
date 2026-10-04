@@ -1,6 +1,7 @@
 import { ModelConfigurationSession, modelConfigurationEnabled } from './model-configuration.mjs';
 import { ModelRebuildSession, modelRebuildEnabled, modelRebuildPending, modelRebuildReason } from './model-rebuild.mjs';
 import { RetrievalSession, retrievalEnabled, matchCurrentOriginal } from './retrieval-tests.mjs';
+
 import { CleanupSession, cleanupEnabled, canRequestCleanup, cleanupLabel } from './document-cleanup.mjs';
 import { createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode } from './api.mjs';
 import { WorkbenchState, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel } from './workbench-state.mjs';
@@ -41,6 +42,9 @@ let taskKind = 'ingestion';
 let currentView = 'documents';
 let retrievalScope = null;
 let retrievalScopeNames = [];
+let answerEntry = 0;
+let answerCapabilityRefresh = null;
+let answerCapabilityError = null;
 let detailSection = 'preview';
 let detailSectionDocument = null;
 let taskFilter = 'all';
@@ -48,7 +52,7 @@ let detailBaseline = null;
 let filterSnapshot = null;
 let answerScope = null;
 let answerScopeNames = [];
-let answerMode = 'text';
+let answerMode = 'knowledge';
 let queryAttachments = [];
 let queryAttachmentError = '';
 const reindexNeedsRefresh = new Set();
@@ -107,6 +111,7 @@ const modelRebuildSession = new ModelRebuildSession((path, options) => api(path,
 const retrievalSession = new RetrievalSession((path, options) => api(path, options), {
   onChange: () => renderRetrieval(), onAuthenticationFailure: error => authenticationFailed(error),
 });
+
 const retrievalOriginal = new DocumentOriginalSession((path, options) => api(path, options), {
   onChange: () => renderRetrievalOriginal(), onAuthenticationFailure: error => authenticationFailed(error),
 });
@@ -261,10 +266,10 @@ function modelDraft() {
   return result;
 }
 
-async function refreshModelCapabilities() {
+async function refreshModelCapabilities({ isCurrent = () => true } = {}) {
   const epoch = state.epoch;
   const next = await api('/v1/config');
-  if (epoch !== state.epoch || !connected) return;
+  if (epoch !== state.epoch || !connected || !isCurrent()) return;
   if (next?.auth_mode !== config.auth_mode || next.workspace_id !== config.workspace_id || !Array.isArray(next.capabilities)) throw new ApiError(502, '服务身份或能力状态不一致，请重新连接。');
   config.capabilities = [...next.capabilities];
   renderControls(); renderRows();
@@ -278,6 +283,24 @@ function resetRetrieval() {
   retrievalSourceSequence++; retrievalSourceMatch = null; retrievalOriginal.close(); retrievalSession.invalidate();
 }
 
+function refreshAnswerCapabilities() {
+  if (!connected || currentView !== 'answers') return;
+  const epoch = state.epoch, entry = answerEntry;
+  if (answerCapabilityRefresh?.epoch === epoch && answerCapabilityRefresh.entry === entry) return answerCapabilityRefresh.promise;
+  const ticket = { epoch, entry, promise: null };
+  answerCapabilityRefresh = ticket; answerCapabilityError = null;
+  const current = () => answerCapabilityRefresh === ticket && epoch === state.epoch && currentView === 'answers' && entry === answerEntry;
+  ticket.promise = (async () => {
+    try { await refreshModelCapabilities({ isCurrent: current }); }
+    catch (error) {
+      if (current() && !authenticationFailed(error)) answerCapabilityError = error;
+    } finally {
+      if (answerCapabilityRefresh === ticket) { answerCapabilityRefresh = null; renderAnswerControls(); }
+    }
+  })();
+  renderAnswerControls();
+  return ticket.promise;
+}
 function renderRetrieval() {
   const panel = $('retrieval-panel'); if (!panel) return;
   const available = connected && retrievalEnabled(config);
@@ -391,6 +414,7 @@ $('model-import').addEventListener('click', () => {
   if (currentView !== 'settings' || !canImportConfiguredDocuments()) return;
   if (navigate('documents')) showUpload();
 });
+
 function openRetrieval(ids = null) {
   if (!navigate('retrieval')) return;
   retrievalScope = ids === null ? null : [...ids];
@@ -398,6 +422,11 @@ function openRetrieval(ids = null) {
   resetRetrieval(); $('retrieval-question').focus();
 }
 $('batch-retrieval').addEventListener('click', () => openRetrieval([...state.selected]));
+$('answer-configure').addEventListener('click', () => navigate('settings'));
+$('answer-manage').addEventListener('click', () => {
+  if (!navigate('documents')) return;
+  if (connected && !state.mutating && !loading && ingestionEnabled()) showUpload();
+});
 $('retrieval-all').addEventListener('click', () => openRetrieval(null));
 $('retrieval-question').addEventListener('input', resetRetrieval);
 $('retrieval-run').addEventListener('click', () => {
@@ -903,6 +932,7 @@ function closeDetailPanel({ discard = true } = {}) {
 function showView(view, { focus = true } = {}) {
   const names = { documents: '资料库', tasks: '处理任务', retrieval: '召回测试', answers: '知识问答', settings: '设置' };
   const destination = Object.hasOwn(names, view) ? view : 'answers';
+  const enteringAnswers = destination === 'answers' && currentView !== 'answers';
   if (['settings', 'answers', 'retrieval'].includes(destination) && (state.mutating || !allowDetailLeave())) {
     if (globalThis.history) globalThis.history.replaceState(null, '', `#/${currentView}`);
     return false;
@@ -913,6 +943,7 @@ function showView(view, { focus = true } = {}) {
   if (destination !== 'documents' && $('details').open) $('details').close();
   if (destination !== 'documents') { stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close(); }
   if (currentView === 'answers' && destination !== 'answers') {
+    answerCapabilityRefresh = null;
     voiceQuestionSession.reset();
     if (queryAttachments.length) clearQueryAttachments();
     else answerSession.closeSource();
@@ -932,6 +963,8 @@ function showView(view, { focus = true } = {}) {
   if (managing) $('nav-documents').setAttribute('aria-current', 'page');
   for (const link of document.querySelectorAll('[data-knowledge-view]')) link.setAttribute('aria-current', link.dataset.knowledgeView === currentView ? 'page' : 'false');
   if (currentView === 'retrieval') renderRetrieval();
+  if (currentView === 'answers') renderAnswers();
+  if (enteringAnswers) { answerEntry++; refreshAnswerCapabilities(); }
   document.title = `${names[currentView]} · 证据知识库`;
   $('skip-content').setAttribute('href', `#${currentView === 'documents' ? 'documents' : currentView}-heading`);
   if (currentView === 'tasks') renderTaskList();
@@ -1002,8 +1035,8 @@ function initNavigation() {
 }
 
 function ingestionEnabled() { return config?.capabilities?.includes('ingestions') && (['text_upload', 'audio_upload', 'video_upload', 'sound_upload', 'video_av_upload'].some(capability => config.capabilities.includes(capability)) || !!imageUploadMode(config)); }
-function anyAnswersEnabled() { return ['text', 'visual', ...mediaModes].some(mode => answersEnabled(config, mode)); }
-function scopeSelectionEnabled() { return anyAnswersEnabled() || retrievalEnabled(config); }
+function anyAnswersEnabled() { return ['knowledge', 'text', 'visual', ...mediaModes].some(mode => answersEnabled(config, mode)); }
+function scopeSelectionEnabled() { return connected; }
 function evidenceModeEnabled(mode) { return answersEnabled(config, mode) || mode === 'text' && retrievalEnabled(config); }
 function indexingEnabled() { return config?.capabilities?.includes('text_index') && config.capabilities.includes('indexings'); }
 function hasReadyVectorReceipt(item) {
@@ -1065,30 +1098,13 @@ function messageFor(error) {
   return '服务返回的数据暂时不可用，请刷新后重试。';
 }
 
-function singleDocumentAnswerMode(item) {
-  if (!item) return null;
-  const standalone = typeof item.registered_revision_id === 'string' && !item.latest_job;
-  if (item.document_type === 'audio') return standalone ? 'sound' : 'audio';
-  if (item.document_type === 'video') return standalone ? 'video-av-visual' : 'video-visual';
-  if (item.document_type === 'image') {
-    if (imageUploadMode(config) === 'ocr' && evidenceModeEnabled('text')) return 'text';
-    return answersEnabled(config, 'visual') ? 'visual' : 'text';
-  }
-  return 'text';
-}
-
 function openAnswers(ids = null) {
-  if (!anyAnswersEnabled() && retrievalEnabled(config)) { openRetrieval(ids); return; }
-  if (!connected || state.mutating || !scopeSelectionEnabled()) return;
-  const singleMode = ids?.length === 1
-    ? singleDocumentAnswerMode(state.items.find(item => item.document_id === ids[0])) : null;
-  if (!navigate('answers')) return;
-  if (singleMode) answerMode = singleMode;
-  else if (!evidenceModeEnabled(answerMode)) answerMode = ['text', 'visual', ...mediaModes].find(evidenceModeEnabled);
+  if (!connected || state.mutating || !navigate('answers')) return;
+  answerMode = 'knowledge';
   answerScope = ids === null ? null : [...ids];
   answerScopeNames = (ids ?? []).map(id => state.items.find(item => item.document_id === id)?.display_name ?? id);
   voiceQuestionSession.reset();
-  answerSession.reset(); resetRetrieval();
+  clearQueryAttachments();
   $('answer-question').focus();
 }
 
@@ -1099,20 +1115,25 @@ function renderAnswerControls() {
   const waiting = answerWaiting || voiceQuestionSession.value.phase === 'loading';
   $('batch-ask').disabled = !anyEnabled || state.mutating || loading || state.selected.size === 0;
   $('batch-ask').hidden = !scopeSelectionEnabled();
-  $('batch-ask').textContent = anyAnswersEnabled() ? '在选中资料中提问' : '在选中资料中测试召回';
+  $('batch-ask').textContent = '在选中资料中提问';
   $('answer-mode').value = answerMode;
   $('answer-mode').disabled = !connected;
   $('answer-mode-text').disabled = !answersEnabled(config) && !retrievalEnabled(config);
   $('answer-mode-visual').disabled = !answersEnabled(config, 'visual');
   for (const mode of mediaModes) $(`answer-mode-${mode}`).disabled = !answersEnabled(config, mode);
-  $('answer-question').disabled = !enabled || waiting;
-  $('answer-submit').disabled = !enabled || waiting || !$('answer-question').value.trim() || (queryAttachments.length > 0 && (!currentQueryAttachmentsEnabled() || videoAvModes.includes(answerMode) && queryAttachments.some(item => item.kind !== 'video')));
+  $('answer-question').disabled = waiting;
+  $('answer-submit').disabled = !enabled || waiting || !!answerCapabilityRefresh || !!answerCapabilityError || !$('answer-question').value.trim() || (queryAttachments.length > 0 && (!currentQueryAttachmentsEnabled() || videoAvModes.includes(answerMode) && queryAttachments.some(item => item.kind !== 'video')));
   $('answer-cancel').hidden = !answerWaiting;
   $('answer-all').hidden = answerScope === null;
   $('answer-all').disabled = !anyEnabled || state.mutating;
-  $('answer-all').textContent = anyAnswersEnabled() ? '改问全库' : '测试全库召回';
+  $('answer-all').textContent = '改问全库';
   $('answer-form').setAttribute('aria-busy', String(waiting));
-  $('answer-availability').textContent = !answersEnabled(config, answerMode)
+  $('answer-availability').textContent = !connected ? '可以先写下问题。请到设置确认服务连接，再导入资料并建立索引。'
+    : answerCapabilityRefresh ? '正在刷新服务能力，问题与完整所选范围会保留，不会自动提问。'
+    : answerCapabilityError ? '服务能力尚未完成刷新，请到设置读取当前配置后返回；问题与范围已保留。'
+    : answerMode === 'knowledge' ? !enabled ? '综合问答尚未启用。可先写问题并选择资料；请在设置保存并应用模型、确保服务器 Milvus 已配置，再导入资料并建立索引。返回后刷新能力，由你点击发送。'
+      : '从当前范围的文档和视频文字证据综合回答，引用可打开原文页码或视频片段。请核对产品型号与版本；视频语音、字幕与画面文字不等同于完整画面理解。'
+    : !answersEnabled(config, answerMode)
     ? answerMode === 'text' && retrievalEnabled(config)
       ? '当前可测试文字/OCR召回，生成问答尚未启用。请前往知识库管理中的“召回测试”。'
       : '当前服务未启用此模式的问答与来源功能，请选择可用模式。'
@@ -1122,7 +1143,7 @@ function renderAnswerControls() {
       : answerMode === 'sound' ? '检索原音频波形，再由实际库内声音独立核验完整问题。来源为声音模型判断和服务器窗口，不是语音转录。'
         : mediaModes.includes(answerMode) ? '检索所选类型的已索引证据，引用可定位原素材时间。音频为机器转录；视频按所选画面、转录、画面文字或内嵌字幕核验，无相应证据时拒答。'
         : '检索已发布文字证据（含OCR转录）；图片中的文字使用此模式。解析完成不等于索引发布。';
-  $('chat-capability-status').hidden = enabled || !connected;
+  $('chat-capability-status').hidden = enabled && !answerCapabilityRefresh && !answerCapabilityError;
   $('chat-capability-status').textContent = $('answer-availability').textContent;
   for (const node of document.querySelectorAll('[data-answer-document]')) node.disabled = !anyEnabled || state.mutating || loading;
   const vectorHelp = $('answer-image-vector-help');
@@ -1178,6 +1199,7 @@ function clearQueryAttachments() {
 }
 
 function currentQueryAttachmentsEnabled() {
+  if (answerMode === 'knowledge') return false;
   return videoAvModes.includes(answerMode) ? videoAvQueryAttachmentsEnabled(config)
     : answerMode === 'sound' ? soundEnabled(config) : queryAttachmentsEnabled(config);
 }
@@ -1270,7 +1292,7 @@ function renderAnswers() {
       if (currentView === 'answers') $('source-heading').focus();
     }, 'citation-link');
     read.disabled = !connected || value.sourcePhase === 'loading';
-    const locator = citation.kind === 'video_av_window' ? `${timeLabel(citation.window.start_ms)}–${timeLabel(citation.window.end_ms)}` : citation.kind === 'image_region' ? `整图来源 · ${citation.width} × ${citation.height}` : citation.content_url && citation.start_ms !== undefined ? `${timeLabel(citation.start_ms)}–${timeLabel(citation.end_ms)}` : `第 ${citation.page} 页`;
+    const locator = citation.kind === 'video_av_window' ? `${timeLabel(citation.window.start_ms)}–${timeLabel(citation.window.end_ms)}` : citation.kind === 'image_region' ? `整图来源 · ${citation.width} × ${citation.height}` : citation.content_url && Number.isFinite(citation.start_ms) && Number.isFinite(citation.end_ms) ? `${timeLabel(citation.start_ms)}–${timeLabel(citation.end_ms)}` : `第 ${citation.page} 页`;
     item.append(read, element('p', locator, 'help-text'));
     if (mediaQuote(citation)) {
       const excerpt = element('details', undefined, 'citation-excerpt');
@@ -1295,7 +1317,10 @@ function renderAnswers() {
   renderSourceMedia(source);
   renderSourcePdf(source);
   $('source-metadata').replaceChildren();
-  const metadata = !source ? [] : source.kind === 'video_av_window' ? [['引用编号', source.number], ['文档版本', source.revision_id], ['原文件 SHA-256', source.source_sha256], ['音画模型版本', source.analysis_model_revision], ['证据模式', source.mode], ['服务器窗口', `${timeLabel(source.window.start_ms)}–${timeLabel(source.window.end_ms)}`], ['画面材料', source.window.video ? `${source.window.video.frame_count}个实际连续帧` : '此窗口没有画面'], ['声音材料', source.window.audio ? '完整原声音样本' : '此窗口没有声音'], ['时间精度', source.time_precision], ['事实 SHA-256', source.facts_sha256], ['证据策略', source.policy_revision]] : source.kind === 'sound_span' ? [['引用编号', source.number], ['文档版本', source.revision_id], ['原文件 SHA-256', source.source_sha256], ['声音模型版本', source.analysis_model_revision], ['证据策略版本', source.policy_revision], ['索引配置指纹', source.profile_fingerprint], ['解码版本', source.decoder_revision], ['PCM SHA-256', source.pcm_sha256], ['事实 SHA-256', source.facts_sha256], ['服务器样本窗口', `${source.start_sample}–${source.end_sample}（16000Hz，右端不含）`], ['时间片段', `${timeLabel(source.start_ms)}–${timeLabel(source.end_ms)}`], ['时间精度', source.time_precision], ['证据来源', '原声音模型判断']] : [['引用编号', source.number], ['文档版本', source.revision_id], ['解析版本', source.parser_revision], ['原文件 SHA-256', source.source_sha256],
+  const metadata = !source ? [] : source.evidence_kind ? [['引用编号', source.number], ['文档版本', source.revision_id], ['原文件 SHA-256', source.source_sha256], ['摘录 SHA-256', source.text_sha256], ['证据类型', source.evidence_kind], ['文字来源', source.origin],
+    ...(source.evidence_kind === 'document_text' ? [['页码', source.page], ['字符区间', `${source.start}–${source.end}（Unicode码点，右端不含）`]]
+      : [['时间片段', `${timeLabel(source.start_ms)}–${timeLabel(source.end_ms)}`], ['时间精度', source.time_precision]]),
+    ...(source.parser_revision ? [['解析版本', source.parser_revision]] : [])] : source.kind === 'video_av_window' ? [['引用编号', source.number], ['文档版本', source.revision_id], ['原文件 SHA-256', source.source_sha256], ['音画模型版本', source.analysis_model_revision], ['证据模式', source.mode], ['服务器窗口', `${timeLabel(source.window.start_ms)}–${timeLabel(source.window.end_ms)}`], ['画面材料', source.window.video ? `${source.window.video.frame_count}个实际连续帧` : '此窗口没有画面'], ['声音材料', source.window.audio ? '完整原声音样本' : '此窗口没有声音'], ['时间精度', source.time_precision], ['事实 SHA-256', source.facts_sha256], ['证据策略', source.policy_revision]] : source.kind === 'sound_span' ? [['引用编号', source.number], ['文档版本', source.revision_id], ['原文件 SHA-256', source.source_sha256], ['声音模型版本', source.analysis_model_revision], ['证据策略版本', source.policy_revision], ['索引配置指纹', source.profile_fingerprint], ['解码版本', source.decoder_revision], ['PCM SHA-256', source.pcm_sha256], ['事实 SHA-256', source.facts_sha256], ['服务器样本窗口', `${source.start_sample}–${source.end_sample}（16000Hz，右端不含）`], ['时间片段', `${timeLabel(source.start_ms)}–${timeLabel(source.end_ms)}`], ['时间精度', source.time_precision], ['证据来源', '原声音模型判断']] : [['引用编号', source.number], ['文档版本', source.revision_id], ['解析版本', source.parser_revision], ['原文件 SHA-256', source.source_sha256],
     ...(source.mediaUrl ? [['时间片段', `${timeLabel(source.start_ms)}–${timeLabel(source.end_ms)}`], ['时间精度', source.time_precision], ['证据来源', source.proof_origin ?? source.text_origin]] : source.kind === 'image_region' ? [['定位', '整图'], ['视觉模型版本', source.model_revision], ['证据策略版本', source.policy_revision]]
       : [['页码', source.page], ['字符区间', `${source.start}–${source.end}（Unicode码点，右端不含）`], ['摘录 SHA-256', source.quote_sha256]])];
   for (const [label, text] of metadata) $('source-metadata').append(element('dt', label), element('dd', text));
@@ -1314,7 +1339,7 @@ function renderSourcePdf(source) {
   const pdf = element('object', undefined, 'original-pdf'); pdf.type = 'application/pdf'; pdf.data = open.href;
   pdf.setAttribute('aria-label', `${source.filename}：第 ${source.page} 页原文件`);
   pdf.append(element('p', '浏览器无法内嵌 PDF 时，请打开或下载原文件，按页码核对。'));
-  const origin = source.parser_revision.startsWith('java-pdf-ocr-v1:')
+  const origin = source.origin === 'machine_ocr' || source.parser_revision?.startsWith('java-pdf-ocr-v1:')
     ? '此摘录来自逐页OCR。字符区间对应机器识别文本；请在原 PDF 对应页核对内容。'
     : '按服务器引用页码定位原 PDF；字符区间对应提取文本。';
   panel.append(actions, element('p', origin, 'help-text'), pdf);
@@ -1337,7 +1362,7 @@ function renderSourceMedia(source) {
     audio_span: '音频转录按服务器分段定位，不代表逐词对齐。',
     video_frame: '视频画面引用定位到原始解码帧及服务器画面区间，请结合下方原帧核对。',
     video_transcript: '视频中的语音转录按服务器分段定位，不代表逐词对齐。',
-    video_frame_ocr: '画面文字按原帧区间定位；高亮为OCR词框，不是逐字符框。',
+    video_frame_ocr: source.evidence_kind ? '画面文字按服务器返回的原帧区间定位，不代表完整动作起止。' : '画面文字按原帧区间定位；高亮为OCR词框，不是逐字符框。',
     video_subtitle: '内嵌字幕按原字幕条目起止定位，请结合字幕原文与视频核对。',
     video_av_window: '按服务器窗口回看完整原片；模型判断不代表逐帧或逐声事件精确定位。',
     sound_span: '声音模型判断按服务器窗口定位，不代表精确声事件起止。',
@@ -1376,7 +1401,20 @@ function renderSourceMedia(source) {
 function renderSourceImage(source) {
   const panel = $('source-image-panel');
   panel.replaceChildren();
-  panel.hidden = !source?.imageUrl;
+  panel.hidden = !source?.imageUrl && !source?.originalUrl;
+  if (source?.originalUrl) {
+    const actions = element('div', undefined, 'original-actions');
+    const open = element('a', '打开本次校验的原文件'); open.href = source.originalUrl; open.target = '_blank'; open.rel = 'noopener noreferrer';
+    const download = element('a', '下载原文件'); download.href = source.originalUrl; download.download = source.filename;
+    actions.append(open, download, button('关闭来源', () => answerSession.closeSource())); panel.append(actions);
+    if (source.media_type.startsWith('image/')) {
+      const picture = element('img'); picture.src = source.originalUrl; picture.alt = `${source.filename}：引用文字所在原图`;
+      const canvas = element('div', undefined, 'source-image-canvas'); canvas.append(picture);
+      panel.append(element('p', '摘录来自机器 OCR，请结合原图核对；此来源未提供文字框。', 'help-text'), canvas);
+    } else if (source.original.text !== null) panel.append(element('pre', source.original.text, 'evidence-text'));
+    else panel.append(element('p', source.original.textError ?? '请打开或下载原文件核对引用。', 'help-text'));
+    return;
+  }
   if (!source?.imageUrl) return;
   const picture = element('img');
   picture.src = source.imageUrl; picture.alt = `${source.filename}：服务器校验的原图`;
@@ -1408,6 +1446,7 @@ function clearFeedback() {
 }
 
 function resetContext({ identity = false } = {}) {
+  if (identity) { answerEntry++; answerCapabilityRefresh = null; answerCapabilityError = null; }
   voiceQuestionSession.reset();
   stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close();
   if (identity) { cleanupSession.close(); modelRebuildSession.close(); modelSession.close(); renderedModelVersion = undefined; }
@@ -1814,7 +1853,7 @@ function renderRows() {
     if (retrievalEnabled(config)) menuBody.append(button('召回测试', () => openRetrieval([item.document_id]), 'row-detail'));
     // Legacy management can_answer is a false placeholder; this opens a scope, not an eligibility claim.
     if (scopeSelectionEnabled()) {
-      const ask = button(anyAnswersEnabled() ? '提问' : '测试召回', () => openAnswers([item.document_id]), 'row-detail');
+      const ask = button('提问', () => openAnswers([item.document_id]), 'row-detail');
       ask.dataset.answerDocument = item.document_id;
       menuBody.append(ask);
     }
@@ -2478,7 +2517,7 @@ $('batch-ask').addEventListener('click', () => openAnswers([...state.selected]))
 $('answer-all').addEventListener('click', () => openAnswers());
 $('answer-question').addEventListener('input', () => { voiceQuestionSession.reset(); answerSession.reset(); resetRetrieval(); });
 $('answer-mode').addEventListener('change', () => {
-  answerMode = ['text', 'visual', ...mediaModes].includes($('answer-mode').value) ? $('answer-mode').value : 'text';
+  answerMode = ['knowledge', 'text', 'visual', ...mediaModes].includes($('answer-mode').value) ? $('answer-mode').value : 'knowledge';
   voiceQuestionSession.reset();
   answerSession.reset(); resetRetrieval();
 });
@@ -2497,7 +2536,7 @@ $('answer-attachment-files').addEventListener('change', () => {
   finally { input.value = ''; }
 });
 $('answer-attachment-clear').addEventListener('click', clearQueryAttachments);
-globalThis.addEventListener?.('pagehide', () => { modelRebuildSession.close(); modelSession.close(); resetRetrieval(); cleanupSession.close(); voiceQuestionSession.reset(); clearQueryAttachments(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close(); });
+globalThis.addEventListener?.('pagehide', () => { modelRebuildSession.close(); modelSession.close(); resetRetrieval(); answerCapabilityRefresh = null; cleanupSession.close(); voiceQuestionSession.reset(); clearQueryAttachments(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close(); });
 $('answer-voice-file').addEventListener('change', () => {
   const input = $('answer-voice-file');
   if (!connected || !voiceQuestionsEnabled(config) || !answersEnabled(config, answerMode) || answerSession.value.phase === 'loading' || voiceQuestionSession.value.phase === 'loading') { input.value = ''; return; }
@@ -2555,7 +2594,7 @@ $('answer-question').addEventListener('keydown', event => {
 });
 $('answer-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!connected || !answersEnabled(config, answerMode) || answerSession.value.phase === 'loading' || voiceQuestionSession.value.phase === 'loading') return;
+  if (!connected || !answersEnabled(config, answerMode) || answerCapabilityRefresh || answerCapabilityError || answerSession.value.phase === 'loading' || voiceQuestionSession.value.phase === 'loading') return;
   $('chat-question-text').textContent = $('answer-question').value;
   $('chat-options').open = false;
   document.querySelector('.chat-scope').open = false;

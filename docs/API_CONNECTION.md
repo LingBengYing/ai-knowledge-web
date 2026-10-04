@@ -1,5 +1,11 @@
 # API Connection
 
+## 产品使用帮助（0036 / Java 0048）
+
+`product_help`能力对应精确`POST /v1/product-help/search`，无query。请求为question、可选完整document_ids、top_k（每类1–10、默认5）、rerank（默认true）。省略范围为全库，空数组不得改写。返回search_id/configuration_version/status/reason/scope_count/score_kind/matches；match包含category、evidence_kind、原document/revision/SHA、text/text_sha256、nullable页码/码点或start_ms/end_ms/time_precision，以及精确原件content_url。检索结果不是answer trace，不访问旧答案来源路径。
+
+两代理只为该精确POST复用已有retrieval期限/限额；原件继续既有metadata及按revision内容路由，完整身份/SHA核对后Blob阅读/播放，不转发任意URL或Range。前端无模型密钥，无自动重试，当前停测与真实模型验证边界见[0036记录](changes/0036-product-help/REVIEW.md)。
+
 2026-10-03当前基础修复0033：已有文字索引后，仅更换生成或重排模型可以保存、单独测试并明确应用；嵌入配置及投影不变时不重建资料索引。实际新角色与新trace、原索引/旧来源、连续切换及重启均已本机验证；真正嵌入或投影变化仍拒绝，legacy媒体按实际完整profile判定。最终3058 Java、1013格式、原LINE/BRANCH双80与架构、六Native各1通过；1029后端输入相同、761生产class稳定。前端64及后端18 Node/static输入字节不变，430/check与73明确复用此前实跑证据。新交接.tools/model-role-switch-handoff以实际manifest/VALIDATION为准；未部署、0新增真实provider调用、页面用户验收、真实ASR未宣称修复，目标active。历史记录保留。
 
 0021新增`model_configuration`与`retrieval_test`实际能力：设置中的GET/PUT `/v1/model-configuration`、POST同路径`/test`及`/activate`采用独立配置Session；POST `/v1/retrieval-tests`采用完整范围和片段SHA校验。写结果未知后只读核对，不自动重发；读取已应用版本后同身份刷新能力/授权行并保留整理草稿。角色测试单次请求，召回不生成；同版本原文件沿既有完整SHA校验打开。流程与失败恢复见[MODEL_SETUP_AND_RETRIEVAL](MODEL_SETUP_AND_RETRIEVAL.md)及[0021合同](changes/0021-model-setup-retrieval-test/spec.md)。

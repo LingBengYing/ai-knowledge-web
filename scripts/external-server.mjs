@@ -14,6 +14,7 @@ const ASSETS = new Map([
   ['/document-replacements.mjs', ['document-replacements.mjs', 'text/javascript; charset=utf-8']],
   ['/model-configuration.mjs', ['model-configuration.mjs', 'text/javascript; charset=utf-8']],
   ['/retrieval-tests.mjs', ['retrieval-tests.mjs', 'text/javascript; charset=utf-8']],
+  ['/product-help.mjs', ['product-help.mjs', 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/login', ['login.html', 'text/html; charset=utf-8']],
   ['/login.mjs', ['login.mjs', 'text/javascript; charset=utf-8']],
@@ -44,6 +45,7 @@ const ROUTES = [
   [/^\/v1\/model-configuration$/, ['GET', 'PUT'], 'model-configuration'],
   [/^\/v1\/model-configuration\/(?:test|activate)$/, ['POST'], 'model-configuration'],
   [/^\/v1\/retrieval-tests$/, ['POST'], 'retrieval'],
+  [/^\/v1\/product-help\/search$/, ['POST'], 'retrieval'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/cleanup$/, ['GET', 'POST'], 'cleanup'],
   [/^\/v1\/management\/document-cleanups$/, ['GET', 'POST'], 'cleanup-list'],
   [/^\/v1\/video-av-documents$/, ['POST'], 'video-av-upload'],
@@ -70,6 +72,8 @@ const ROUTES = [
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/original$/, ['GET'], 'source'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content$/, ['GET'], 'media'],
   [/^\/v1\/answers$/, ['POST'], 'answer'],
+  [/^\/v1\/knowledge-answers$/, ['POST'], 'answer'],
+  [/^\/v1\/knowledge-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
   [/^\/v1\/attachment-answers$/, ['POST'], 'attachment'],
   [/^\/v1\/voice-questions$/, ['POST'], 'voice'],
   [/^\/v1\/visual-answers$/, ['POST'], 'answer'],
@@ -386,14 +390,14 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     const replacementUpload = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/.test(req.url.split('?')[0]);
     const replacementIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/.test(req.url);
     const upload = replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
-    const answer = req.method === 'POST' && ['/v1/answers', '/v1/attachment-answers', '/v1/visual-answers', '/v1/audio-answers', '/v1/video-answers', '/v1/sound-answers', '/v1/sound-query-answers', '/v1/video-av-answers', '/v1/video-av-query-answers'].includes(req.url);
+    const answer = req.method === 'POST' && ['/v1/knowledge-answers', '/v1/answers', '/v1/attachment-answers', '/v1/visual-answers', '/v1/audio-answers', '/v1/video-answers', '/v1/sound-answers', '/v1/sound-query-answers', '/v1/video-av-answers', '/v1/video-av-query-answers'].includes(req.url);
     const voice = req.method === 'POST' && req.url === '/v1/voice-questions';
     const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
     const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
     const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);
     const videoAvIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/.test(req.url);
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
-    const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
+    const retrieval = req.method === 'POST' && ['/v1/retrieval-tests', '/v1/product-help/search'].includes(req.url);
     const timer = setTimeout(() => controller.abort(), modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : voice ? voiceDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
     let reservedUpload = false;
     let reservedReplacementIndex = false;

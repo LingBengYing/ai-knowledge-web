@@ -90,10 +90,10 @@
             <div class="answer-scope"><strong id="answer-scope-label">全部可访问的已发布资料</strong><button id="answer-all" type="button" hidden>改问全库</button></div>
             <ul id="answer-scope-documents" class="scope-documents" hidden></ul><a href="#/documents">去资料库选择范围 →</a>
           </div></details>
-          <button id="answer-new" type="button" class="quiet-button">重新开始</button>
+          <div class="answer-setup-actions" aria-label="准备问答资料"><button id="answer-configure" type="button" class="quiet-button">配置模型</button><button id="answer-manage" type="button" class="quiet-button">导入 / 管理资料</button><button id="answer-new" type="button" class="quiet-button">重新开始</button></div>
         </div>
         <div class="chat-thread">
-          <div id="answer-empty" class="chat-welcome"><div class="chat-mark" aria-hidden="true">✳</div><h2>想从资料里了解什么？</h2><p>从一个具体问题开始，答案会附上可核对的来源。</p><div class="chat-hints"><span>查找一个事实</span><span>理解一段内容</span><span>核对原始出处</span></div></div>
+          <div id="answer-empty" class="chat-welcome"><div class="chat-mark" aria-hidden="true">✳</div><h2>想从资料里了解什么？</h2><p>从一个具体问题开始，答案会附上可核对的来源。</p><div class="chat-hints"><span>查找一个事实</span><span>了解产品如何使用</span><span>核对原始出处</span></div></div>
           <div id="chat-question" class="chat-question" hidden><span class="chat-speaker">你</span><p id="chat-question-text"></p></div>
           <div id="chat-thinking" class="chat-thinking" role="status" hidden><span class="thinking-dot" aria-hidden="true"></span>正在查找资料，核对答案…</div>
         <section id="answer-result" class="answer-result" aria-labelledby="answer-result-heading" hidden>
@@ -107,10 +107,10 @@
         </div>
         <form id="answer-form" class="answer-composer">
           <label for="answer-question" class="sr-only">你的问题</label>
-          <textarea id="answer-question" rows="2" maxlength="4096" required placeholder="问问你的资料…" aria-describedby="answer-question-help answer-availability" disabled></textarea>
+          <textarea id="answer-question" rows="2" maxlength="4096" required placeholder="问问你的资料…" aria-describedby="answer-question-help answer-availability"></textarea>
           <div class="composer-toolbar"><div class="composer-tools">
             <label for="answer-mode" class="sr-only">证据类型</label>
-          <select id="answer-mode"><option id="answer-mode-text" value="text">文字证据（含图片OCR）</option><option id="answer-mode-visual" value="visual">原图视觉</option><option id="answer-mode-audio" value="audio">音频转录</option><option id="answer-mode-sound" value="sound">声音理解（含非语音）</option><option id="answer-mode-video-visual" value="video-visual">视频画面</option><option id="answer-mode-video-transcript" value="video-transcript">视频语音转录</option><option id="answer-mode-video-joint" value="video-joint">视频画面与语音</option><option id="answer-mode-video-ocr" value="video-ocr">视频画面文字（OCR）</option><option id="answer-mode-video-subtitle" value="video-subtitle">视频内嵌字幕</option><option id="answer-mode-video-av-visual" value="video-av-visual">连续视频画面</option><option id="answer-mode-video-av-audio" value="video-av-audio">视频原声（含非语音）</option><option id="answer-mode-video-av-joint" value="video-av-joint">原视频音画</option></select>
+          <select id="answer-mode"><option id="answer-mode-knowledge" value="knowledge">综合问答 · 文档与视频文字</option><option id="answer-mode-text" value="text">文字证据（含图片OCR）</option><option id="answer-mode-visual" value="visual">原图视觉</option><option id="answer-mode-audio" value="audio">音频转录</option><option id="answer-mode-sound" value="sound">声音理解（含非语音）</option><option id="answer-mode-video-visual" value="video-visual">视频画面</option><option id="answer-mode-video-transcript" value="video-transcript">视频语音转录</option><option id="answer-mode-video-joint" value="video-joint">视频画面与语音</option><option id="answer-mode-video-ocr" value="video-ocr">视频画面文字（OCR）</option><option id="answer-mode-video-subtitle" value="video-subtitle">视频内嵌字幕</option><option id="answer-mode-video-av-visual" value="video-av-visual">连续视频画面</option><option id="answer-mode-video-av-audio" value="video-av-audio">视频原声（含非语音）</option><option id="answer-mode-video-av-joint" value="video-av-joint">原视频音画</option></select>
             <details id="chat-options" class="chat-options"><summary>＋ 更多</summary><div class="chat-options-content">
               <h3>提问选项</h3><p id="answer-availability" class="help-text">正在读取问答能力…</p>
           <p id="answer-image-vector-help" class="help-text" hidden></p>
@@ -149,7 +149,7 @@
           <p id="chat-input-status" class="composer-status" hidden></p>
           <p id="chat-capability-status" class="composer-status" role="status" hidden></p>
         </form>
-        <p class="chat-footnote">回答基于资料，请结合来源核对。<span>Enter 发送 · Shift + Enter 换行</span></p>
+        <p class="chat-footnote">回答基于资料，请结合来源及产品型号核对。<span>Enter 发送 · Shift + Enter 换行</span></p>
       </div>
       <dialog id="source-panel" class="source-panel" aria-labelledby="source-heading">
         <div class="section-heading"><h2 id="source-heading" tabindex="-1">参考来源</h2><button id="source-close" type="button" aria-label="关闭参考来源">关闭 ×</button></div>

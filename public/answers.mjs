@@ -1,4 +1,5 @@
 import { ApiError } from './api.mjs';
+import { DocumentOriginalSession } from './document-originals.mjs';
 import { mediaModes, checkedMediaCitation } from './media-sources.mjs';
 import { checkedQueryAttachments, encodeQueryAttachments, encodeQueryAttachmentsWithHashes, attachmentMode, checkedAttachmentResponse } from './query-attachments.mjs';
 import { videoAvModes, videoAvEnabled, checkedVideoAvAnswer, checkedVideoAvSource, checkedVideoAvQueryResponse } from './video-av.mjs';
@@ -13,8 +14,12 @@ const visualFields = ['number', 'kind', 'document_id', 'revision_id', 'source_sh
   'filename', 'media_type', 'width', 'height', 'bbox', 'coordinate_system', 'model_revision', 'policy_revision', 'source_url', 'content_url'];
 const idle = () => ({ phase: 'idle', result: null, error: null, queryAttachments: Object.freeze([]), sourcePhase: 'idle', source: null, sourceError: null });
 const invalidResponse = () => new ApiError(502, '服务器返回的答案或来源格式无效，请刷新后核对。');
+const knowledgeFields = ['citation_id', 'evidence_kind', 'document_id', 'revision_id', 'filename', 'source_sha256',
+  'media_type', 'quote', 'text_sha256', 'origin', 'content_url', 'source_url', 'page', 'start', 'end', 'start_ms', 'end_ms', 'time_precision'];
+const digestText = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('');
 
 export function answersEnabled(config, mode = 'text') {
+  if (mode === 'knowledge') return config?.capabilities?.includes('knowledge_answers') === true;
   if (!['text', 'visual', ...mediaModes].includes(mode)) return false;
   if (videoAvModes.includes(mode)) return videoAvEnabled(config);
   if (mode === 'sound') return soundEnabled(config);
@@ -119,6 +124,61 @@ function checkedAnswer(value, mode) {
     reason: value.reason, citations: Object.freeze(citations) });
 }
 
+async function checkedKnowledgeCitation(value, answerId, ordinal) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || knowledgeFields.some(field => !Object.hasOwn(value, field))
+    || value.citation_id !== ordinal || !Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 32
+    || typeof value.document_id !== 'string' || !sourceId.test(value.document_id)
+    || typeof value.revision_id !== 'string' || !sourceId.test(value.revision_id)
+    || typeof value.filename !== 'string' || !value.filename
+    || !sha256.test(value.source_sha256 ?? '') || !sha256.test(value.text_sha256 ?? '')
+    || typeof value.quote !== 'string' || !value.quote
+    || value.source_url !== `/v1/knowledge-sources/${answerId}/${ordinal}`
+    || value.content_url !== `/v1/documents/${value.document_id}/revisions/${value.revision_id}/content`) throw invalidResponse();
+  if (value.evidence_kind === 'document_text') {
+    if (!['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg'].includes(value.media_type)
+      || !['source_text', 'machine_ocr'].includes(value.origin)
+      || !Number.isSafeInteger(value.page) || value.page < 1
+      || !Number.isSafeInteger(value.start) || value.start < 0
+      || !Number.isSafeInteger(value.end) || value.end <= value.start || [...value.quote].length !== value.end - value.start
+      || value.start_ms !== null || value.end_ms !== null || value.time_precision !== null) throw invalidResponse();
+  } else {
+    const type = { video_transcript: ['machine_asr', 'server_chunk'], video_subtitle: ['embedded_subtitle', 'subtitle_cue'], video_frame_ocr: ['machine_ocr', 'frame_interval'] }[value.evidence_kind];
+    if (!type || value.origin !== type[0] || value.time_precision !== type[1]
+      || !['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'].includes(value.media_type)
+      || value.page !== null || value.start !== null || value.end !== null
+      || !Number.isFinite(value.start_ms) || value.start_ms < 0
+      || !Number.isFinite(value.end_ms) || value.end_ms <= value.start_ms) throw invalidResponse();
+  }
+  if (await digestText(value.quote) !== value.text_sha256) throw invalidResponse();
+  return Object.freeze({ ...Object.fromEntries(knowledgeFields.map(field => [field, value[field]])),
+    ...(typeof value.parser_revision === 'string' && value.parser_revision ? { parser_revision: value.parser_revision } : {}),
+    number: ordinal, kind: value.evidence_kind });
+}
+
+async function checkedKnowledgeAnswer(value, documentIds) {
+  if (!value || typeof value.answer_id !== 'string' || !sourceId.test(value.answer_id)
+    || !['answered', 'abstained'].includes(value.status) || typeof value.answer !== 'string' || !value.answer.trim()
+    || !Array.isArray(value.citations) || value.citations.length > 32
+    || (value.status === 'answered' ? value.reason !== null || !value.citations.length
+      : typeof value.reason !== 'string' || !/^[a-z][a-z0-9_]{0,99}$/u.test(value.reason) || value.citations.length)) throw invalidResponse();
+  const citations = [];
+  for (const [index, item] of value.citations.entries()) {
+    const citation = await checkedKnowledgeCitation(item, value.answer_id, index + 1);
+    if (documentIds && !documentIds.includes(citation.document_id)) throw invalidResponse();
+    citations.push(citation);
+  }
+  return Object.freeze({ answer_id: value.answer_id, status: value.status, answer: value.answer,
+    reason: value.reason, citations: Object.freeze(citations) });
+}
+
+async function checkedKnowledgeSource(value, answerId, expected) {
+  if (!value || value.answer_id !== answerId) throw invalidResponse();
+  const citation = await checkedKnowledgeCitation(value.citation, answerId, expected.number);
+  if (JSON.stringify(citation) !== JSON.stringify(expected)) throw invalidResponse();
+  return citation;
+}
+
 function checkedSource(value, answerId, expected, mode) {
   if (!value || value.answer_id !== answerId) throw invalidResponse();
   if (mediaModes.includes(mode)) {
@@ -153,6 +213,7 @@ export class AnswerSession {
   #canUseVideoAvAttachments;
   #canReadOriginal;
   #mediaUrls = new Set();
+  #original;
 
   constructor(request, { onChange = () => {}, onAuthenticationFailure = () => {}, objectUrls = URL, canReadImage = () => true, canUseAttachments = () => false, canUseVideoAvAttachments = () => false, canReadOriginal = () => false } = {}) {
     this.#request = request;
@@ -163,6 +224,7 @@ export class AnswerSession {
     this.#canUseAttachments = canUseAttachments;
     this.#canUseVideoAvAttachments = canUseVideoAvAttachments;
     this.#canReadOriginal = canReadOriginal;
+    this.#original = new DocumentOriginalSession(request, { objectUrls });
   }
 
   get value() { return this.#value; }
@@ -183,6 +245,7 @@ export class AnswerSession {
   }
 
   #releaseImage() {
+    this.#original.close();
     if (this.#imageUrl) this.#objectUrls.revokeObjectURL(this.#imageUrl);
     this.#imageUrl = null;
     for (const url of this.#mediaUrls) this.#objectUrls.revokeObjectURL(url);
@@ -210,9 +273,10 @@ export class AnswerSession {
     const epoch = this.#epoch;
     let body, selection, sourceShas;
     try {
-      if (!['text', 'visual', ...mediaModes].includes(mode)) throw new ApiError(422, '请选择已支持的证据类型。');
+      if (!['knowledge', 'text', 'visual', ...mediaModes].includes(mode)) throw new ApiError(422, '请选择已支持的证据类型。');
       body = answerRequest(question, documentIds);
       selection = checkedQueryAttachments(attachments);
+      if (mode === 'knowledge' && selection.length) throw new ApiError(422, '综合问答使用库内文档和视频文字，请移除查询附件后提问。');
       if (videoAvModes.includes(mode) && selection.length) {
         if (!this.#canUseVideoAvAttachments(mode)) throw new ApiError(503, '当前服务未启用原视频参考附件，请移除附件后提问。');
         if (selection.some(item => item.kind !== 'video')) throw new ApiError(422, '原视频音画参考只接受视频原件，请移除图片或音频附件。');
@@ -239,7 +303,7 @@ export class AnswerSession {
       const response = await this.#request(selection.length ? (videoAvModes.includes(mode) ? '/v1/video-av-query-answers' : mode === 'sound' ? '/v1/sound-query-answers' : '/v1/attachment-answers') : mode === 'text' ? '/v1/answers' : `/v1/${prefix}-answers`, { method: 'POST', body, signal: controller.signal });
       if (epoch !== this.#epoch) return this.value;
       const unwrapped = selection.length ? (videoAvModes.includes(mode) ? checkedVideoAvQueryResponse(response, sourceShas, body.mode) : mode === 'sound' ? await checkedSoundAttachments(response, selection) : checkedAttachmentResponse(response, mode, selection)) : { result: response, notices: Object.freeze([]) };
-      const result = videoAvModes.includes(mode) ? await checkedVideoAvAnswer(unwrapped.result, body.mode) : mode === 'sound' ? await checkedSoundAnswer(unwrapped.result) : checkedAnswer(unwrapped.result, mode);
+      const result = mode === 'knowledge' ? await checkedKnowledgeAnswer(unwrapped.result, body.document_ids) : videoAvModes.includes(mode) ? await checkedVideoAvAnswer(unwrapped.result, body.mode) : mode === 'sound' ? await checkedSoundAnswer(unwrapped.result) : checkedAnswer(unwrapped.result, mode);
       if (epoch !== this.#epoch) return this.value;
       this.#publish({ ...idle(), phase: result.status, result, queryAttachments: unwrapped.notices });
     } catch (error) {
@@ -271,9 +335,26 @@ export class AnswerSession {
     try {
       const response = await this.#request(expected.source_url, { signal: controller.signal });
       if (epoch !== this.#epoch || sequence !== this.#sourceSequence) return this.value;
-      let source = videoAvModes.includes(this.#mode) ? await checkedVideoAvSource(response, result.answer_id, expected) : this.#mode === 'sound' ? await checkedSoundSource(response, result.answer_id, expected) : checkedSource(response, result.answer_id, expected, this.#mode);
+      let source = this.#mode === 'knowledge' ? await checkedKnowledgeSource(response, result.answer_id, expected) : videoAvModes.includes(this.#mode) ? await checkedVideoAvSource(response, result.answer_id, expected) : this.#mode === 'sound' ? await checkedSoundSource(response, result.answer_id, expected) : checkedSource(response, result.answer_id, expected, this.#mode);
       if (epoch !== this.#epoch || sequence !== this.#sourceSequence) return this.value;
-      if (source.image) {
+      if (source.evidence_kind) {
+        if (!this.#canReadOriginal()) throw new ApiError(503, '服务未启用引用原文件读取。');
+        const current = () => epoch === this.#epoch && sequence === this.#sourceSequence;
+        const metadata = await this.#request(`/v1/documents/${source.document_id}/original`, { signal: controller.signal });
+        if (!current()) return this.value;
+        if (!metadata || ['document_id', 'revision_id', 'filename', 'source_sha256', 'media_type', 'content_url'].some(key => metadata[key] !== source[key])
+          || (source.evidence_kind === 'document_text' ? !['document', 'image'].includes(metadata.document_type) : metadata.document_type !== 'video')) {
+          throw new ApiError(409, '原文件版本已变化或与答案引用不一致，请重新提问后打开。');
+        }
+        const opened = await this.#original.open({ document_id: metadata.document_id, active_revision_id: metadata.revision_id,
+          filename: metadata.filename, document_type: metadata.document_type,
+          media_info: { mime_type: metadata.media_type, sha256: metadata.source_sha256, size_bytes: metadata.size_bytes } });
+        if (!current()) return this.value;
+        if (opened.phase !== 'ready') throw opened.error ?? invalidResponse();
+        source = Object.freeze({ ...source, original: opened.original,
+          ...(source.evidence_kind !== 'document_text' ? { mediaUrl: opened.original.url }
+            : source.media_type === 'application/pdf' ? { pdfUrl: opened.original.url } : { originalUrl: opened.original.url }) });
+      } else if (source.image) {
         if (!this.#canReadImage(this.#mode)) throw new ApiError(503, '服务未启用此来源的原图读取。');
         const blob = await this.#request(source.image.content_url, { binary: true, signal: controller.signal });
         if (epoch !== this.#epoch || sequence !== this.#sourceSequence) return this.value;
