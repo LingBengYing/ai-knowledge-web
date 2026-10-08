@@ -81,7 +81,8 @@ export class DocumentOriginalSession {
         catch { textError = '原文件不是有效 UTF-8 文本，无法在此预览；可打开或下载原文件。'; }
       }
       this.#url = this.#objectUrls.createObjectURL(blob);
-      this.#publish({ phase: 'ready', original: Object.freeze({ ...original, url: this.#url, text, textError }), error: null });
+      this.#publish({ phase: 'ready', original: Object.freeze({ ...original, url: this.#url, text, textError,
+        ...(original.media_type === 'application/pdf' ? { blob } : {}) }), error: null });
     } catch (error) {
       if (current() && error.name !== 'AbortError') {
         this.#publish({ phase: 'error', original: null, error });

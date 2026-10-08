@@ -68,5 +68,9 @@ test('opening a preview original requires the current saved document revision an
   const match = await hit();
   const row = { document_id: match.document_id, filename: match.filename, active_revision_id: match.revision_id, latest_job: { revision_id: match.revision_id }, media_info: { sha256: match.source_sha256 } };
   assert.equal(matchCurrentOriginal(match, row), true);
-  for (const update of [{ active_revision_id: 'other' }, { latest_job: { revision_id: 'other' } }, { filename: 'other.txt' }, { media_info: { sha256: 'b'.repeat(64) } }]) assert.equal(matchCurrentOriginal(match, { ...row, ...update }), false);
+  for (const update of [{ active_revision_id: 'other' }, { filename: 'other.txt' }, { media_info: { sha256: 'b'.repeat(64) } }]) assert.equal(matchCurrentOriginal(match, { ...row, ...update }), false);
+  const pending = { ...row, latest_job: { revision_id: 'new-candidate', status: 'running' } };
+  assert.equal(matchCurrentOriginal(match, pending), true, 'a pending candidate does not replace the active source');
+  assert.equal(matchCurrentOriginal(match, { ...pending, active_revision_id: 'new-candidate' }), false,
+    'publishing the new active revision invalidates the old retrieval source');
 });

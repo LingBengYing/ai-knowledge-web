@@ -9,6 +9,7 @@ import { showNotice } from './notices.mjs';
 import { AnswerSession, answersEnabled, answerRequest } from './answers.mjs';
 import { mediaModes, mediaQuote, timeLabel } from './media-sources.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
+import { PdfPreviewSession } from './pdf-preview.mjs';
 import { queryAttachmentsEnabled, attachmentAccept, checkedQueryAttachments } from './query-attachments.mjs';
 import { SynopsisSession, synopsisEnabled, canGenerateSynopsis } from './file-synopsis.mjs';
 import { TagSuggestionSession, tagSuggestionsEnabled, canReadTagSuggestions } from './tag-suggestions.mjs';
@@ -73,6 +74,13 @@ const voiceQuestionSession = new VoiceQuestionSession({
 const originalSession = new DocumentOriginalSession((path, options) => api(path, options), {
   onChange: () => renderDetailOriginal(), onAuthenticationFailure: error => authenticationFailed(error),
 });
+const sourcePdfPreview = new PdfPreviewSession({ onChange: value => {
+  const status = $('source-pdf-status'), canvas = $('source-pdf-canvas');
+  if (status) status.textContent = value.phase === 'loading' ? '正在显示原 PDF 引用页…'
+    : value.phase === 'ready' ? `原 PDF 第 ${value.page} 页 / 共 ${value.pages} 页`
+      : value.error ?? '';
+  if (canvas) canvas.hidden = value.phase !== 'ready';
+} });
 const replacementSession = new DocumentReplacementSession((path, options) => api(path, options), {
   onChange: () => renderDetailReplacement(), onAuthenticationFailure: error => authenticationFailed(error),
   onPublished: value => {
@@ -1328,21 +1336,25 @@ function renderAnswers() {
 
 function renderSourcePdf(source) {
   const panel = $('source-pdf-panel');
-  if (source?.pdfUrl && panel.dataset.pdfUrl === source.pdfUrl) return;
-  panel.replaceChildren(); panel.dataset.pdfUrl = source?.pdfUrl ?? ''; panel.hidden = !source?.pdfUrl;
+  const identity = source?.pdfUrl ? JSON.stringify([source.pdfUrl, source.page]) : '';
+  if (identity && panel.dataset.pdfIdentity === identity) return;
+  sourcePdfPreview.close();
+  panel.replaceChildren(); panel.dataset.pdfIdentity = identity; panel.hidden = !source?.pdfUrl;
   if (!source?.pdfUrl) return;
   const open = element('a', `打开原 PDF · 第 ${source.page} 页`);
   open.href = `${source.pdfUrl}#page=${source.page}`; open.target = '_blank'; open.rel = 'noopener noreferrer';
   const download = element('a', '下载原 PDF'); download.href = source.pdfUrl; download.download = source.filename;
   const actions = element('div', undefined, 'original-actions');
   actions.append(open, download, button('关闭来源', () => answerSession.closeSource()));
-  const pdf = element('object', undefined, 'original-pdf'); pdf.type = 'application/pdf'; pdf.data = open.href;
-  pdf.setAttribute('aria-label', `${source.filename}：第 ${source.page} 页原文件`);
-  pdf.append(element('p', '浏览器无法内嵌 PDF 时，请打开或下载原文件，按页码核对。'));
+  const status = element('p', '', 'help-text'); status.id = 'source-pdf-status'; status.setAttribute('role', 'status');
+  const canvas = element('canvas', undefined, 'source-pdf-page'); canvas.id = 'source-pdf-canvas'; canvas.hidden = true;
+  canvas.setAttribute('aria-label', `${source.filename}：第 ${source.page} 页原文件`);
   const origin = source.origin === 'machine_ocr' || source.parser_revision?.startsWith('java-pdf-ocr-v1:')
     ? '此摘录来自逐页OCR。字符区间对应机器识别文本；请在原 PDF 对应页核对内容。'
     : '按服务器引用页码定位原 PDF；字符区间对应提取文本。';
-  panel.append(actions, element('p', origin, 'help-text'), pdf);
+  panel.append(status, canvas, actions, element('p', origin, 'help-text'));
+  sourcePdfPreview.open({ blob: source.pdfBlob, page: source.page, canvas,
+    width: panel.clientWidth || 720, pixelRatio: window.devicePixelRatio || 1 });
 }
 
 function renderSourceMedia(source) {

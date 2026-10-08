@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Standalone native JavaScript management frontend for the AI Knowledge Java development edition",
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.13.0" },
   "scripts": {
+    "build:pdf": "node scripts/vendor-pdfjs.mjs",
     "dev": "node scripts/dev-server.mjs",
     "start": "node scripts/dev-server.mjs",
     "test": "node --test ui-tests/*.test.mjs tests/*.test.mjs scripts/check-secrets.test.mjs",
     "check": "node scripts/check-syntax.mjs",
     "check:secrets": "node scripts/check-secrets.mjs --history"
-  }
+  },
+  "dependencies": { "pdfjs-dist": "6.4.299" }
 }

@@ -353,7 +353,7 @@ export class AnswerSession {
         if (opened.phase !== 'ready') throw opened.error ?? invalidResponse();
         source = Object.freeze({ ...source, original: opened.original,
           ...(source.evidence_kind !== 'document_text' ? { mediaUrl: opened.original.url }
-            : source.media_type === 'application/pdf' ? { pdfUrl: opened.original.url } : { originalUrl: opened.original.url }) });
+            : source.media_type === 'application/pdf' ? { pdfUrl: opened.original.url, pdfBlob: opened.original.blob } : { originalUrl: opened.original.url }) });
       } else if (source.image) {
         if (!this.#canReadImage(this.#mode)) throw new ApiError(503, '服务未启用此来源的原图读取。');
         const blob = await this.#request(source.image.content_url, { binary: true, signal: controller.signal });
@@ -382,9 +382,9 @@ export class AnswerSession {
           || original.document_type !== 'document' || original.media_type !== 'application/pdf'
           || !Number.isSafeInteger(original.size_bytes) || original.size_bytes < 1 || original.size_bytes > 20 * 1024 * 1024
           || original.content_url !== `/v1/documents/${source.document_id}/revisions/${source.revision_id}/content`) throw invalidResponse();
-        const pdfUrl = await this.#loadMedia(original.content_url, original.media_type, source.source_sha256, controller.signal, current, 20, original.size_bytes);
+        const pdf = await this.#loadMedia(original.content_url, original.media_type, source.source_sha256, controller.signal, current, 20, original.size_bytes, true);
         if (!current()) return this.value;
-        source = Object.freeze({ ...source, pdfUrl });
+        source = Object.freeze({ ...source, pdfUrl: pdf.url, pdfBlob: pdf.blob });
       }
       this.#publish({ ...this.value, sourcePhase: 'ready', source, sourceError: null });
     } catch (error) {
@@ -398,7 +398,7 @@ export class AnswerSession {
     return this.value;
   }
 
-  async #loadMedia(path, type, sha, signal, current, maxMiB, expectedSize = null) {
+  async #loadMedia(path, type, sha, signal, current, maxMiB, expectedSize = null, includeBlob = false) {
     const blob = await this.#request(path, { binary: true, signal });
     if (!current()) return null;
     if (!(blob instanceof Blob) || blob.type !== type || !blob.size || blob.size > maxMiB * 1024 * 1024
@@ -406,6 +406,6 @@ export class AnswerSession {
     const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
     if (!current()) return null;
     if ([...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('') !== sha) throw invalidResponse();
-    const url = this.#objectUrls.createObjectURL(blob); this.#mediaUrls.add(url); return url;
+    const url = this.#objectUrls.createObjectURL(blob); this.#mediaUrls.add(url); return includeBlob ? { url, blob } : url;
   }
 }

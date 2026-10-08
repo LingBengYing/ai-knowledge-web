@@ -33,6 +33,8 @@ test('PDF citation reads authority source, matching original metadata and full S
   const f = fixture(); await f.session.ask('Code?', ['doc-one']); await f.session.readSource(1);
   assert.equal(f.session.value.sourcePhase, 'ready');
   assert.equal(f.session.value.source.pdfUrl, 'blob:pdf-source');
+  assert.equal(f.session.value.source.pdfBlob, f.created[0]);
+  assert.deepEqual(new Uint8Array(await f.session.value.source.pdfBlob.arrayBuffer()), f.bytes);
   assert.equal(f.session.value.source.page, 2);
   assert.deepEqual(f.calls.map(c => c.path), ['/v1/answers', '/v1/sources/answer-one/1',
     '/v1/documents/doc-one/original', '/v1/documents/doc-one/revisions/rev-one/content']);

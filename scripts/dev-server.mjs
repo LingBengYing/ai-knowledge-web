@@ -6,9 +6,12 @@ import { open, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
+import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
 
 const DEFAULT_PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const ASSETS = new Map([
+  ['/pdf-preview.mjs', ['pdf-preview.mjs', 'text/javascript; charset=utf-8']],
+  ...pdfBundle.assets.map(asset => [asset.path, [asset.file, asset.content_type, asset.bytes]]),
   ['/model-rebuild.mjs', ['model-rebuild.mjs', 'text/javascript; charset=utf-8']],
   ['/document-replacements.mjs', ['document-replacements.mjs', 'text/javascript; charset=utf-8']],
   ['/model-configuration.mjs', ['model-configuration.mjs', 'text/javascript; charset=utf-8']],
@@ -103,7 +106,7 @@ const SAFE_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; font-src 'self' blob:; worker-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 
 class TransportError extends Error {
@@ -300,9 +303,11 @@ async function serveAsset(res, asset, publicDirectory, head) {
   try {
     const directory = resolve(publicDirectory);
     if (await realpath(directory) !== directory) throw new Error('unsafe asset root');
-    file = await open(join(directory, asset[0]), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const assetPath = join(directory, asset[0]);
+    if (await realpath(assetPath) !== assetPath) throw new Error('unsafe asset path');
+    file = await open(assetPath, constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = await file.stat();
-    if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error('unsafe asset');
+    if (!stat.isFile() || stat.size > (asset[2] ?? 1024 * 1024)) throw new Error('unsafe asset');
     const body = await file.readFile();
     res.writeHead(200, { 'Content-Type': asset[1] });
     res.end(head ? undefined : body);
@@ -355,6 +360,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
       const asset = ASSETS.get(path);
       if (asset) {
+        if ((path === '/pdf-preview.mjs' || path.startsWith('/vendor/pdfjs/')) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if (['/model-rebuild.mjs', '/document-replacements.mjs', '/model-configuration.mjs', '/retrieval-tests.mjs', '/product-help.mjs', '/query-attachments.mjs', '/voice-question.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if (!['GET', 'HEAD'].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         await serveAsset(res, asset, publicDirectory, req.method === 'HEAD');

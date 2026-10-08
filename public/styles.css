@@ -1479,6 +1479,8 @@ dialog.details::backdrop {
 .document-preview-status button { margin-bottom: 10px; }
 .original-actions { display: flex; flex-wrap: wrap; gap: 16px; margin-block: 10px; }
 .original-pdf { display: block; width: 100%; height: min(62vh, 660px); min-height: 320px; border: 1px solid var(--line); }
+.source-pdf-page { display: block; width: 100%; height: auto; background: white; border: 1px solid var(--line); margin-block: 12px; }
+.source-pdf-page[hidden] { display: none; }
 .original-image { display: block; max-width: 100%; max-height: 65vh; margin-block: 12px; object-fit: contain; }
 .original-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 55vh; overflow: auto; padding: 14px; background: #fff; }
 #detail-original-media { display: block; width: 100%; max-height: 60vh; margin-block: 12px; }

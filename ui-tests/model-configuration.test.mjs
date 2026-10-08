@@ -10,7 +10,12 @@ const draft = (withKeys = false) => ({ embedding: { model: 'synthetic/embedding'
 test('model setup uses its own capability and only accepts the exact safe configuration shape', () => {
   assert.equal(modelConfigurationEnabled({ capabilities: ['answers', 'text_index'] }), false);
   assert.equal(modelConfigurationEnabled({ capabilities: ['model_configuration'] }), true);
-  assert.deepEqual(checkedModelConfiguration(unconfigured()), unconfigured());
+  const legacy = unconfigured();
+  assert.deepEqual(checkedModelConfiguration(legacy), { ...legacy,
+    embedding: { ...legacy.embedding, provider: 'siliconflow' },
+    rerank: { ...legacy.rerank, provider: 'siliconflow' },
+    generation: { ...legacy.generation, provider: 'siliconflow' } });
+  assert.deepEqual(legacy, unconfigured(), 'normalizing a legacy response must not mutate its input');
   for (const bad of [{ ...configured(), api_key: 'REPLACE_ME' }, { ...configured(), provider: 'other' }, { ...configured(), state: 'active' }, { ...configured(), active_version: 2 }, { ...configured(), embedding: { ...configured().embedding, api_key: 'REPLACE_ME' } }, { ...configured(), projection: { ...configured().projection, endpoint: 'https://example.invalid' } }]) {
     assert.throws(() => checkedModelConfiguration(bad), ApiError);
   }
