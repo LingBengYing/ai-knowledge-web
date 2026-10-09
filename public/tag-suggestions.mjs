@@ -8,7 +8,7 @@ const tags = value => Array.isArray(value) && value.length <= 20 && value.every(
 const invalid = () => new ApiError(502, '标签建议或保存结果与当前资料、摘要不一致，请刷新后核对。');
 const idle = () => ({ phase: 'idle', suggestions: null, selected: [], error: null });
 const identity = (item, synopsis) => JSON.stringify([item?.document_id, item?.index_publication_id, item?.active_revision_id,
-  item?.media_info?.sha256, item?.can_edit, synopsis?.synopsis_id, synopsis?.input_fingerprint, synopsis?.model_revision, synopsis?.policy_revision]);
+  item?.media_info?.sha256, synopsis?.synopsis_id, synopsis?.input_fingerprint, synopsis?.model_revision, synopsis?.policy_revision]);
 
 export function tagSuggestionsEnabled(config) {
   return ['file_synopsis', 'synopsis_sources', 'tag_suggestions'].every(name => config?.capabilities?.includes(name));
@@ -22,7 +22,7 @@ function expected(item, synopsis) {
     || !id(synopsis.synopsis_id) || !hash(synopsis.input_fingerprint) || !text(synopsis.model_revision, 200) || !text(synopsis.policy_revision, 200)) throw invalid();
   return { document_id: item.document_id, publication_id: item.index_publication_id, revision_id: item.active_revision_id,
     source_sha256: item.media_info.sha256, synopsis_id: synopsis.synopsis_id, input_fingerprint: synopsis.input_fingerprint,
-    model_revision: synopsis.model_revision, synopsis_policy_revision: synopsis.policy_revision, can_apply: item.can_edit };
+    model_revision: synopsis.model_revision, synopsis_policy_revision: synopsis.policy_revision, can_apply: true };
 }
 
 export function canReadTagSuggestions(item, synopsis) {
@@ -45,7 +45,7 @@ function checked(value, wanted) {
 function checkedSaved(row, wanted, selected) {
   if (!row || row.document_id !== wanted.document_id || row.active_revision_id !== wanted.revision_id
     || row.index_publication_id !== wanted.publication_id || row.media_info?.sha256 !== wanted.source_sha256
-    || row.synthetic_fixture !== false || row.can_edit !== true || !tags(row.tags)
+    || row.synthetic_fixture !== false || !tags(row.tags)
     || selected.some(tag => !row.tags.includes(tag))) throw invalid();
   return row;
 }

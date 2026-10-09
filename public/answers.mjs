@@ -29,21 +29,14 @@ export function answersEnabled(config, mode = 'text') {
     && capabilities.every(name => config.capabilities.includes(name));
 }
 
-/** Preserve the original question and complete selection; [] never means the whole library. */
-export function answerRequest(question, documentIds = null) {
+/** Preserve the original question; all authenticated members query the shared library. */
+export function answerRequest(question) {
   if (typeof question !== 'string' || !question.trim()
-    || new TextEncoder().encode(question).length > 4096
     || [...question].some(character => {
       const point = character.codePointAt(0);
       return (point < 32 && point !== 10 && point !== 9) || point === 127 || (point >= 0xd800 && point <= 0xdfff);
-    })) throw new ApiError(422, '请输入非空问题，最多4096 UTF-8字节，不能包含不合法字符。');
-  if (documentIds === null) return { question };
-  if (!Array.isArray(documentIds) || documentIds.length > 128
-    || documentIds.some(id => typeof id !== 'string' || !documentId.test(id))
-    || new Set(documentIds).size !== documentIds.length) {
-    throw new ApiError(422, '所选资料范围无效，请重新选择；不会自动改为全库问答。');
-  }
-  return { question, document_ids: [...documentIds] };
+    })) throw new ApiError(422, '请输入非空问题，不能包含不合法字符。');
+  return { question };
 }
 
 function checkedCitation(value, answerId, ordinal) {
@@ -127,7 +120,7 @@ function checkedAnswer(value, mode) {
 async function checkedKnowledgeCitation(value, answerId, ordinal) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || knowledgeFields.some(field => !Object.hasOwn(value, field))
-    || value.citation_id !== ordinal || !Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 32
+    || value.citation_id !== ordinal || !Number.isSafeInteger(ordinal) || ordinal < 1
     || typeof value.document_id !== 'string' || !sourceId.test(value.document_id)
     || typeof value.revision_id !== 'string' || !sourceId.test(value.revision_id)
     || typeof value.filename !== 'string' || !value.filename
@@ -156,16 +149,15 @@ async function checkedKnowledgeCitation(value, answerId, ordinal) {
     number: ordinal, kind: value.evidence_kind });
 }
 
-async function checkedKnowledgeAnswer(value, documentIds) {
+export async function checkedKnowledgeAnswer(value) {
   if (!value || typeof value.answer_id !== 'string' || !sourceId.test(value.answer_id)
     || !['answered', 'abstained'].includes(value.status) || typeof value.answer !== 'string' || !value.answer.trim()
-    || !Array.isArray(value.citations) || value.citations.length > 32
+    || !Array.isArray(value.citations)
     || (value.status === 'answered' ? value.reason !== null || !value.citations.length
       : typeof value.reason !== 'string' || !/^[a-z][a-z0-9_]{0,99}$/u.test(value.reason) || value.citations.length)) throw invalidResponse();
   const citations = [];
   for (const [index, item] of value.citations.entries()) {
     const citation = await checkedKnowledgeCitation(item, value.answer_id, index + 1);
-    if (documentIds && !documentIds.includes(citation.document_id)) throw invalidResponse();
     citations.push(citation);
   }
   return Object.freeze({ answer_id: value.answer_id, status: value.status, answer: value.answer,
@@ -274,7 +266,7 @@ export class AnswerSession {
     let body, selection, sourceShas;
     try {
       if (!['knowledge', 'text', 'visual', ...mediaModes].includes(mode)) throw new ApiError(422, '请选择已支持的证据类型。');
-      body = answerRequest(question, documentIds);
+      body = answerRequest(question);
       selection = checkedQueryAttachments(attachments);
       if (mode === 'knowledge' && selection.length) throw new ApiError(422, '综合问答使用库内文档和视频文字，请移除查询附件后提问。');
       if (videoAvModes.includes(mode) && selection.length) {
@@ -303,7 +295,7 @@ export class AnswerSession {
       const response = await this.#request(selection.length ? (videoAvModes.includes(mode) ? '/v1/video-av-query-answers' : mode === 'sound' ? '/v1/sound-query-answers' : '/v1/attachment-answers') : mode === 'text' ? '/v1/answers' : `/v1/${prefix}-answers`, { method: 'POST', body, signal: controller.signal });
       if (epoch !== this.#epoch) return this.value;
       const unwrapped = selection.length ? (videoAvModes.includes(mode) ? checkedVideoAvQueryResponse(response, sourceShas, body.mode) : mode === 'sound' ? await checkedSoundAttachments(response, selection) : checkedAttachmentResponse(response, mode, selection)) : { result: response, notices: Object.freeze([]) };
-      const result = mode === 'knowledge' ? await checkedKnowledgeAnswer(unwrapped.result, body.document_ids) : videoAvModes.includes(mode) ? await checkedVideoAvAnswer(unwrapped.result, body.mode) : mode === 'sound' ? await checkedSoundAnswer(unwrapped.result) : checkedAnswer(unwrapped.result, mode);
+      const result = mode === 'knowledge' ? await checkedKnowledgeAnswer(unwrapped.result) : videoAvModes.includes(mode) ? await checkedVideoAvAnswer(unwrapped.result, body.mode) : mode === 'sound' ? await checkedSoundAnswer(unwrapped.result) : checkedAnswer(unwrapped.result, mode);
       if (epoch !== this.#epoch) return this.value;
       this.#publish({ ...idle(), phase: result.status, result, queryAttachments: unwrapped.notices });
     } catch (error) {

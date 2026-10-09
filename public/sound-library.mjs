@@ -18,7 +18,7 @@ const citationFields = ['number', 'kind', 'document_id', 'revision_id', 'source_
   'decoder_revision', 'pcm_sha256', 'filename', 'media_type', 'start_sample', 'end_sample', 'sample_rate', 'start_ms', 'end_ms',
   'facts', 'facts_sha256', 'analysis_model_revision', 'policy_revision', 'time_precision', 'source_url', 'content_url'];
 const answerFields = ['answer_id', 'status', 'answer', 'reason_code', 'citations', 'policy_revision'];
-const identity = row => JSON.stringify([row?.document_id, row?.document_type, row?.synthetic_fixture, row?.can_edit,
+const identity = row => JSON.stringify([row?.document_id, row?.document_type, row?.synthetic_fixture,
   row?.active_revision_id, row?.registered_revision_id, row?.index_publication_id, row?.media_info]);
 const idle = () => ({ phase: 'idle', index: null, error: null });
 
@@ -74,7 +74,7 @@ export class SoundIndexSession {
     } finally { if (this.controller === controller) this.controller = null; }
   }
   async build(row) {
-    if (!canReadSoundIndex(row) || row.can_edit !== true || !this.matches(row) || this.value.phase !== 'ready' || this.value.index?.status !== 'missing') return;
+    if (!canReadSoundIndex(row) || !this.matches(row) || this.value.phase !== 'ready' || this.value.index?.status !== 'missing') return;
     const previous = this.value.index, serial = ++this.serial, controller = new AbortController(); this.controller = controller;
     this.emit({ phase: 'building', index: previous, error: null });
     try {

@@ -5,7 +5,7 @@ const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value)
 const invalid = () => new ApiError(502, '原声向量结果与当前资料、版本或模型配置不一致，请刷新后核对。');
 const idle = () => ({ phase: 'idle', vector: null, error: null });
 const identity = row => JSON.stringify([row?.document_id, row?.index_publication_id, row?.active_revision_id,
-  row?.document_type, row?.index_status, row?.synthetic_fixture, row?.can_edit, row?.media_info]);
+  row?.document_type, row?.index_status, row?.synthetic_fixture, row?.media_info]);
 const fields = ['status', 'document_id', 'publication_id', 'source_revision_id', 'source_sha256', 'profile_fingerprint',
   'model_revision', 'dimensions', 'vector_generation_id', 'manifest_sha256'];
 
@@ -80,7 +80,7 @@ export class AudioVectorSession {
 
   async build(row) {
     const wanted = expected(row), { phase, vector } = this.value;
-    if (!this.matches(row) || row.can_edit !== true || phase !== 'ready' || vector?.status !== 'missing') return;
+    if (!this.matches(row) || phase !== 'ready' || vector?.status !== 'missing') return;
     const serial = ++this.serial, controller = new AbortController(); this.controller = controller;
     this.emit({ ...idle(), phase: 'building', vector });
     try {

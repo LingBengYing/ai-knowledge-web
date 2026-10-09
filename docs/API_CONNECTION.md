@@ -1,5 +1,7 @@
 # API Connection
 
+0039新合同：浏览器问答/召回请求不发送document_ids，旧客户端参数视为废弃。问题不再限制4096字节；召回scope_count不限128，统一知识引用knowledge-sources编号不限32。登录/同源、精确来源路径及版本/SHA保持；普通128KiB JSON请求、4MiB响应、媒体字节与期限等物理保护未取消。角色权限仅保留兼容响应字段，不作为本UI动作门禁。以下旧选中范围/reader行为已由后端0053与[0039规格](changes/0039-shared-workspace/spec.md)替代。
+
 ## 产品使用帮助（0036 / Java 0048）
 
 `product_help`能力对应精确`POST /v1/product-help/search`，无query。请求为question、可选完整document_ids、top_k（每类1–10、默认5）、rerank（默认true）。省略范围为全库，空数组不得改写。返回search_id/configuration_version/status/reason/scope_count/score_kind/matches；match包含category、evidence_kind、原document/revision/SHA、text/text_sha256、nullable页码/码点或start_ms/end_ms/time_precision，以及精确原件content_url。检索结果不是answer trace，不访问旧答案来源路径。

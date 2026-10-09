@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>知序 · Wiki 知识工作台</title>
+    <link rel="stylesheet" href="/wiki-preview.css">
+    <link rel="stylesheet" href="/wiki-workspace.css">
+    <script type="module" src="/wiki-workspace.mjs"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">跳至内容</a>
+    <div class="wiki-shell">
+      <aside class="sidebar" aria-label="工作台导航" id="sidebar"></aside>
+      <div class="workspace">
+        <header class="topbar" id="topbar"></header>
+        <main id="content" class="content" tabindex="-1" aria-live="polite"></main>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <dialog id="import-dialog" class="preview-dialog" aria-labelledby="import-title">
+      <form method="dialog" class="dialog-head"><h2 id="import-title">导入原始资料</h2><button class="icon-button" aria-label="关闭导入窗口" value="close">×</button></form>
+      <div class="dialog-body">
+        <div class="field"><label for="upload-kind">上传类型</label><select id="upload-kind"><option value="document">文档 / 图片（PDF、TXT、MD、PNG、JPEG）</option><option value="audio">音频转录</option><option value="video">视频文字</option></select></div>
+        <label class="drop-zone" for="workspace-files"><strong>选择要导入的原文件</strong><input id="workspace-files" type="file" multiple></label>
+        <div id="upload-list" class="upload-list" aria-live="polite"></div>
+      </div>
+      <div class="dialog-actions"><button class="button secondary" data-action="close-import">取消</button><button class="button primary" id="confirm-import" data-action="confirm-import" disabled>确认上传并解析</button></div>
+    </dialog>
+    <dialog id="action-confirm-dialog" class="preview-dialog operation-dialog" aria-labelledby="action-confirm-title" aria-describedby="action-confirm-message">
+      <div class="dialog-head"><h2 id="action-confirm-title">确认操作</h2><button type="button" class="icon-button" data-action="cancel-operation" aria-label="取消并关闭确认窗口">×</button></div>
+      <div class="dialog-body"><p id="action-confirm-message" class="preserve-lines"></p></div>
+      <div class="dialog-actions"><button type="button" class="button secondary" id="action-confirm-cancel" data-action="cancel-operation" autofocus>取消</button><button type="button" class="button primary" data-action="confirm-operation">确认并继续</button></div>
+    </dialog>
+    <noscript>知识工作台需要启用 JavaScript。</noscript>
+  </body>
+</html>

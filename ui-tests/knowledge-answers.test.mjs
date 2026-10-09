@@ -13,7 +13,7 @@ test('one unified answer retains the full selection and rereads both pinned docu
   await session.ask('如何开启夜间模式？', ['manual', 'tutorial'], 'knowledge');
   assert.equal(session.value.phase, 'answered');
   assert.equal(calls[0].path, '/v1/knowledge-answers');
-  assert.deepEqual(calls[0].options.body, { question: '如何开启夜间模式？', document_ids: ['manual', 'tutorial'] });
+  assert.deepEqual(calls[0].options.body, { question: '如何开启夜间模式？' });
   assert.equal(session.value.result.citations.length, 2);
   await session.readSource(1);
   assert.equal(session.value.sourcePhase, 'ready');

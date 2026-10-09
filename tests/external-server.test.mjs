@@ -11,6 +11,36 @@ const publicOrigin = 'https://knowledge.example.invalid';
 const publicHost = new URL(publicOrigin).host;
 const sessionPair = 'rag_session=fixture';
 
+test('0040 retrieval settings retain precise routes and authenticated external session', async t => {
+  const seen = [];
+  const { origin } = await fixture(t, {}, (req, res) => { seen.push([req.url, req.method]); req.resume(); req.on('end', () => res.end('{}')); });
+  const headers = { Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/json' };
+  assert.equal((await raw(origin, '/retrieval-settings.mjs', { headers })).status, 200);
+  assert.equal((await raw(origin, '/retrieval-settings.mjs?', { headers })).status, 400);
+  assert.equal((await raw(origin, '/v1/retrieval-settings')).status, 401);
+  assert.equal((await raw(origin, '/v1/retrieval-settings', { headers })).status, 200);
+  assert.equal((await raw(origin, '/v1/retrieval-settings', { method: 'PUT', headers, body: '{}' })).status, 200);
+  assert.equal((await raw(origin, '/v1/retrieval-settings', { method: 'POST', headers, body: '{}' })).status, 405);
+  assert.equal((await raw(origin, '/v1/retrieval-settings?', { headers })).status, 400);
+  assert.equal((await raw(origin, '/v1/retrieval-settings/more', { headers })).status, 404);
+  assert.equal((await raw(origin, '/v1/retrieval-settings', { method: 'PUT', headers: { ...headers, Origin: 'https://other.invalid' }, body: '{}' })).status, 403);
+  assert.deepEqual(seen, [['/v1/retrieval-settings', 'GET'], ['/v1/retrieval-settings', 'PUT']]);
+});
+
+test('shared-library citation expansion retains login and exact relative source routes', async t => {
+  const seen = [];
+  const { origin } = await fixture(t, {}, (req, res) => { seen.push(req.url); res.end('{}'); });
+  const headers = { Origin: publicOrigin, Cookie: sessionPair };
+  assert.equal((await raw(origin, '/v1/knowledge-sources/answer-one/33')).status, 401);
+  for (const number of [1, 33, 1000]) {
+    assert.equal((await raw(origin, `/v1/knowledge-sources/answer-one/${number}`, { headers })).status, 200);
+  }
+  for (const suffix of ['0', '01', '-1', '1.5', '33/more']) {
+    assert.equal((await raw(origin, `/v1/knowledge-sources/answer-one/${suffix}`, { headers })).status, 404);
+  }
+  assert.equal(seen.length, 3);
+});
+
 test('file synopsis authenticated static, generation, task and source routes use their own exact contracts', async t => {
   const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-web-file-synopsis-')));
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));

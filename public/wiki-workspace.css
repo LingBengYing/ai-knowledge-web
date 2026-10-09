@@ -1,0 +1,88 @@
+/* Live workflow additions; the confirmed Wiki visual system remains shared. */
+.workspace-account { display: flex; align-items: center; gap: 8px; }
+.sidebar-bottom { flex-wrap: wrap; }
+.sidebar-bottom > .nav-item { width: 100%; }
+.preserve-lines { white-space: pre-wrap; overflow-wrap: anywhere; }
+.source-ref { margin-right: 7px; }
+.source-reader-media { width: 100%; max-height: 70vh; object-fit: contain; background: #f2f4ef; border-radius: 8px; }
+audio.source-reader-media { height: 54px; }
+.reader-canvas { display: block; width: 100%; height: auto; background: white; }
+.reader-meta { overflow-wrap: anywhere; }
+.operation-dialog { max-width: 520px; }
+.operation-dialog .dialog-body > p:first-child { font-size: 14px; line-height: 1.8; color: var(--ink); }
+.source-selection { max-height: 390px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+.source-choice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 15px; border-bottom: 1px solid var(--line); }
+.source-choice:last-child { border-bottom: 0; }
+.source-choice input { margin-top: 5px; flex-shrink: 0; }
+.source-choice span { min-width: 0; overflow-wrap: anywhere; }
+.source-choice small { display: block; color: var(--muted); }
+.status-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.article-header { flex-wrap: wrap; gap: 12px; }
+.article-header time { color: var(--muted); font-size: 12px; }
+.article-header .version-form { margin-left: auto; }
+.ask-launch footer { justify-content: flex-end; }
+.chat-layout { grid-template-columns: minmax(0, 1fr); max-width: 960px; }
+.diff-panel .status-line { margin-bottom: 20px; }
+.diff-panel h3 { margin-bottom: 12px; }
+.settings-help { margin-top: 20px; color: var(--muted); font-size: 13px; }
+.settings-help summary { width: fit-content; cursor: pointer; }
+.settings-help p { margin: 12px 0 0; }
+.model-status-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 24px; }
+.model-status-bar .badge { margin-right: auto; }
+.model-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.model-role-generation { grid-column: 1 / -1; }
+.model-role .panel-header, .model-projection .panel-header { flex-wrap: wrap; gap: 12px; }
+.model-role .form-grid { margin: 0; }
+.model-key-field { grid-column: 1 / -1; }
+.model-test-action { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.model-test-status { font-size: 12px; color: var(--green); }
+.model-key-status { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.model-projection, .model-rebuild { margin-top: 24px; }
+.model-form-actions { padding: 0 0 8px; }
+.pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 20px; }
+.activity-list .text-link { font-size: 12px; }
+.version-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.version-form input { width: 86px; padding: 5px; border: 1px solid var(--line); border-radius: 4px; }
+.graph-connections { display: grid; gap: 12px; padding: 24px; }
+.graph-connection { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.graph-connection a { font-weight: 600; overflow-wrap: anywhere; }
+.graph-connection span { font-size: 11px; color: var(--muted); text-align: center; }
+.graph-connection span::before { content: '↔'; display: block; font-size: 24px; color: var(--green); }
+.draft-card { border-style: dashed; }
+.field input:not([type='checkbox']), .field textarea, .field select { width: 100%; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 24px; }
+.task-status { padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 10px; }
+.task-status strong { display: block; }
+.task-status .muted { font-size: 12px; }
+.knowledge-body section + section { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--line); }
+.knowledge-body h3 { margin-bottom: 9px; }
+.question-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
+.answer-reference-list { display: grid; gap: 8px; margin-top: 20px; }
+.answer-reference-list a { display: block; padding: 9px 12px; background: var(--green-soft); border-radius: 5px; font-size: 12px; }
+.agent-progress { margin: 18px 0; padding: 12px 0 12px 16px; border-left: 2px solid var(--line); }
+.agent-status { color: var(--green); font-size: 13px; font-weight: 600; }
+.agent-progress-complete { padding: 0; border-left: 0; color: var(--muted); font-size: 12px; }
+.agent-progress-complete summary { width: fit-content; cursor: pointer; }
+.agent-progress-complete summary:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; }
+.agent-progress ol { margin: 10px 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.9; }
+.agent-actions, .agent-source-links { display: flex; gap: 10px; flex-wrap: wrap; }
+.agent-actions .button { padding: 6px 12px; font-size: 12px; }
+.agent-suggestions { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
+.agent-suggestions summary { width: fit-content; cursor: pointer; color: var(--muted); font-size: 13px; }
+.agent-suggestions section { padding-top: 18px; }
+.agent-suggestions h3 { font-size: 14px; }
+.agent-suggestions p { margin: 8px 0; font-size: 13px; }
+.agent-suggestions summary:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; }
+.read-error { color: #995f4f; }
+.small-copy { font-size: 12px; color: var(--muted); }
+.provenance { overflow-wrap: anywhere; }
+.result-count { display: flex; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 640px) {
+  .model-role-grid { grid-template-columns: minmax(0, 1fr); }
+  .graph-connection { grid-template-columns: 1fr; gap: 8px; }
+  .graph-connection span::before { content: '↕'; }
+  .graph-connections { padding: 12px; }
+  .version-form { margin-top: 12px; }
+  .page-heading .actions { width: 100%; }
+  .sidebar-bottom { display: none; }
+}

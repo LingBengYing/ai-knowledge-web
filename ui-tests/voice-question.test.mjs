@@ -76,18 +76,19 @@ test('response fields, original SHA, transcript SHA, revisions and duration are 
   }
 });
 
-test('full preview may exceed question limits; only explicit edited confirmation returns the question', async () => {
+test('complete voice preview confirms without question length truncation and edited controls stay validated', async () => {
   const full = `${'问'.repeat(21845)}?`;
   assert.equal(Buffer.byteLength(full), 65536);
   let calls = 0;
   const voice = session(async () => { calls++; return response(full); });
   voice.select(file()); await voice.transcribe();
   assert.equal(voice.value.phase, 'ready'); assert.equal(voice.value.transcript, full);
-  assert.throws(() => voice.confirm(), error => error instanceof ApiError && error.status === 422);
+  assert.equal(voice.confirm(), full);
   const question = ' 用户核对后的问题\n\t7,3,9,21？ ';
   voice.edit(question); assert.equal(voice.confirm(), question); assert.equal(calls, 1);
   voice.edit(`${'问'.repeat(1365)}?`); assert.equal(Buffer.byteLength(voice.confirm()), 4096);
-  for (const invalid of ['', '   ', `${'问'.repeat(1366)}?`, 'bad\u0000text', 'bad\ud800', 'bad\rtext']) {
+  voice.edit(`${'问'.repeat(1366)}?`); assert.equal(voice.confirm(), `${'问'.repeat(1366)}?`);
+  for (const invalid of ['', '   ', 'bad\u0000text', 'bad\ud800', 'bad\rtext']) {
     voice.edit(invalid); assert.throws(() => voice.confirm(), error => error instanceof ApiError && error.status === 422);
   }
   assert.equal(calls, 1);

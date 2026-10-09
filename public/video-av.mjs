@@ -16,7 +16,7 @@ const digest = async content => Array.from(new Uint8Array(await crypto.subtle.di
 const indexFields = ['status', 'document_id', 'source_revision_id', 'source_sha256', 'profile_fingerprint', 'model_revision',
   'embedding_model_revision', 'dimensions', 'publication_id', 'generation_id', 'manifest_sha256', 'window_count', 'video_window_count', 'audio_window_count'];
 const answerFields = ['answer_id', 'status', 'mode', 'answer', 'reason_code', 'citations', 'policy_revision'];
-const identity = row => JSON.stringify([row?.document_id, row?.document_type, row?.synthetic_fixture, row?.can_edit,
+const identity = row => JSON.stringify([row?.document_id, row?.document_type, row?.synthetic_fixture,
   row?.active_revision_id, row?.registered_revision_id, row?.index_publication_id, row?.media_info]);
 const idle = () => ({ phase: 'idle', index: null, error: null });
 
@@ -113,7 +113,7 @@ export class VideoAvIndexSession {
     } finally { if (this.controller === controller) this.controller = null; }
   }
   async build(row) {
-    if (!canReadVideoAvIndex(row) || row.can_edit !== true || !this.matches(row) || this.value.phase !== 'ready' || this.value.index?.status !== 'missing') return;
+    if (!canReadVideoAvIndex(row) || !this.matches(row) || this.value.phase !== 'ready' || this.value.index?.status !== 'missing') return;
     const previous = this.value.index, serial = ++this.serial, controller = new AbortController(); this.controller = controller;
     this.emit({ phase: 'building', index: previous, error: null });
     try {

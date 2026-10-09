@@ -40,14 +40,14 @@ test('audio question keeps complete scope and typed time source opens original b
   assert.equal(answersEnabled({ capabilities: ['audio_answers', 'audio_sources'] }, 'audio'), true);
   const { session, calls, released } = fixture(audio());
   await session.ask('Question?', ['doc', 'unpublished'], 'audio'); await session.readSource(1);
-  assert.equal(calls[0].path, '/v1/audio-answers'); assert.deepEqual(calls[0].options.body.document_ids, ['doc', 'unpublished']);
+  assert.equal(calls[0].path, '/v1/audio-answers'); assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(session.value.sourcePhase, 'ready'); assert.equal(session.value.source.start_ms, 1500); assert.ok(session.value.source.mediaUrl);
   session.reset(); assert.equal(released.length, 1);
 });
 test('video question sends explicit proof mode and preserves exact time plus verified original frame', async () => {
   const { session, calls, released } = fixture(video());
   await session.ask('What color?', [], 'video-visual'); await session.readSource(1);
-  assert.equal(calls[0].path, '/v1/video-answers'); assert.deepEqual(calls[0].options.body, { question: 'What color?', document_ids: [], mode: 'visual' });
+  assert.equal(calls[0].path, '/v1/video-answers'); assert.deepEqual(calls[0].options.body, { question: 'What color?', mode: 'visual' });
   assert.equal(session.value.sourcePhase, 'ready'); assert.equal(session.value.source.start_ms, 1.001);
   assert.ok(session.value.source.frameUrl); assert.ok(session.value.source.mediaUrl);
   session.closeSource(); assert.equal(released.length, 2);

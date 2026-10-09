@@ -1,5 +1,7 @@
 # AI Context
 
+Current contract: [0039 shared workspace](changes/0039-shared-workspace/spec.md), with backend0053. Keep login and organization identity; authenticated members share all organization documents and supported management actions. Questions and retrieval previews omit document_ids and do not expose manual scope. Do not infer independent fact verification from a generated answer. Source locators, version/hash validation, session isolation and physical transport limits remain. Local492-test verification is not provider quality or production acceptance. Older selected-scope and role-based notes below are historical.
+
 2026-10-03当前0025前端本机验证：[已有媒体向量资料的文本重建](changes/0025-reindex-vector-continuation/verification.md)。新text_reindex_with_vectors与原能力及服务器资格一起开放行/详情入口；明确文字模型/向量服务费用，已有图片/音频向量完整核对后继续使用，不重新生成媒体向量或ASR。合法旧发布在重建任务中及失败/取消后可读，成功仅在授权回读新publication后清旧来源并提示重查，保留问题、完整范围与整理草稿。实际10DOM旧产品8FAIL/2PASS→同10GREEN，12模块是实现后补测；472完整/check通过，65输入稳定，旧450身份/断言保留。后端0036门禁与最终交接尚待root，未部署，用户验收页面，0新增真实provider，完整目标ACTIVE。下方保留历史记录。
 
 2026-10-03当前0024：[保存材料重建](changes/0024-saved-source-reindex/verification.md)。已发布资料可明确重建保存的完整文本索引，处理期间旧索引可用，成功才切换；失败、取消和重启中断保留旧版本。入口核对真实能力及当前资格，成功后提示重新查询，保留问题、范围与整理草稿。模型配置、逐角色测试、明确应用和召回测试继续沿既有流程。首切不支持已有独立图片/音频向量的资料及真正嵌入/投影迁移；后续receipt迁移与原文件版本替换继续保留。未部署，页面用户验收，0新增真实provider调用，完整目标ACTIVE。

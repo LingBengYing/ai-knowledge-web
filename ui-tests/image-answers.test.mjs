@@ -49,7 +49,7 @@ test('visual mode requires both typed capabilities and preserves every selected 
   const { session, calls } = fixture();
   await session.ask('What is visible?', ['doc-1', 'unpublished-text'], 'visual');
   assert.equal(calls[0].path, '/v1/visual-answers');
-  assert.deepEqual(calls[0].options.body.document_ids, ['doc-1', 'unpublished-text']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(session.value.phase, 'answered');
   assert.equal(session.value.result.citations[0].page, undefined);
 });

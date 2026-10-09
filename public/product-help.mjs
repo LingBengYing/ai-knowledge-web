@@ -21,18 +21,17 @@ const digest = async text => Array.from(new Uint8Array(await crypto.subtle.diges
 export const productHelpEnabled = config => config?.capabilities?.includes('product_help') === true;
 
 export function productHelpRequest(question, documentIds = null, topK = 5, rerank = true) {
-  const command = answerRequest(question, documentIds);
+  const command = answerRequest(question);
   if (!Number.isSafeInteger(topK) || topK < 1 || topK > 10 || typeof rerank !== 'boolean') {
     throw new ApiError(422, '每类返回片段数须为1到10，请核对检索参数。');
   }
-  return Object.freeze({ ...command, ...(command.document_ids ? { document_ids: Object.freeze(command.document_ids) } : {}), top_k: topK, rerank });
+  return Object.freeze({ ...command, top_k: topK, rerank });
 }
 
 async function checkedResult(value, command) {
   if (!keys(value, ['search_id', 'configuration_version', 'status', 'reason', 'scope_count', 'score_kind', 'matches'])
     || !sourceId.test(value.search_id ?? '') || !Number.isSafeInteger(value.configuration_version) || value.configuration_version < 0
-    || !Number.isSafeInteger(value.scope_count) || value.scope_count < 0 || value.scope_count > 128
-    || command.document_ids && value.scope_count !== command.document_ids.length
+    || !Number.isSafeInteger(value.scope_count) || value.scope_count < 0
     || value.score_kind !== 'rrf' || !Array.isArray(value.matches) || value.matches.length > command.top_k * 2
     || (value.status === 'completed' ? value.reason !== null || !value.matches.length || !value.scope_count
       : value.status !== 'empty' || value.matches.length || value.reason !== (value.scope_count === 0 ? 'empty_scope' : 'no_matches'))) throw invalid();
@@ -41,7 +40,6 @@ async function checkedResult(value, command) {
     if (!keys(match, matchFields) || !Object.hasOwn(ranks, match.category)
       || match.rank !== ++ranks[match.category] || match.rank > command.top_k
       || !id.test(match.document_id ?? '') || !id.test(match.revision_id ?? '')
-      || command.document_ids && !command.document_ids.includes(match.document_id)
       || typeof match.filename !== 'string' || !match.filename || typeof match.parser_revision !== 'string' || !match.parser_revision
       || !sha.test(match.source_sha256 ?? '') || !sha.test(match.text_sha256 ?? '')
       || typeof match.text !== 'string' || !match.text

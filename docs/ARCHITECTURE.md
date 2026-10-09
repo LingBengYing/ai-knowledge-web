@@ -1,5 +1,7 @@
 # Architecture
 
+0039共享工作区：AnswerSession和RetrievalSession只构造问题/检索参数，不再保存或发送文档范围；app的资料选择仅服务正常批量维护。前端不以reader/can_edit隐藏动作，仍核对会话、服务capability、当前资料/任务/版本状态。Java0053负责组织边界、一次原文综合与真实来源。统一知识引用代理接受任意正整数编号，仍精确匹配相对路由；来源身份/版本/SHA及取消清理保持。以下旧范围/角色描述为历史。
+
 0016新增`audio-vectors.mjs`隐藏十字段验证、独立GET/POST、身份/资料/权限epoch、忙碌与停止后的结果未知状态。app以当前indexed audio及实际audio能力装配独立详情panel，刷新保留整理form/草稿，图片与音频panel分别匹配资料类型。两个代理仅增加精确模块资产和audio-vector GET/POST，POST180秒、GET普通期限，原信任和上传预算保持。问答仍由旧附件/AnswerSession发送完整scope和打开服务器库内来源。
 
 0014新增voice-question.mjs，Session隐藏文件读取、编码、原字节/全文SHA、独立POST、取消和预览。app只接显式控件并在确认后调用旧answerRequest验证，填入问题后由原AnswerSession完成问答/来源；语音准备和问答互斥。dev/external代理分别为voice精确路由维持独立大小/期限/容量，不扩大普通请求预算，后端0025只依赖现有AudioCompilationService。

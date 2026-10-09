@@ -61,8 +61,15 @@ test('tests and activation require a clean saved administrator version and are e
   assert.equal(session.value.configuration.active_version, 1);
   assert.deepEqual(calls.at(-1), ['/v1/model-configuration/activate', { version: 1 }]);
   session.edit(); assert.deepEqual(session.value.tests, {});
-  const reader = new ModelConfigurationSession(async () => configured(1, 1, false));
-  await reader.load(); assert.equal(await reader.save(draft()), null); assert.equal(await reader.test('generation'), null); assert.equal(await reader.activate(), null);
+  const memberCalls = [];
+  const reader = new ModelConfigurationSession(async (path, options) => {
+    memberCalls.push(options.method);
+    return path.endsWith('/test') ? { version: 2, role: 'generation', status: 'passed', error_code: null }
+      : path.endsWith('/activate') ? configured(2, 2, false) : options.method === 'PUT' ? configured(2, 1, false) : configured(1, 1, false);
+  });
+  await reader.load(); await reader.save(draft()); await reader.test('generation'); await reader.activate();
+  assert.deepEqual(memberCalls, ['GET', 'PUT', 'POST', 'POST']);
+  assert.equal(reader.value.configuration.active_version, 2);
 });
 
 test('network-unknown save and local stop prohibit write retries until a successful safe GET', async () => {

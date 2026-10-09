@@ -50,8 +50,8 @@ test('sound status reads and explicit builds bind twelve fields without requirin
 
 test('reader, altered source/profile and malformed readiness cannot create or retain an index', async () => {
   const calls = [], reader = row({ can_edit: false });
-  const session = new SoundIndexSession(async (path, options) => { calls.push(options); return state(); });
-  await session.open(reader); await session.build(reader); assert.equal(calls.length, 1); assert.equal(session.value.phase, 'ready');
+  const session = new SoundIndexSession(async (path, options) => { calls.push(options); return state(options.method === 'POST' ? 'available' : 'missing'); });
+  await session.open(reader); await session.build(reader); assert.equal(calls.length, 2); assert.equal(session.value.phase, 'ready');
   for (const extra of [{ source_sha256: 'e'.repeat(64) }, { profile_fingerprint: 'bad' }, { dimensions: 1 }, { span_count: 1 },
     { internal_endpoint: 'fixture' }, { generation_id: 'unexpected' }]) {
     const bad = new SoundIndexSession(async () => state('missing', extra)); await bad.open(row()); assert.equal(bad.value.phase, 'error');

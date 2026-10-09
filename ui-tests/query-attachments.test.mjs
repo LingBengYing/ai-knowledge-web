@@ -48,7 +48,7 @@ test('attachment requests preserve raw question, complete selection, eight evide
     await session.ask(' 原问题\n\t保持 ', ['published', 'unpublished'], mode, [entry()]);
     assert.equal(call.path, '/v1/attachment-answers');
     assert.equal(call.options.body.question, ' 原问题\n\t保持 ');
-    assert.deepEqual(call.options.body.document_ids, ['published', 'unpublished']);
+    assert.equal(call.options.body.document_ids, undefined);
     assert.equal(call.options.body.mode, wire);
     assert.equal(call.options.body.attachments[0].content_base64, Buffer.from([0, 1, 128, 254, 255]).toString('base64'));
     assert.equal(session.value.phase, 'abstained');
@@ -65,7 +65,7 @@ test('attachment selection cannot silently fall back when capability is absent, 
   assert.equal(disabled.value.phase, 'error');
   const session = enabled(request);
   await session.ask('', null, 'text', [file]);
-  await session.ask('问题', ['valid', '../invalid'], 'text', [file]);
+  await session.ask('含有\u0000控制符', ['valid', '../invalid'], 'text', [file]);
   assert.equal(calls, 0); assert.equal(reads, 0);
 });
 
@@ -79,7 +79,7 @@ test('cancellation during file read prevents POST; later successful answer keeps
   session.cancel(); deliver(new Uint8Array([0, 1, 128, 254, 255]).buffer); await pending;
   assert.equal(calls.length, 0); assert.equal(session.value.phase, 'idle');
   await session.ask('问题', [], 'text', [entry()]);
-  assert.deepEqual(calls[0].options.body.document_ids, []);
+  assert.equal(calls[0].options.body.document_ids, undefined);
 });
 
 test('attachment envelope rejects mismatched mode, count, ordinal, kind and malformed preparation notices', async () => {

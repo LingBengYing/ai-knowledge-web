@@ -51,7 +51,7 @@ test('explicit AV build binds fourteen fields and accepts absent audio receipts 
   assert.equal(session.value.phase, 'ready'); assert.equal(session.value.index.audio_window_count, 0);
   assert.equal(calls[0].path, '/v1/documents/video-one/video-av-index'); assert.equal(calls[1].options.method, 'POST');
   assert.equal(calls[1].options.body, undefined); await session.build(row()); assert.equal(calls.length, 2);
-  const reader = new VideoAvIndexSession(async () => index()); await reader.open(row({ can_edit: false })); await reader.build(row({ can_edit: false })); assert.equal(reader.value.phase, 'ready');
+  const reader = new VideoAvIndexSession(async (_path, options) => index(options.method === 'POST')); await reader.open(row({ can_edit: false })); await reader.build(row({ can_edit: false })); assert.equal(reader.value.phase, 'ready');
 });
 
 test('AV index rejects drift and unmapped windows and isolates stopped or late requests', async () => {
@@ -133,7 +133,7 @@ test('whole explicit selection and mode survive question submission and original
     calls.push({ path, options }); return path.endsWith('/content') ? original : path.includes('/sources/') || path.includes('-sources/') ? { answer_id: 'answer-one', citation: source } : answer({ citations: [source] });
   }, { objectUrls: { createObjectURL: () => { urls.push('blob:av'); return 'blob:av'; }, revokeObjectURL: value => revoked.push(value) } });
   await session.ask('整个原始问题', [], 'video-av-joint'); assert.equal(session.value.phase, 'answered');
-  assert.equal(calls[0].path, '/v1/video-av-answers'); assert.deepEqual(calls[0].options.body, { question: '整个原始问题', document_ids: [], mode: 'JOINT' });
+  assert.equal(calls[0].path, '/v1/video-av-answers'); assert.deepEqual(calls[0].options.body, { question: '整个原始问题', mode: 'JOINT' });
   await session.readSource(1); assert.equal(session.value.sourcePhase, 'ready'); assert.equal(session.value.source.mediaUrl, 'blob:av');
   session.reset(); assert.deepEqual(revoked, urls);
 });

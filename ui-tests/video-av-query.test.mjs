@@ -28,9 +28,9 @@ for (const mode of ['VISUAL', 'AUDIO', 'JOINT']) {
     await session.ask(question, ['video-one', 'unindexed-tail'], `video-av-${mode.toLowerCase()}`, input);
     assert.equal(session.value.phase, 'abstained'); assert.equal(calls.length, 1);
     assert.equal(calls[0].path, '/v1/video-av-query-answers');
-    assert.deepEqual(Object.keys(calls[0].options.body).sort(), ['attachments', 'document_ids', 'mode', 'question']);
+    assert.deepEqual(Object.keys(calls[0].options.body).sort(), ['attachments', 'mode', 'question']);
     assert.equal(calls[0].options.body.question, question); assert.equal(calls[0].options.body.mode, mode);
-    assert.deepEqual(calls[0].options.body.document_ids, ['video-one', 'unindexed-tail']);
+    assert.equal(calls[0].options.body.document_ids, undefined);
     for (let i = 0; i < 3; i++) {
       const sent = calls[0].options.body.attachments[i];
       assert.deepEqual(Object.keys(sent).sort(), ['content_base64', 'filename', 'media_type']);
@@ -53,7 +53,7 @@ test('empty selected scope preserves every raw identity as not prepared and neve
   const input = selection(2); let sent;
   const session = new AnswerSession(async (_path, options) => { sent = options.body; return envelope(sent, false, 'empty_scope'); }, enabled);
   await session.ask('完整问题', [], 'video-av-joint', input);
-  assert.equal(session.value.phase, 'abstained'); assert.deepEqual(sent.document_ids, []);
+  assert.equal(session.value.phase, 'abstained'); assert.equal(sent.document_ids, undefined);
   assert.equal(session.value.queryAttachments.length, 2);
   for (const item of session.value.queryAttachments) {
     assert.equal(item.status, 'not_prepared');
@@ -153,7 +153,7 @@ test('late reference reply and authentication error cannot replace a newer text 
 test('new query capability does not change the ordinary seven-field endpoint without attachments', async () => {
   let sent; const session = new AnswerSession(async (path, { body }) => { sent = { path, body }; return refusal(body.mode, 'empty_scope'); }, enabled);
   await session.ask('完整文字问题', [], 'video-av-audio'); assert.equal(session.value.phase, 'abstained');
-  assert.deepEqual(sent, { path: '/v1/video-av-answers', body: { question: '完整文字问题', document_ids: [], mode: 'AUDIO' } });
+  assert.deepEqual(sent, { path: '/v1/video-av-answers', body: { question: '完整文字问题', mode: 'AUDIO' } });
 });
 
 test('answered reference query opens only the original library source with its full SHA and server window', async () => {

@@ -28,36 +28,37 @@ test('answers require both server capabilities, not document status or one capab
   assert.equal(answersEnabled({ capabilities: ['answers', 'sources'] }), true);
 });
 
-test('all-library request omits selection, while explicit empty scope stays empty', () => {
+test('shared-library requests omit both legacy selection and empty selection', () => {
   assert.deepEqual(answerRequest('原始问题', null), { question: '原始问题' });
-  assert.deepEqual(answerRequest('原始问题', []), { question: '原始问题', document_ids: [] });
+  assert.deepEqual(answerRequest('原始问题', []), { question: '原始问题' });
 });
 
-test('complete selected IDs retain order and include unavailable items without mutating input', () => {
+test('deprecated selected IDs are ignored without mutating caller input', () => {
   const ids = ['ready-document', 'unready-document', 'a.b:c-2'];
   const body = answerRequest(' 原始问题\n第二行\t内容 ', ids);
-  assert.deepEqual(body, { question: ' 原始问题\n第二行\t内容 ', document_ids: ids });
-  assert.notEqual(body.document_ids, ids);
+  assert.deepEqual(body, { question: ' 原始问题\n第二行\t内容 ' });
+  assert.deepEqual(ids, ['ready-document', 'unready-document', 'a.b:c-2']);
   ids.push('later-selection');
-  assert.equal(body.document_ids.length, 3);
+  assert.equal(body.document_ids, undefined);
 });
 
-test('question limit is UTF-8 bytes, allows multiline, and rejects invalid/control input before network', async () => {
+test('question preserves long multiline input and rejects invalid/control input before network', async () => {
   assert.equal(answerRequest('😀'.repeat(1024), null).question.length, 2048);
-  for (const question of ['', ' \n\t ', '😀'.repeat(1024) + 'x', 'a\u0000b', 'a\u000db', 'a\u007fb', '\ud800']) {
+  assert.equal(answerRequest('😀'.repeat(1024) + 'x').question, '😀'.repeat(1024) + 'x');
+  for (const question of ['', ' \n\t ', 'a\u0000b', 'a\u000db', 'a\u007fb', '\ud800']) {
     assert.throws(() => answerRequest(question, null), error => error instanceof ApiError && error.status === 422);
   }
   let calls = 0;
   const session = new AnswerSession(async () => { calls += 1; });
-  await session.ask('😀'.repeat(1025));
+  await session.ask('a\u0000b');
   assert.equal(session.value.phase, 'error');
   assert.equal(calls, 0);
 });
 
-test('invalid selection fails as a whole instead of dropping IDs or falling back to the library', () => {
+test('deprecated selection never narrows shared-library requests', () => {
   for (const ids of [['doc-1', 'doc-1'], ['valid', '../bad'], [null], ['a'.repeat(101)],
     Array.from({ length: 129 }, (_, number) => `doc-${number}`), { document_ids: ['doc-1'] }]) {
-    assert.throws(() => answerRequest('问题', ids), error => error instanceof ApiError && error.status === 422);
+    assert.deepEqual(answerRequest('问题', ids), { question: '问题' });
   }
 });
 
@@ -72,7 +73,7 @@ test('one POST produces answered state with server citation and loading notifica
   assert.equal(calls.length, 1);
   assert.equal(calls[0].path, '/v1/answers');
   assert.equal(calls[0].options.method, 'POST');
-  assert.deepEqual(calls[0].options.body, { question: '完整问题', document_ids: ['doc-1', 'unpublished-document'] });
+  assert.deepEqual(calls[0].options.body, { question: '完整问题' });
   assert.ok(calls[0].options.signal instanceof AbortSignal);
   assert.deepEqual(phases, ['loading', 'answered']);
   assert.equal(session.value.result.answer_id, 'answer-1');
@@ -84,7 +85,7 @@ test('HTTP200 refusal retains its server reason and explicit empty scope', async
   let request;
   const session = new AnswerSession(async (_path, options) => { request = options; return abstained('empty_scope'); });
   await session.ask('问题', []);
-  assert.deepEqual(request.body.document_ids, []);
+  assert.equal(request.body.document_ids, undefined);
   assert.equal(session.value.phase, 'abstained');
   assert.equal(session.value.result.reason, 'empty_scope');
   assert.equal(session.value.error, null);
@@ -96,7 +97,7 @@ test('selected-scope 404 is one error and never retries as all-library', async (
   const session = new AnswerSession(async (path, options) => { calls.push({ path, body: options.body }); throw error; });
   await session.ask('问题', ['doc-1', 'unavailable-document']);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].body.document_ids, ['doc-1', 'unavailable-document']);
+  assert.equal(calls[0].body.document_ids, undefined);
   assert.equal(session.value.phase, 'error');
   assert.equal(session.value.error, error);
   assert.equal(session.value.result, null);

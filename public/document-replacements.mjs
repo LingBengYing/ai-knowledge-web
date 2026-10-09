@@ -15,7 +15,7 @@ const idle = () => ({ phase: 'idle', replacement: null, error: null });
 const invalid = () => new ApiError(502, '新版本状态与当前资料不一致，请刷新资料后核对。');
 const revision = row => row?.active_revision_id ?? row?.latest_job?.revision_id ?? row?.registered_revision_id;
 const identity = row => JSON.stringify([row?.document_id, revision(row), row?.index_publication_id ?? null,
-  row?.document_type, row?.media_info?.sha256, row?.can_edit, row?.synthetic_fixture]);
+  row?.document_type, row?.media_info?.sha256, row?.synthetic_fixture]);
 
 export function replacementsEnabled(config) { return config?.capabilities?.includes('document_replacements') === true; }
 export function replacementLabel(value) { return labels[value?.state] ?? '状态待核对'; }
@@ -83,7 +83,7 @@ export class DocumentReplacementSession {
   }
   async upload(row, file) {
     const wanted = expected(row), current = this.value.replacement;
-    if (!this.matches(row) || row.can_edit !== true || this.value.phase !== 'ready' || current?.can_upload !== true) return false;
+    if (!this.matches(row) || this.value.phase !== 'ready' || current?.can_upload !== true) return false;
     if (current.state === 'published' && (current.candidate_revision_id !== wanted.baseRevisionId || current.publication_id !== wanted.publicationId)) return false;
     validateReplacementUpload(file, wanted.documentType);
     return this.perform(row, 'uploading', { method: 'POST', file, replacement: wanted },
@@ -91,7 +91,7 @@ export class DocumentReplacementSession {
   }
   async index(row) {
     const wanted = expected(row), current = this.value.replacement;
-    if (!this.matches(row) || row.can_edit !== true || this.value.phase !== 'ready' || current?.can_index !== true) return false;
+    if (!this.matches(row) || this.value.phase !== 'ready' || current?.can_index !== true) return false;
     return this.perform(row, 'indexing', { method: 'POST', body: {
       candidate_revision_id: current.candidate_revision_id, base_revision_id: wanted.baseRevisionId,
     } }, '/index');

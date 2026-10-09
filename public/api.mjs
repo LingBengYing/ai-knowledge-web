@@ -13,6 +13,7 @@ export function imageUploadMode(config) {
 }
 
 const videoTypes = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' };
+const wikiBinarySource = /^\/v1\/wiki\/(?:pages\/[A-Za-z0-9_-]{1,128}\/versions\/[1-9][0-9]{0,15}|proposals\/[A-Za-z0-9_-]{1,128})\/sources\/[A-Za-z0-9_-]{1,128}\/(?:content|frame)$/u;
 export function validateReplacementUpload(file, documentType) {
   const extensions = { document: /\.(?:pdf|txt|md)$/iu, image: /\.(?:png|jpe?g)$/iu,
     audio: /\.(?:wav|mp3|flac|ogg|m4a|mp4|webm)$/iu, video: /\.(?:mp4|mov|webm|mkv)$/iu };
@@ -46,7 +47,8 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
   return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document', replacement } = {}) {
     if (!path.startsWith('/v1/')) throw new Error('仅允许同源 API 请求。');
     if (binary && (method !== 'GET' || body !== undefined || file !== undefined
-      || !/^\/v1\/(?:(?:sources|visual-sources|audio-sources|video-sources|sound-sources|video-av-sources)\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content|video-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/frame|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/(?:content|frame)|documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content)$/u.test(path))) {
+      || (!/^\/v1\/(?:(?:sources|visual-sources|audio-sources|video-sources|sound-sources|video-av-sources)\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content|video-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/frame|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/(?:content|frame)|documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content)$/u.test(path)
+        && !wikiBinarySource.test(path)))) {
       throw new ApiError(422, '原素材只能从服务器指定的来源接口读取。');
     }
     const headers = { Accept: binary ? '*/*' : 'application/json' };
@@ -87,7 +89,8 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
 }
 
 async function readBinary(response, path) {
-  const original = path.startsWith('/v1/documents/') || (path.startsWith('/v1/synopsis-sources/') && path.endsWith('/content'));
+  const original = path.startsWith('/v1/documents/') || (path.startsWith('/v1/synopsis-sources/') && path.endsWith('/content'))
+    || (wikiBinarySource.test(path) && path.endsWith('/content'));
   const headerType = response.headers.get('content-type')?.toLowerCase();
   const type = original ? headerType?.split(';')[0].trim() : headerType;
   const audio = path.startsWith('/v1/audio-sources/') || path.startsWith('/v1/sound-sources/');

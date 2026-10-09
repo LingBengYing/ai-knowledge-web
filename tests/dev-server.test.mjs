@@ -11,6 +11,33 @@ const sessionName = ['rag', 'session'].join('_');
 const sessionPair = `${sessionName}=synthetic-session`;
 const exchangeBody = JSON.stringify({ token: ['test', 'token'].join('-') });
 
+test('0040 retrieval settings expose only exact GET PUT and static module with ordinary transport', async t => {
+  const seen = [];
+  const { origin } = await fixture(t, (req, res) => { seen.push([req.url, req.method]); req.resume(); req.on('end', () => res.end('{}')); });
+  const headers = { Origin: origin, 'Content-Type': 'application/json' };
+  assert.equal((await raw(origin, '/retrieval-settings.mjs')).status, 200);
+  assert.equal((await raw(origin, '/retrieval-settings.mjs?')).status, 400);
+  assert.equal((await raw(origin, '/v1/retrieval-settings')).status, 200);
+  assert.equal((await raw(origin, '/v1/retrieval-settings', { method: 'PUT', headers, body: '{}' })).status, 200);
+  assert.equal((await raw(origin, '/v1/retrieval-settings', { method: 'POST', headers, body: '{}' })).status, 405);
+  assert.equal((await raw(origin, '/v1/retrieval-settings?', { headers })).status, 400);
+  assert.equal((await raw(origin, '/v1/retrieval-settings/more', { headers })).status, 404);
+  assert.equal((await raw(origin, '/v1/retrieval-settings', { method: 'PUT', headers: { ...headers, Origin: 'http://other.invalid' }, body: '{}' })).status, 403);
+  assert.deepEqual(seen, [['/v1/retrieval-settings', 'GET'], ['/v1/retrieval-settings', 'PUT']]);
+});
+
+test('shared-library knowledge citations above 32 retain exact relative routes', async t => {
+  const seen = [];
+  const { origin } = await fixture(t, (req, res) => { seen.push(req.url); res.end('{}'); });
+  for (const number of [1, 33, 1000]) {
+    assert.equal((await raw(origin, `/v1/knowledge-sources/answer-one/${number}`)).status, 200);
+  }
+  for (const suffix of ['0', '01', '-1', '1.5', '33/more']) {
+    assert.equal((await raw(origin, `/v1/knowledge-sources/answer-one/${suffix}`)).status, 404);
+  }
+  assert.equal(seen.length, 3);
+});
+
 test('file synopsis module and bodyless generation, task and source routes preserve exact transport', async t => {
   const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-web-file-synopsis-')));
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));

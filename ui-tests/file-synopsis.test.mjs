@@ -54,7 +54,8 @@ test('synopsis capability and generation eligibility use current publication and
   assert.equal(synopsisEnabled({ capabilities: ['file_synopsis'] }), false);
   assert.equal(synopsisEnabled({ capabilities: ['file_synopsis', 'synopsis_sources'] }), true);
   assert.equal(canGenerateSynopsis(item), true);
-  for (const change of [{ can_edit: false }, { active_revision_id: null }, { index_publication_id: null }, { synthetic_fixture: true }]) assert.equal(canGenerateSynopsis({ ...item, ...change }), false);
+  assert.equal(canGenerateSynopsis({ ...item, can_edit: false }), true, 'legacy roles do not limit shared-workspace members');
+  for (const change of [{ active_revision_id: null }, { index_publication_id: null }, { synthetic_fixture: true }]) assert.equal(canGenerateSynopsis({ ...item, ...change }), false);
 });
 
 test('existing current synopsis reads without a POST and keeps literal derived text', async () => {

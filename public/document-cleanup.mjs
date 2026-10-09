@@ -9,7 +9,7 @@ const invalid = () => new ApiError(502,'清理回执不完整或身份不一致�
 const safeTime = value => typeof value === 'string' && value.length <= 64 && Number.isFinite(Date.parse(value));
 const safeError = value => value === null || typeof value === 'string' && /^[a-z][a-z0-9_]{0,95}$/u.test(value);
 export const cleanupEnabled = config => config?.capabilities?.includes('document_cleanup') === true;
-export const canRequestCleanup = item => ID.test(item?.document_id ?? '') && item?.can_edit === true;
+export const canRequestCleanup = item => ID.test(item?.document_id ?? '');
 export function cleanupLabel(value) {
   return ({not_requested:'已撤下，尚未请求清理',pending:'已撤下，清理待完成',running:'已撤下，正在清理',blocked:'已撤下，清理受阻，尚未完成',failed:'已撤下，清理失败，尚未完成',completed:'受控清理已完成'})[value?.cleanup_status] ?? '结果未知，请刷新状态';
 }

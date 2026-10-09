@@ -1,5 +1,31 @@
 # AI Knowledge Web · 知识库工作台
 
+## 当前同步（2026-10-09）
+
+本版包含 Wiki 建设工作台、新版模型设置与可选 DB-GPT 知识问答。后端启用 Agent 时，问答显示真实检索/阅读进度、停止、原文引用与维护建议；明确关闭时保留普通综合问答。启动仍为 `npm run dev:workspace`，后端连接见 [API说明](docs/API_CONNECTION.md)。
+
+Wiki 单份 TXT 已完成真实模型/Milvus的编译、采纳、两版历史及重启回读；Agent 当前仅完成本机协议替身联调。完整前端回归存在时序失败，原记录保留，不称生产就绪。本次仅同步代码、不部署，见 [0042结果](docs/changes/0042-wiki-live-workspace/REVIEW.md)与 [0043结果](docs/changes/0043-dbgpt-knowledge-agent/REVIEW.md)。
+
+## Wiki 真实工作台（0042）
+
+已接Java0055/0056：原始资料上传/解析/索引、文件正文查找、知识页编译提案/审阅/版本、来源阅读、综合问答与服务器草稿、共同来源关系和检索设置。启动 `npm run dev:workspace`，默认 `http://127.0.0.1:18090/` → Java18091。没有演示数据fallback；模型设置使用新版独立`#/models`，`/classic/`仅保留旧完整资料维护功能的兼容入口。
+
+本机验收用后端 `bash scripts/run-wiki-integration.sh` 新建隔离Java/SQLite及模型/向量HTTP替身，不读取私密配置、不调用真实云模型。原始资料仍是问答证据，Wiki正文与草稿不冒充原文。依据负责人最新意见，常驻页面只保留业务内容/状态/操作；索引和模型编译点击直接执行，不弹费用确认，处理中防重复，删除草稿仍确认。
+
+[规格](docs/changes/0042-wiki-live-workspace/spec.md) · [实际联调及边界](docs/changes/0042-wiki-live-workspace/verification.md)。本地协议验证不代表真实模型语义质量或生产发布。
+
+## Wiki 前端确认版（0041）
+
+历史独立纯静态确认版仍保留回归，`npm run dev:wiki`（默认也占18090，不能与真实工作台同时启动）。需要 Node 22+，不需要模型、Java 或向量库。当前用户入口使用上方 `dev:workspace`，不要误开静态版。
+
+包含知识总览、独立知识页 / 原始资料详情、文件查找、示例问答与引用、关系浏览、更新审阅、预览检索设置。全部为明确标注的合成内容；草稿与审阅等修改只存当前浏览器，导入仅记录文件名和大小。此入口没有 API 转发，也不修改现有 `npm run dev` / 生产入口。
+
+参考 LLM Wiki 的信息架构，使用原创 HTML/CSS/ES Modules，不复制第三方源码。[规格与边界](docs/changes/0041-wiki-workspace-preview/spec.md) · [验证记录](docs/changes/0041-wiki-workspace-preview/verification.md) · [待确认的后端接入需求](docs/changes/0041-wiki-workspace-preview/backend-handoff.md)。前端确认不等于真实检索、知识编译或生产验收。
+
+## 既有业务版本与阶段记录
+
+当前产品合同为[0039登录后共享全库](docs/changes/0039-shared-workspace/spec.md)，配套后端0053：保留登录、组织内成员共用全部资料，不分角色/逐资料权限；问答与召回固定全库，不再提供所选范围。普通问答由检索原文综合回复，不宣称已独立核验；点击来源仍回读真实版本/页码/时间与原件SHA。问题无前端字数上限，统一引用无32条门槛，资源边界及本地492项验证见[记录](docs/changes/0039-shared-workspace/verification.md)。未发布/真实验收；下方阶段说明保留历史，不覆盖新合同。
+
 当前增量[0037统一知识问答](docs/changes/0037-unified-knowledge-answers/spec.md)：产品操作说明并入`#/answers`默认综合问答，不再单列功能。后端检索文档与视频文字证据后由大模型综合回复，前端显示最终答案及按页码/时间定位的混合引用；不自行调用模型或把候选片段当生成答案。需后端0049的`knowledge_answers`能力；实际实现、页面和未验证范围见[0037记录](docs/changes/0037-unified-knowledge-answers/REVIEW.md)，不以历史测试认证新增功能。
 
 2026-10-04当前主线：网页可保存嵌入/重排/生成配置、手动连接测试、明确应用及召回预览；逐角色provider、生成/重排切换、嵌入模型全库重建、同资料原文件更新、已配置媒体接网页有效文字配置及当前页批量文本重建已实现。最新交付为工作区`.tools/batch-text-reindex-mainline`，01:32:29 +08仅后端skiptests package成功，未运行测试/检查、未部署，页面由用户验收。使用[模型配置](docs/MODEL_SETUP_AND_RETRIEVAL.md)、[媒体配置](docs/MANAGED_MEDIA_SETUP.md)和[批量重建](docs/BATCH_TEXT_REINDEX.md)；下方历史测试结果不认证新增源码。

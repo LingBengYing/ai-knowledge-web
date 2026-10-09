@@ -83,7 +83,7 @@ export class ModelConfigurationSession {
     this.#emit({ ...this.value, phase: write ? 'unknown' : 'ready', error: null });
   }
   edit() {
-    if (busy(this.value) || !this.value.configuration?.can_edit || !this.#canWrite()) return false;
+    if (busy(this.value) || !this.value.configuration || !this.#canWrite()) return false;
     this.#emit({ ...this.value, dirty: true, tests: Object.freeze({}), error: null }); return true;
   }
   async load() {
@@ -95,7 +95,7 @@ export class ModelConfigurationSession {
     });
   }
   async save(draft) {
-    if (busy(this.value) || this.value.phase === 'unknown' || !this.value.configuration?.can_edit || !this.#canWrite()) return null;
+    if (busy(this.value) || this.value.phase === 'unknown' || !this.value.configuration || !this.#canWrite()) return null;
     let body;
     try { body = command(draft, this.value.configuration); } finally { this.#clear(); }
     const prior = this.value.configuration;
@@ -107,7 +107,7 @@ export class ModelConfigurationSession {
   }
   async test(role) {
     const saved = this.value.configuration;
-    if (busy(this.value) || this.value.phase === 'unknown' || this.value.dirty || !saved?.can_edit || saved.state === 'unconfigured'
+    if (busy(this.value) || this.value.phase === 'unknown' || this.value.dirty || !saved || saved.state === 'unconfigured'
       || ![...roles, 'projection'].includes(role) || role === 'projection' && !saved.projection.can_test) return null;
     const tests = { ...this.value.tests };
     delete tests[role];
@@ -120,7 +120,7 @@ export class ModelConfigurationSession {
   }
   async activate() {
     const saved = this.value.configuration;
-    if (busy(this.value) || this.value.phase === 'unknown' || this.value.dirty || !saved?.can_edit || saved.state === 'unconfigured' || !saved.projection.configured || !this.#canWrite()) return null;
+    if (busy(this.value) || this.value.phase === 'unknown' || this.value.dirty || !saved || saved.state === 'unconfigured' || !saved.projection.configured || !this.#canWrite()) return null;
     return this.#perform('activating', '/v1/model-configuration/activate', { version: saved.version }, result => {
       const checked = checkedModelConfiguration(result);
       if (checked.version !== saved.version || checked.active_version !== saved.version || checked.state !== 'active') throw invalid();

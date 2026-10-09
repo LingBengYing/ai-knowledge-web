@@ -9,7 +9,7 @@ const idle = () => ({ phase: 'idle', status: null, error: null });
 const messages = {
   configuration_required: '请先填写并保存模型配置。',
   no_rebuild_required: '当前草稿可直接应用，无需重建索引。',
-  authorization_changed: '当前身份不能管理本次全部资料，请核对权限。',
+  authorization_changed: '当前组织或资料状态已变化，请刷新后核对。',
   tasks_pending: '请等待已有解析、索引、原文件更新或清理任务结束，再刷新重建资格。',
   rebuild_in_progress: '已有重建批次正在处理，旧配置和已发布资料仍可使用。',
   model_rebuild_in_progress: '已有模型重建批次正在处理，请等待完成或刷新批次状态；旧配置和已发布资料仍可使用。',

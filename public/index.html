@@ -86,16 +86,13 @@
     <div class="answer-layout">
       <div class="answer-workspace">
         <div class="chat-toolbar">
-          <details class="chat-scope"><summary><span aria-hidden="true">▤</span> <span id="chat-scope-name">全部资料</span></summary><div class="scope-popover">
-            <div class="answer-scope"><strong id="answer-scope-label">全部可访问的已发布资料</strong><button id="answer-all" type="button" hidden>改问全库</button></div>
-            <ul id="answer-scope-documents" class="scope-documents" hidden></ul><a href="#/documents">去资料库选择范围 →</a>
-          </div></details>
+          <span id="answer-scope-label" class="help-text">组织共享知识库 · 全库检索</span>
           <div class="answer-setup-actions" aria-label="准备问答资料"><button id="answer-configure" type="button" class="quiet-button">配置模型</button><button id="answer-manage" type="button" class="quiet-button">导入 / 管理资料</button><button id="answer-new" type="button" class="quiet-button">重新开始</button></div>
         </div>
         <div class="chat-thread">
           <div id="answer-empty" class="chat-welcome"><div class="chat-mark" aria-hidden="true">✳</div><h2>想从资料里了解什么？</h2><p>从一个具体问题开始，答案会附上可核对的来源。</p><div class="chat-hints"><span>查找一个事实</span><span>了解产品如何使用</span><span>核对原始出处</span></div></div>
           <div id="chat-question" class="chat-question" hidden><span class="chat-speaker">你</span><p id="chat-question-text"></p></div>
-          <div id="chat-thinking" class="chat-thinking" role="status" hidden><span class="thinking-dot" aria-hidden="true"></span>正在查找资料，核对答案…</div>
+          <div id="chat-thinking" class="chat-thinking" role="status" hidden><span class="thinking-dot" aria-hidden="true"></span>正在检索资料，生成回答…</div>
         <section id="answer-result" class="answer-result" aria-labelledby="answer-result-heading" hidden>
           <div class="section-heading"><h2 id="answer-result-heading" tabindex="-1">回答</h2><span id="answer-outcome" class="status-badge"></span></div>
           <p id="answer-text" class="evidence-text"></p>
@@ -107,7 +104,7 @@
         </div>
         <form id="answer-form" class="answer-composer">
           <label for="answer-question" class="sr-only">你的问题</label>
-          <textarea id="answer-question" rows="2" maxlength="4096" required placeholder="问问你的资料…" aria-describedby="answer-question-help answer-availability"></textarea>
+          <textarea id="answer-question" rows="2" required placeholder="问问你的资料…" aria-describedby="answer-question-help answer-availability"></textarea>
           <div class="composer-toolbar"><div class="composer-tools">
             <label for="answer-mode" class="sr-only">证据类型</label>
           <select id="answer-mode"><option id="answer-mode-knowledge" value="knowledge">综合问答 · 文档与视频文字</option><option id="answer-mode-text" value="text">文字证据（含图片OCR）</option><option id="answer-mode-visual" value="visual">原图视觉</option><option id="answer-mode-audio" value="audio">音频转录</option><option id="answer-mode-sound" value="sound">声音理解（含非语音）</option><option id="answer-mode-video-visual" value="video-visual">视频画面</option><option id="answer-mode-video-transcript" value="video-transcript">视频语音转录</option><option id="answer-mode-video-joint" value="video-joint">视频画面与语音</option><option id="answer-mode-video-ocr" value="video-ocr">视频画面文字（OCR）</option><option id="answer-mode-video-subtitle" value="video-subtitle">视频内嵌字幕</option><option id="answer-mode-video-av-visual" value="video-av-visual">连续视频画面</option><option id="answer-mode-video-av-audio" value="video-av-audio">视频原声（含非语音）</option><option id="answer-mode-video-av-joint" value="video-av-joint">原视频音画</option></select>
@@ -124,7 +121,7 @@
             <div class="query-attachment-summary"><span id="answer-voice-status" class="help-text" role="status" aria-live="polite">未选择语音</span><button id="answer-voice-transcribe" type="button" disabled>转成文字</button><button id="answer-voice-cancel" type="button" hidden>清除语音</button></div>
             <div id="answer-voice-preview" hidden>
               <label for="answer-voice-text">核对并编辑识别文字<textarea id="answer-voice-text" rows="4" aria-describedby="answer-voice-review-help"></textarea></label>
-              <p id="answer-voice-review-help" class="help-text">请核对完整问题，尤其是数字和编号。问题仍需满足4096 UTF-8字节；识别文字不会自动截短。</p>
+              <p id="answer-voice-review-help" class="help-text">请核对完整问题，尤其是数字和编号。识别文字不会自动截短。</p>
               <button id="answer-voice-use" type="button" disabled>用作问题（替换当前文字）</button>
             </div>
             <p id="answer-voice-error" class="notice error" role="alert" hidden></p>
@@ -141,7 +138,7 @@
             <p id="answer-attachment-error" class="notice error" role="alert" hidden></p>
           </fieldset>
               <a class="text-link" href="#/retrieval">前往召回测试 →</a>
-              <p id="answer-question-help" class="help-text">最多4096 UTF-8字节。问题和所选证据会发送至已配置的模型。每次提问独立检索，不自动带入上一问。</p>
+              <p id="answer-question-help" class="help-text">问题和检索原文会发送至已配置的模型。每次提问独立检索全库，不自动带入上一问；请结合来源核对回答。</p>
             </div></details>
           </div><div class="send-actions"><button id="answer-cancel" type="button" hidden>停止等待</button><button id="answer-submit" class="primary" type="submit" disabled aria-label="发送问题">发送 <span aria-hidden="true">↑</span></button></div></div>
           <p id="answer-error" class="notice error" role="alert" hidden></p>
@@ -164,14 +161,29 @@
     <div id="retrieval-panel" class="retrieval-workspace">
       <section class="retrieval-query" aria-labelledby="retrieval-query-heading">
         <h2 id="retrieval-query-heading">测试一个问题</h2>
-        <div class="retrieval-scope"><span class="help-text">检索范围</span><strong id="retrieval-scope-label">全部可访问的资料</strong><details><summary>调整范围</summary><ul id="retrieval-scope-documents" hidden></ul><a href="#/documents">在资料库中选择资料</a><button id="retrieval-all" type="button" hidden>改为全库</button></details></div>
-        <label for="retrieval-question">查询内容</label><textarea id="retrieval-question" rows="6" maxlength="4096" placeholder="输入用户可能会问的问题…" aria-describedby="retrieval-help" disabled></textarea>
-        <details class="retrieval-parameters"><summary>检索参数 <span>仅本次测试</span></summary><div class="query-attachment-inputs"><label for="retrieval-count">返回片段数<input id="retrieval-count" type="number" min="1" max="20" value="5"></label><label for="retrieval-rerank">重排<select id="retrieval-rerank"><option value="true">启用</option><option value="false">关闭</option></select></label></div></details>
+        <p id="retrieval-scope-label" class="help-text">在组织共享知识库中检索全部已发布资料。</p>
+        <label for="retrieval-question">查询内容</label><textarea id="retrieval-question" rows="6" placeholder="输入用户可能会问的问题…" aria-describedby="retrieval-help" disabled></textarea>
+        <details class="retrieval-parameters"><summary>检索参数 <span>默认继承全局</span></summary>
+          <p id="retrieval-global-settings" class="help-text" role="status"></p>
+          <button id="retrieval-open-settings" type="button" class="secondary">管理全局检索设置</button>
+          <label class="retrieval-checkbox" for="retrieval-override"><input id="retrieval-override" type="checkbox">临时覆盖，仅本次测试</label>
+          <div id="retrieval-override-fields" class="retrieval-options" hidden>
+            <label for="retrieval-method">检索方式<select id="retrieval-method"><option value="vector">向量检索</option><option value="full_text">全文检索</option><option value="hybrid" selected>混合检索</option></select></label>
+            <label for="retrieval-ranking">排序策略<select id="retrieval-ranking"><option value="weighted">加权 / 原分排序</option><option value="rerank" selected>模型重排</option></select></label>
+            <div id="retrieval-weight-controls" class="retrieval-weight"><label for="retrieval-dense-weight">语义权重<input id="retrieval-dense-weight" type="range" min="0" max="1" step="0.05" value="0.5"></label><p id="retrieval-weight-label" class="help-text"></p></div>
+            <label for="retrieval-count">Top K · 最终片段数（1–20）<input id="retrieval-count" type="number" min="1" max="20" step="1" value="5"></label>
+            <label class="retrieval-checkbox" for="retrieval-threshold-enabled"><input id="retrieval-threshold-enabled" type="checkbox">启用相关性阈值</label>
+            <label for="retrieval-threshold">最低排序分<input id="retrieval-threshold" type="number" step="any" value="0.5" aria-describedby="retrieval-threshold-help"></label>
+            <p id="retrieval-threshold-help" class="help-text"></p>
+            <p class="help-text">不保存全局设置，“带入问答”也只带问题。</p>
+          </div>
+        </details>
         <p id="retrieval-help" class="help-text">仅检索文字与OCR片段，不生成回答；可能调用已配置的嵌入及重排服务。</p>
         <div class="retrieval-run-actions"><button id="retrieval-stop" type="button" hidden>停止等待</button><button id="retrieval-run" class="primary" type="button" disabled>开始测试 →</button></div>
         <p id="retrieval-error" class="notice error" role="alert" hidden></p>
       </section>
       <section class="retrieval-results" aria-labelledby="retrieval-results-heading"><div class="section-heading"><h2 id="retrieval-results-heading">召回结果</h2><button id="retrieval-continue" type="button" hidden>带入问答 →</button></div><p id="retrieval-status" class="help-text" role="status" aria-live="polite"></p>
+        <p id="retrieval-effective-settings" class="help-text" role="status" aria-live="polite"></p>
         <div id="retrieval-empty" class="empty-state"><span class="empty-symbol" aria-hidden="true">⌕</span><strong>哪些内容能回答这个问题？</strong><p>输入问题并开始测试，在这里查看命中的原文片段。</p></div>
         <ol id="retrieval-matches" class="retrieval-matches"></ol><div id="retrieval-original" hidden></div>
       </section>
@@ -214,6 +226,26 @@
       </section>
       <h3>服务器向量库</h3><p id="model-projection-status" class="help-text"></p><button id="model-test-projection" type="button">只读测试向量库连接</button><p id="model-test-projection-status" role="status"></p><p id="model-index-guidance" class="help-text"></p>
       <div class="answer-actions"><button id="model-import" type="button" class="primary" disabled>去导入资料</button><p class="help-text">选择原文件并确认上传；解析完成后，在资料行或详情中建立索引。</p></div>
+    </section>
+    <section id="retrieval-settings" class="settings-section" aria-labelledby="retrieval-settings-heading" hidden>
+      <div class="section-heading"><div><p class="eyebrow">RETRIEVAL</p><h2 id="retrieval-settings-heading" tabindex="-1">检索设置</h2></div><button id="retrieval-settings-refresh" type="button">重新读取</button></div>
+      <p class="help-text">组织共享配置，保存后下一次普通综合问答和文字/OCR召回测试生效。不会重新解析、重建索引或调用模型；专门的媒体问答模式保持原设置。</p>
+      <p id="retrieval-settings-status" role="status" aria-live="polite">尚未读取检索设置。</p>
+      <p id="retrieval-settings-error" class="notice error" role="alert" hidden></p>
+      <form id="retrieval-settings-form" class="retrieval-settings-form">
+        <div class="retrieval-options">
+          <label for="retrieval-settings-method">检索方式<select id="retrieval-settings-method"><option value="vector">向量检索</option><option value="full_text">全文检索</option><option value="hybrid" selected>混合检索</option></select><span class="help-text">向量理解语义；全文匹配关键词；混合结合两者。</span></label>
+          <label for="retrieval-settings-ranking">排序策略<select id="retrieval-settings-ranking"><option value="weighted">加权 / 原分排序</option><option value="rerank" selected>模型重排</option></select><span class="help-text">模型重排使用当前重排模型；混合加权可调整两路权重，单路按该检索分排序。</span></label>
+          <div id="retrieval-settings-weight-controls" class="retrieval-weight"><label for="retrieval-settings-dense-weight">语义权重<input id="retrieval-settings-dense-weight" type="range" min="0" max="1" step="0.05" value="0.5"></label><p id="retrieval-settings-weight-label" class="help-text"></p></div>
+          <label for="retrieval-settings-count">Top K · 最终片段数（1–20）<input id="retrieval-settings-count" type="number" min="1" max="20" step="1" value="5" required><span class="help-text">普通综合问答在文档与视频候选合并排序后，最多选取这些片段，不限制可检索的资料数。</span></label>
+          <label class="retrieval-checkbox" for="retrieval-settings-threshold-enabled"><input id="retrieval-settings-threshold-enabled" type="checkbox">启用相关性阈值</label>
+          <label for="retrieval-settings-threshold">最低排序分<input id="retrieval-settings-threshold" type="number" step="any" value="0.5" aria-describedby="retrieval-settings-threshold-help" required></label>
+        </div>
+        <p id="retrieval-settings-threshold-help" class="help-text"></p>
+        <p class="help-text">阈值默认关闭。0.5 仅是初始输入值，尚未针对模型标定；建议先观察召回测试分数再调整，过高可能筛掉全部候选。</p>
+        <div class="retrieval-model-summary"><p id="retrieval-settings-models" class="help-text"></p><button id="retrieval-settings-model-link" type="button">查看文字模型配置</button></div>
+        <div class="answer-actions"><button id="retrieval-settings-save" type="submit" class="primary" disabled>保存检索设置</button><button id="retrieval-settings-test" type="button">去召回测试</button></div>
+      </form>
     </section>
     <section class="settings-section"><div class="section-heading"><h2>服务与能力</h2><button id="reconnect" type="button">重新连接</button></div>
   <div class="scope-notice"><strong id="scope-title">当前可用：资料整理</strong><span id="scope-description">合成资料会单独标识；能力以Java服务配置为准，当前不提供检索问答。</span></div>

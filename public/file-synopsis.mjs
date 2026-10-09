@@ -12,7 +12,7 @@ const mediaTypes = { document: ['application/pdf', 'text/plain', 'text/markdown'
   audio: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'], video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska'] };
 const idle = () => ({ phase: 'idle', synopsis: null, task: null, error: null, sourcePhase: 'idle', source: null, sourceError: null });
 const identity = item => JSON.stringify([item?.document_id, item?.index_publication_id, item?.active_revision_id, item?.filename,
-  item?.document_type, item?.media_info, item?.synthetic_fixture, item?.can_edit]);
+  item?.document_type, item?.media_info, item?.synthetic_fixture]);
 const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 
 export function synopsisEnabled(config) {
@@ -28,7 +28,7 @@ function expected(item) {
 }
 
 export function canGenerateSynopsis(item) {
-  try { expected(item); return item.can_edit === true; } catch { return false; }
+  try { expected(item); return true; } catch { return false; }
 }
 
 function time(value) {

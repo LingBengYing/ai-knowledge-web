@@ -7,15 +7,18 @@ import { constants } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
+import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed } from './wiki-transport.mjs';
 
 const DEFAULT_PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const ASSETS = new Map([
+  ...WIKI_ASSETS,
   ['/pdf-preview.mjs', ['pdf-preview.mjs', 'text/javascript; charset=utf-8']],
   ...pdfBundle.assets.map(asset => [asset.path, [asset.file, asset.content_type, asset.bytes]]),
   ['/model-rebuild.mjs', ['model-rebuild.mjs', 'text/javascript; charset=utf-8']],
   ['/document-replacements.mjs', ['document-replacements.mjs', 'text/javascript; charset=utf-8']],
   ['/model-configuration.mjs', ['model-configuration.mjs', 'text/javascript; charset=utf-8']],
   ['/retrieval-tests.mjs', ['retrieval-tests.mjs', 'text/javascript; charset=utf-8']],
+  ['/retrieval-settings.mjs', ['retrieval-settings.mjs', 'text/javascript; charset=utf-8']],
   ['/product-help.mjs', ['product-help.mjs', 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
@@ -39,12 +42,14 @@ const ASSETS = new Map([
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
 ]);
 const ROUTES = [
+  ...WIKI_ROUTES,
   [/^\/v1\/model-configuration\/rebuild$/, ['GET', 'POST'], 'model-configuration'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/, ['GET', 'POST'], 'replacement'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/, ['POST'], 'replacement-index'],
   [/^\/v1\/model-configuration$/, ['GET', 'PUT'], 'model-configuration'],
   [/^\/v1\/model-configuration\/(?:test|activate)$/, ['POST'], 'model-configuration'],
   [/^\/v1\/retrieval-tests$/, ['POST'], 'retrieval'],
+  [/^\/v1\/retrieval-settings$/, ['GET', 'PUT'], 'model-configuration'],
   [/^\/v1\/product-help\/search$/, ['POST'], 'retrieval'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/cleanup$/, ['GET', 'POST'], 'cleanup'],
   [/^\/v1\/management\/document-cleanups$/, ['GET', 'POST'], 'cleanup-list'],
@@ -73,7 +78,7 @@ const ROUTES = [
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content$/, ['GET'], 'media'],
   [/^\/v1\/answers$/, ['POST'], 'answer'],
   [/^\/v1\/knowledge-answers$/, ['POST'], 'answer'],
-  [/^\/v1\/knowledge-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
+  [/^\/v1\/knowledge-sources\/[A-Za-z0-9_-]{1,128}\/[1-9][0-9]*$/, ['GET'], 'source'],
   [/^\/v1\/attachment-answers$/, ['POST'], 'attachment'],
   [/^\/v1\/voice-questions$/, ['POST'], 'voice'],
   [/^\/v1\/visual-answers$/, ['POST'], 'answer'],
@@ -248,6 +253,8 @@ function validateVideoAvFilename(encoded) {
 }
 
 async function proxy(req, res, backend, headers, limits, signal, kind) {
+  if (kind?.startsWith('wiki-') && !wikiQueryAllowed(req.url, req.method)) throw new TransportError(400, 'query_denied');
+  if ((kind === 'wiki-draft' && req.method === 'PUT') || (req.url === '/v1/wiki/drafts' && req.method === 'POST')) limits.requestBytes = 512 * 1024;
   if (kind === 'cleanup-list') {
     if (req.method === 'POST' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
     const parameters = new URL(req.url, 'http://127.0.0.1').searchParams;
@@ -256,7 +263,7 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
           || !Number.isSafeInteger(Number(value)) || Number(value) > (key === 'page_size' ? 100 : 2147483647)) throw new TransportError(400, 'query_denied');
     }
   }
-  const bodyless = kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
+  const bodyless = kind === 'wiki-draft' && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
   if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'attachment', 'voice', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'replacement' && req.method === 'GET' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (['sound-upload', 'video-av-upload'].includes(kind)) {
@@ -316,7 +323,7 @@ async function serveAsset(res, asset, publicDirectory, head) {
 }
 
 export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084', port = 18085,
-  publicDirectory = DEFAULT_PUBLIC, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
+  publicDirectory = DEFAULT_PUBLIC, wikiEntry = false, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
   deadlineMs = 10_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000,
   attachmentBytes = 28 * 1024 * 1024, voiceBytes = 28 * 1024 * 1024, voiceDeadlineMs = 180_000, imageVectorDeadlineMs = 180_000, audioVectorDeadlineMs = 180_000,
   modelTestDeadlineMs = 70_000, retrievalDeadlineMs = 180_000, answerDeadlineMs = 180_000, imageUploadBytes = 10 * 1024 * 1024, contentBytes = 10 * 1024 * 1024, mediaBytes = 20 * 1024 * 1024 } = {}) {
@@ -340,7 +347,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
     const replacementUpload = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/.test(req.url.split('?')[0]);
     const replacementIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/.test(req.url);
     const upload = replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
-    const answer = req.method === 'POST' && ['/v1/knowledge-answers', '/v1/answers', '/v1/attachment-answers', '/v1/visual-answers', '/v1/audio-answers', '/v1/video-answers', '/v1/sound-answers', '/v1/sound-query-answers', '/v1/video-av-answers', '/v1/video-av-query-answers'].includes(req.url);
+    const answer = req.method === 'POST' && ['/v1/wiki/proposals', '/v1/knowledge-answers', '/v1/answers', '/v1/attachment-answers', '/v1/visual-answers', '/v1/audio-answers', '/v1/video-answers', '/v1/sound-answers', '/v1/sound-query-answers', '/v1/video-av-answers', '/v1/video-av-query-answers'].includes(req.url);
     const voice = req.method === 'POST' && req.url === '/v1/voice-questions';
     const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
     const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
@@ -358,10 +365,11 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
       const origin = validateBrowserBoundary(req, server.address().port);
       const path = req.url.split('?')[0];
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
-      const asset = ASSETS.get(path);
+      const asset = ASSETS.get(wikiEntry && path === '/' ? '/wiki/' : path);
       if (asset) {
+        if (WIKI_ASSETS.some(([assetPath]) => assetPath === path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if ((path === '/pdf-preview.mjs' || path.startsWith('/vendor/pdfjs/')) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
-        if (['/model-rebuild.mjs', '/document-replacements.mjs', '/model-configuration.mjs', '/retrieval-tests.mjs', '/product-help.mjs', '/query-attachments.mjs', '/voice-question.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+        if (['/model-rebuild.mjs', '/document-replacements.mjs', '/model-configuration.mjs', '/retrieval-tests.mjs', '/retrieval-settings.mjs', '/product-help.mjs', '/query-attachments.mjs', '/voice-question.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if (!['GET', 'HEAD'].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         await serveAsset(res, asset, publicDirectory, req.method === 'HEAD');
       } else {

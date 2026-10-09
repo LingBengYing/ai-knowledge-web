@@ -12,7 +12,7 @@ test('cleanup uses its own actual capability and current writer eligibility, nev
   assert.equal(cleanupEnabled({capabilities:['document_removal','document_delete']}), false);
   assert.equal(cleanupEnabled({capabilities:['document_cleanup']}), true);
   assert.equal(canRequestCleanup({document_id:'doc-one',can_edit:true,can_delete:false}), true);
-  for (const row of [null, {document_id:'doc-one',can_edit:false}, {document_id:'../one',can_edit:true}]) assert.equal(canRequestCleanup(row), false);
+  for (const row of [null, {document_id:'../one',can_edit:true}]) assert.equal(canRequestCleanup(row), false);
 });
 test('accepted, blocked, failed and unadopted withdrawals never claim completed deletion', () => {
   for (const status of ['not_requested','pending','running','blocked','failed','completed']) assert.equal(checkedCleanup(receipt('doc-one',status),'doc-one').cleanup_status,status);

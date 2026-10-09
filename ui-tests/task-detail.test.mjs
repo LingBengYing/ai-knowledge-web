@@ -2,6 +2,7 @@ import * as modelConfigurationModule from '../public/model-configuration.mjs';
 import * as modelRebuildModule from '../public/model-rebuild.mjs';
 import * as replacementModule from '../public/document-replacements.mjs';
 import * as retrievalTestModule from '../public/retrieval-tests.mjs';
+import * as retrievalSettingsModule from '../public/retrieval-settings.mjs';
 import * as cleanupModule from '../public/document-cleanup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,6 +27,90 @@ import { createHash } from 'node:crypto';
 import { knowledgeAnswerFixture } from './knowledge-answer-fixture.mjs';
 
 const modelSummary = (version = 1, activeVersion = null, canEdit = true) => ({ version, active_version: activeVersion, state: version === 0 ? 'unconfigured' : activeVersion === version ? 'active' : 'draft', can_edit: canEdit, provider: 'siliconflow', embedding: { model: version ? 'synthetic/embedding' : null, dimensions: version ? 2 : null, revision: version ? 'fixture-v1' : null, has_key: version > 0 }, rerank: { model: version ? 'synthetic/rerank' : null, has_key: version > 0 }, generation: { model: version ? 'synthetic/generation' : null, has_key: version > 0 }, projection: { configured: true, dimension: 2, can_test: canEdit } });
+const retrievalSettings = (version = 0, changes = {}) => ({ version, search_method: 'hybrid', ranking_mode: 'rerank', dense_weight: 0.5, top_k: 5, score_threshold_enabled: false, score_threshold: 0.5, ...changes });
+
+test('0040 actual settings form saves global retrieval policy without model calls and reports applied models honestly', async () => {
+  const fixture = appFixture('ingestion', task('ingestion', 'parsed')), calls = [];
+  fixture.app.enableModelSetup(); fixture.app.enableRetrievalSettings();
+  fixture.app.setApi(async (path, options = {}) => {
+    calls.push([path, options.method, options.body]);
+    return path === '/v1/retrieval-settings' ? options.method === 'PUT' ? { ...options.body, version: 1 } : retrievalSettings() : modelSummary(2, 1);
+  });
+  fixture.app.showView('settings'); await settleAnswer();
+  assert.equal(fixture.get('retrieval-settings').hidden, false);
+  assert.match(fixture.get('retrieval-settings-models').textContent, /草稿.*未应用/u);
+  assert.doesNotMatch(fixture.get('retrieval-settings-models').textContent, /synthetic\/embedding/u);
+  fixture.get('retrieval-settings-method').value = 'full_text'; fixture.get('retrieval-settings-ranking').value = 'weighted';
+  fixture.get('retrieval-settings-count').value = '9'; fixture.get('retrieval-settings-threshold-enabled').checked = true;
+  fixture.get('retrieval-settings-threshold').value = '1.8'; fixture.get('retrieval-settings-form').dispatch('input');
+  assert.equal(fixture.get('retrieval-settings-dense-weight').disabled, true);
+  assert.match(fixture.get('retrieval-settings-threshold-help').textContent, /BM25/u);
+  fixture.get('retrieval-settings-form').dispatch('submit'); await settleAnswer();
+  const write = calls.find(call => call[1] === 'PUT');
+  assert.equal(write[0], '/v1/retrieval-settings'); assert.deepEqual({ ...write[2] }, retrievalSettings(0, { search_method: 'full_text', ranking_mode: 'weighted', top_k: 9, score_threshold_enabled: true, score_threshold: 1.8 }));
+  assert.equal(calls.some(call => call[1] === 'POST'), false);
+  assert.match(fixture.get('retrieval-settings-status').textContent, /版本 1/u);
+  assert.equal(fixture.get('retrieval-settings-save').disabled, true);
+});
+
+test('0040 recall defaults to server settings and temporary overrides never save or enter a question', async () => {
+  const fixture = appFixture('ingestion', task('ingestion', 'parsed')), calls = [], saved = retrievalSettings(4, { search_method: 'vector', ranking_mode: 'weighted', top_k: 8 });
+  fixture.app.enableModelSetup(); fixture.app.enableAnswers(); fixture.app.enableRetrievalSettings();
+  fixture.app.setApi(async (path, options = {}) => {
+    calls.push([path, options]); if (path === '/v1/retrieval-settings') return saved;
+    return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 2, effective_settings: { ...saved, ...options.body.retrieval_settings }, status: 'empty', reason: 'no_matches', scope_count: 2, score_kind: 'vector_similarity', matches: [] };
+  });
+  fixture.app.openRetrieval(); await settleAnswer();
+  fixture.get('retrieval-question').value = '相关问题'; fixture.get('retrieval-question').dispatch('input');
+  fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
+  assert.deepEqual({ ...calls.find(call => call[0] === '/v1/retrieval-tests')[1].body }, { question: '相关问题' });
+  assert.match(fixture.get('retrieval-effective-settings').textContent, /检索版本 4.*Top K 8/u);
+  fixture.get('retrieval-override').checked = true; fixture.get('retrieval-override').dispatch('change');
+  fixture.get('retrieval-count').value = '3'; fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
+  const temporary = calls.filter(call => call[0] === '/v1/retrieval-tests')[1][1].body;
+  assert.equal(temporary.retrieval_settings.top_k, 3); assert.equal(Object.hasOwn(temporary.retrieval_settings, 'version'), false);
+  assert.equal(Object.hasOwn(temporary, 'top_k'), false); assert.equal(Object.hasOwn(temporary, 'rerank'), false);
+  await prepareQuestion(fixture, null, 'text', () => fixture.get('retrieval-continue').dispatch('click'));
+  assert.equal(fixture.get('answer-question').value, '相关问题'); assert.equal(calls.some(call => call[1].method === 'PUT'), false);
+  assert.match(fixture.get('retrieval-help').textContent, /不含视频/u);
+});
+
+test('0040 settings conflict blocks overwrite until explicit reread and active model names are not draft names', async () => {
+  const fixture = appFixture('ingestion', task('ingestion', 'parsed')), calls = [];
+  fixture.app.enableModelSetup(); fixture.app.enableRetrievalSettings();
+  let version = 1;
+  fixture.app.setApi(async (path, options = {}) => {
+    calls.push([path, options.method]); if (path === '/v1/model-configuration') return modelSummary(1, 1);
+    if (options.method === 'PUT') { version = 2; throw new ApiError(409, 'unsafe conflict'); }
+    return retrievalSettings(version);
+  });
+  fixture.app.showView('settings'); await settleAnswer();
+  assert.match(fixture.get('retrieval-settings-models').textContent, /当前生效.*嵌入：synthetic\/embedding.*重排：synthetic\/rerank/u);
+  fixture.get('retrieval-settings-ranking').value = 'weighted'; fixture.get('retrieval-settings-form').dispatch('change');
+  assert.equal(fixture.get('retrieval-settings-weight-controls').hidden, false);
+  fixture.get('retrieval-settings-dense-weight').value = '0.8'; fixture.get('retrieval-settings-form').dispatch('input');
+  assert.match(fixture.get('retrieval-settings-weight-label').textContent, /语义 80%.*关键词 20%/u);
+  fixture.get('retrieval-settings-form').dispatch('submit'); await settleAnswer();
+  assert.equal(fixture.get('retrieval-settings-save').disabled, true); assert.match(fixture.get('retrieval-settings-error').textContent, /重新读取/u);
+  fixture.get('retrieval-settings-form').dispatch('submit'); await settleAnswer();
+  assert.equal(calls.filter(call => call[1] === 'PUT').length, 1);
+  fixture.app.setConfirm(() => true); fixture.get('retrieval-settings-refresh').dispatch('click'); await settleAnswer();
+  assert.equal(fixture.get('retrieval-settings-ranking').value, 'rerank'); assert.equal(fixture.get('retrieval-settings-error').hidden, true);
+  assert.match(fixture.get('retrieval-settings-status').textContent, /版本 2/u);
+});
+
+test('0040 leaving settings or changing identity discards late settings without applying to the next view', async () => {
+  for (const leave of ['navigation', 'identity']) {
+    const fixture = appFixture('ingestion', task('ingestion', 'parsed')); fixture.app.enableRetrievalSettings();
+    let deliver, signal;
+    fixture.app.setApi((_path, options) => { signal = options.signal; return new Promise(resolve => { deliver = resolve; }); });
+    fixture.app.showView('settings');
+    if (leave === 'identity') fixture.app.resetContext({ identity: true }); else fixture.app.navigate('documents');
+    assert.equal(signal.aborted, true); deliver(retrievalSettings(9)); await settleAnswer();
+    assert.doesNotMatch(fixture.get('retrieval-settings-status').textContent, /版本 9/u);
+    assert.equal(fixture.get('retrieval-settings-save').disabled, true);
+  }
+});
 
 test('actual settings form separates save, each role test and activation and clears write-only keys', async () => {
   const fixture = appFixture('ingestion', task('ingestion', 'parsed')), calls = [];
@@ -56,7 +141,7 @@ test('actual settings form separates save, each role test and activation and cle
 
 test('actual settings hides administrator controls from reader and clears secret drafts on identity or leaving', async () => {
   const fixture = appFixture('ingestion', task('ingestion', 'parsed')); fixture.app.enableModelSetup(); fixture.app.setApi(async () => modelSummary(1, 1, false));
-  fixture.app.showView('settings'); await settleAnswer(); assert.equal(fixture.get('model-save').disabled, true); assert.equal(fixture.get('model-generation-key').disabled, true);
+  fixture.app.showView('settings'); await settleAnswer(); assert.equal(fixture.get('model-save').disabled, true); assert.equal(fixture.get('model-generation-key').disabled, false);
   fixture.get('model-generation-key').value = 'fixture-transient'; fixture.app.navigate('documents'); assert.equal(fixture.get('model-generation-key').value, '');
   fixture.get('model-generation-key').value = 'fixture-transient'; fixture.app.resetContext({ identity: true }); assert.equal(fixture.get('model-generation-key').value, '');
 });
@@ -192,16 +277,16 @@ test('actual retrieval control preserves full scope, renders plain excerpts and 
   const fixture = appFixture('ingestion', task('ingestion', 'parsed')), calls = [];
   fixture.app.enableModelSetup(); fixture.app.enableAnswers(); fixture.app.openRetrieval(['doc-one', 'doc-tail']);
   fixture.get('retrieval-question').value = '完整预算问题'; fixture.get('retrieval-question').dispatch('input');
-  fixture.get('retrieval-count').value = '5'; fixture.get('retrieval-rerank').value = 'false';
+  fixture.get('retrieval-count').value = '5';
   const text = '<b>合成😀事实</b>';
-  fixture.app.setApi(async (path, options) => { calls.push({ path, options }); return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, status: 'completed', reason: null, scope_count: 2, score_kind: 'rrf', matches: [{ rank: 1, document_id: 'doc-tail', revision_id: 'rev-tail', filename: '<tail>.txt', source_sha256: 'a'.repeat(64), parser_revision: 'java-text-v1', page: 3, start: 0, end: [...text].length, text, text_sha256: createHash('sha256').update(text).digest('hex'), retrieval_score: 1 / 61, rerank_score: null }] }; });
+  fixture.app.setApi(async (path, options) => { calls.push({ path, options }); return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, effective_settings: retrievalSettings(1, { ranking_mode: 'weighted' }), status: 'completed', reason: null, scope_count: 2, score_kind: 'weighted_score', matches: [{ rank: 1, document_id: 'doc-tail', revision_id: 'rev-tail', filename: '<tail>.txt', source_sha256: 'a'.repeat(64), parser_revision: 'java-text-v1', page: 3, start: 0, end: [...text].length, text, text_sha256: createHash('sha256').update(text).digest('hex'), retrieval_score: 1 / 61, rerank_score: null }] }; });
   fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
-  assert.equal(calls.length, 1); assert.equal(calls[0].path, '/v1/retrieval-tests'); assert.equal(calls[0].options.body.document_ids.join(','), 'doc-one,doc-tail');
+  assert.equal(calls.length, 1); assert.equal(calls[0].path, '/v1/retrieval-tests'); assert.equal(calls[0].options.body.document_ids, undefined);
   assert.match(fixture.get('retrieval-matches').textContent, /<tail>.txt.*第 3 页.*<b>合成😀事实<\/b>/su);
-  assert.match(fixture.get('retrieval-matches').textContent, /RRF排序分.*未重排/u); assert.match(fixture.get('retrieval-help').textContent, /不是事实置信度/u);
+  assert.match(fixture.get('retrieval-matches').textContent, /混合加权分.*未重排/u); assert.match(fixture.get('retrieval-help').textContent, /不是事实置信度/u);
   await prepareQuestion(fixture, null, 'text', () => fixture.get('retrieval-continue').dispatch('click'));
   assert.equal(calls.length, 1); assert.equal(fixture.get('answer-question').value, '完整预算问题');
-  assert.match(fixture.get('answer-scope-label').textContent, /仅所选 2 份/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
   fixture.get('answer-question').value = '新问题'; fixture.get('answer-question').dispatch('input'); assert.equal(fixture.get('retrieval-matches').children.length, 0);
 });
 
@@ -212,7 +297,7 @@ test('actual retrieval original navigation rereads the same version and validate
   fixture.get('retrieval-question').value = '完整问题'; fixture.get('retrieval-count').value = '5';
   fixture.app.setApi(async (path, options) => {
     calls.push(path);
-    if (path === '/v1/retrieval-tests') return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, status: 'completed', reason: null, scope_count: 1, score_kind: 'rrf', matches: [{ rank: 1, document_id: 'doc-one', revision_id: 'rev-one', filename: 'fixture.txt', source_sha256: sourceSha, parser_revision: 'java-text-v1', page: 2, start: 0, end: [...text].length, text, text_sha256: createHash('sha256').update(text).digest('hex'), retrieval_score: 1 / 61, rerank_score: 0.5 }] };
+    if (path === '/v1/retrieval-tests') return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, effective_settings: retrievalSettings(), status: 'completed', reason: null, scope_count: 1, score_kind: 'rrf', matches: [{ rank: 1, document_id: 'doc-one', revision_id: 'rev-one', filename: 'fixture.txt', source_sha256: sourceSha, parser_revision: 'java-text-v1', page: 2, start: 0, end: [...text].length, text, text_sha256: createHash('sha256').update(text).digest('hex'), retrieval_score: 1 / 61, rerank_score: 0.5 }] };
     if (path.endsWith('/original')) return { document_id: 'doc-one', revision_id: 'rev-one', filename: 'fixture.txt', document_type: 'document', media_type: 'text/plain', source_sha256: sourceSha, size_bytes: bytes.length, content_url: '/v1/documents/doc-one/revisions/rev-one/content' };
     assert.equal(options.binary, true); return new Blob([bytes], { type: 'text/plain' });
   });
@@ -232,16 +317,16 @@ test('activation read refresh updates indexing eligibility while preserving ques
     calls.push({ path, options });
     if (path === '/v1/config') return { capabilities: ['management', 'model_configuration', 'retrieval_test', 'text_index', 'indexings', 'answers', 'sources'] };
     if (path.startsWith('/v1/management/documents?')) return { items: [{ ...fixture.app.state.items[0], can_index: true }], total: 1, total_pages: 1 };
-    if (path === '/v1/retrieval-tests') return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, status: 'empty', reason: 'no_matches', scope_count: 1, score_kind: 'rrf', matches: [] };
+    if (path === '/v1/retrieval-tests') return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, effective_settings: retrievalSettings(), status: 'empty', reason: 'no_matches', scope_count: 1, score_kind: 'rrf', matches: [] };
     return { items: [] };
   });
   await fixture.app.refreshModelCapabilities(); preserved(); assert.equal(fixture.app.state.items[0].can_index, true); assert.equal(fixture.get('answer-question').value, '保留完整问题');
   assert.equal(calls.some(call => call.options.method === 'POST' || call.path.endsWith('/index')), false);
-  assert.match(fixture.get('answer-scope-label').textContent, /仅所选 1 份/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
   fixture.app.setConfirm(() => true); fixture.app.openRetrieval(['doc-one']);
   fixture.get('retrieval-question').value = fixture.get('answer-question').value;
   fixture.get('retrieval-count').value = '5'; fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
-  const request = calls.find(call => call.path === '/v1/retrieval-tests'); assert.equal(request.options.body.question, '保留完整问题'); assert.equal(request.options.body.document_ids.join(','), 'doc-one');
+  const request = calls.find(call => call.path === '/v1/retrieval-tests'); assert.equal(request.options.body.question, '保留完整问题'); assert.equal(request.options.body.document_ids, undefined);
 });
 
 test('a late capability refresh after identity change cannot reload the previous actors document rows', async () => {
@@ -350,7 +435,7 @@ const row = (kind, value, change = {}) => ({ document_id: value.document_id, dis
 
 function appFixture(kind, initial = task(kind), rowChange = {}) {
   const dom = controlledDocument();
-  const context = vm.createContext({ ...dom, ...stateModule, ...answerModule, ...mediaModule, ...queryModule, ...synopsisModule, ...tagModule, ...voiceModule, ...vectorModule, ...audioVectorModule, ...soundModule, ...videoAvModule, ...cleanupModule, ...modelConfigurationModule, ...modelRebuildModule, ...replacementModule, ...retrievalTestModule, DocumentOriginalSession, PdfPreviewSession, createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode, showNotice,
+  const context = vm.createContext({ ...dom, ...stateModule, ...answerModule, ...mediaModule, ...queryModule, ...synopsisModule, ...tagModule, ...voiceModule, ...vectorModule, ...audioVectorModule, ...soundModule, ...videoAvModule, ...cleanupModule, ...modelConfigurationModule, ...modelRebuildModule, ...replacementModule, ...retrievalTestModule, ...retrievalSettingsModule, DocumentOriginalSession, PdfPreviewSession, createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode, showNotice,
     AbortController, URLSearchParams, window: { devicePixelRatio: 1 }, setTimeout: () => 1, clearTimeout() {}, confirm: () => false });
   vm.runInContext(`${source}\nglobalThis.app = { state, openDetail, watchTask, loadTask, taskAction, resetContext, loadData,
     showView, navigate, closeDetailPanel, changeFilter, documentQuery, renderControls, renderRows, openAnswers, openRetrieval, answerSession, originalSession, refreshModelCapabilities,
@@ -359,6 +444,7 @@ function appFixture(kind, initial = task(kind), rowChange = {}) {
     initializeNavigation(hash) { globalThis.location = { hash }; globalThis.history = { replaceState(_state, _title, next) { globalThis.location.hash = next; } }; globalThis.addEventListener = () => {}; initNavigation(); },
     get hash() { return globalThis.location?.hash; },
     enableModelSetup() { config.capabilities.push('model_configuration', 'retrieval_test'); renderControls(); },
+    enableRetrievalSettings() { config.capabilities.push('retrieval_settings'); renderControls(); },
     enableReindex() { config.capabilities.push('text_reindex'); renderControls(); renderRows(); if (state.detail) renderDetailEvidence(); },
     setReceiptReindexCapability(enabled) { config.capabilities = config.capabilities.filter(name => name !== 'text_reindex_with_vectors'); if (enabled) config.capabilities.push('text_reindex_with_vectors'); renderControls(); renderRows(); if (state.detail) renderDetailEvidence(); },
     configureModelSetupOnly() { config.capabilities = ['management', 'text_upload', 'ingestions', 'model_configuration']; renderControls(); },
@@ -419,16 +505,16 @@ test('detail to answers then back opens the next file and questions that exact f
   fixture.app.openDetail('doc-two');
   assert.equal(fixture.app.state.detail.document_id, 'doc-two');
   assert.equal(fixture.get('detail-name').value, '合成图片');
-  const ask = fixture.get('detail-task-controls').querySelectorAll('button').find(node => node.textContent === '在本资料中提问');
+  const ask = fixture.get('detail-task-controls').querySelectorAll('button').find(node => node.textContent === '全库提问');
   await prepareQuestion(fixture, null, 'knowledge', () => ask.dispatch('click'));
-  assert.match(fixture.get('answer-scope-documents').textContent, /合成图片/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
   const requests = [];
   fixture.app.setApi(async (path, options) => { requests.push({ path, options }); return { answer_id: 'answer-next', status: 'abstained', answer: '没有足够证据。', reason: 'no_evidence', citations: [] }; });
   fixture.get('answer-question').value = 'What is visible?';
   fixture.get('answer-form').dispatch('submit');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requests[0].path, '/v1/knowledge-answers');
-  assert.deepEqual(Array.from(requests[0].options.body.document_ids), ['doc-two']);
+  assert.equal(requests[0].options.body.document_ids, undefined);
   fixture.app.showView('documents'); fixture.app.openDetail('doc-one'); fixture.app.closeDetailPanel();
   fixture.app.openDetail('doc-two');
   assert.equal(fixture.get('detail-name').value, '合成图片');
@@ -620,13 +706,13 @@ for (const kind of ['ingestion', 'indexing']) {
     await settleMutation(fixture);
     assert.equal(fixture.app.state.items[0].can_edit, false);
     assert.equal(fixture.app.state.detail.current_role, 'reader');
-    assert.equal(fixture.get('detail-name').disabled, true);
+    assert.equal(fixture.get('detail-name').disabled, false);
     preserved();
     assert.ok(detailSave(fixture) === save, 'permission updates must retain the save node');
-    assert.equal(save.disabled, true, 'the detail save button must follow current authorization');
+    assert.equal(save.disabled, false, 'shared-workspace members retain editing');
   });
 
-  test(`${kind} downgraded preserved form submit cannot PATCH through its old editor closure`, async () => {
+  test(`${kind} legacy role refresh preserves the draft and permits shared-member editing`, async () => {
     const fixture = appFixture(kind, task(kind), { current_role: 'editor' });
     const preserved = editUnsaved(fixture);
     const form = detailForm(fixture);
@@ -638,8 +724,8 @@ for (const kind of ['ingestion', 'indexing']) {
     preserved();
     form.dispatch('submit'); // A submit event must be checked independently of disabled controls.
     await settleMutation(fixture);
-    assert.equal(calls.filter(call => call.options?.method === 'PATCH').length, 0);
-    preserved();
+    assert.equal(calls.filter(call => call.options?.method === 'PATCH').length, 1);
+    assert.equal(calls.find(call => call.options?.method === 'PATCH').options.body.display_name, '尚未保存的名称');
   });
 
   test(`${kind} reader to editor refresh enables the existing form and saves using current authorization`, async () => {
@@ -647,7 +733,7 @@ for (const kind of ['ingestion', 'indexing']) {
     const fixture = appFixture(kind, initial, { can_edit: false, current_role: 'reader' });
     const name = fixture.get('detail-name'); const tags = fixture.get('detail-tags');
     const form = detailForm(fixture);
-    assert.equal(name.disabled, true);
+    assert.equal(name.disabled, false);
     const editor = row(kind, initial, { can_edit: true, current_role: 'editor' });
     const calls = permissionTransport(fixture, kind, editor);
     await fixture.app.loadData({ preserveDetail: true });
@@ -834,16 +920,17 @@ test('question view is gated by Java capabilities and opens the complete selecte
   });
   await prepareQuestion(fixture, null, 'knowledge', () => fixture.get('batch-ask').dispatch('click'));
   assert.equal(fixture.get('view-answers').hidden, false);
-  assert.match(fixture.get('answer-scope-label').textContent, /所选 2 份/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
   fixture.get('answer-question').value = '完整问题';
   fixture.get('answer-form').dispatch('submit');
   await settleAnswer();
   assert.equal(requests.length, 1);
-  assert.deepEqual(requests[0].options.body.document_ids, ['doc-one', 'doc-unpublished']);
+  assert.equal(requests[0].options.body.document_ids, undefined);
   assert.equal(fixture.get('answer-result').hidden, false);
   assert.match(fixture.get('answer-reason').textContent, /no_evidence/u);
   assert.equal(fixture.get('answer-error').hidden, true);
-  fixture.get('answer-all').dispatch('click');
+  fixture.get('answer-new').dispatch('click');
+  fixture.get('answer-question').value = '另一个完整问题';
   fixture.get('answer-form').dispatch('submit');
   await settleAnswer();
   assert.equal(Object.hasOwn(requests[1].options.body, 'document_ids'), false);
@@ -891,12 +978,12 @@ test('question form prevents duplicate submission and scope changes suppress the
   assert.equal(calls, 1);
   assert.equal(fixture.get('answer-submit').disabled, true);
   assert.match(fixture.get('answer-status').textContent, /正在检索/u);
-  fixture.get('answer-all').dispatch('click');
+  fixture.get('answer-new').dispatch('click');
   deliver(textAnswer);
   await settleAnswer();
   assert.equal(fixture.get('answer-result').hidden, true);
   assert.equal(fixture.get('answer-text').textContent, '');
-  assert.match(fixture.get('answer-scope-label').textContent, /全部/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
 });
 
 test('parsed terminal poll rereads the authorized row so indexing becomes available without manual list refresh', async () => {
@@ -927,7 +1014,7 @@ test('row question entry uses service capability instead of legacy can_answer pl
   assert.ok(ask, 'real published Java rows still carry the legacy false placeholder');
   ask.dispatch('click');
   assert.equal(fixture.get('view-answers').hidden, false);
-  assert.match(fixture.get('answer-scope-label').textContent, /所选 1 份/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
   assert.equal(fixture.app.state.items[0].can_answer, false, 'UI must not manufacture server eligibility');
 });
 
@@ -939,7 +1026,7 @@ test('all-library empty scope explains absence of published documents instead of
   fixture.get('answer-question').value = '问题';
   fixture.get('answer-form').dispatch('submit');
   await settleAnswer();
-  assert.match(fixture.get('answer-reason').textContent, /没有可访问的已发布资料/u);
+  assert.match(fixture.get('answer-reason').textContent, /没有可检索的已发布资料/u);
 });
 
 test('image upload dialog states visual priority and includes PNG/JPEG without hiding text', () => {
@@ -1016,7 +1103,7 @@ test('real app visual mode posts complete scope and displays original image with
   fixture.get('answer-question').value = 'What is visible?'; fixture.get('answer-form').dispatch('submit');
   await settleAnswer();
   assert.equal(calls[0].path, '/v1/visual-answers');
-  assert.deepEqual(calls[0].options.body.document_ids, ['doc-one', 'other-document']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   fixture.get('answer-citations').querySelector('button').dispatch('click');
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(fixture.get('source-image-panel').hidden, false);
@@ -1056,7 +1143,7 @@ test('audio source plays the cited interval and leaving answers releases the pla
   await prepareQuestion(fixture, ['doc-one', 'unpublished'], 'audio');
   assert.equal(fixture.get('answer-mode').value, 'audio');
   fixture.get('answer-question').value = 'Question?'; fixture.get('answer-form').dispatch('submit'); await settleAnswer();
-  assert.deepEqual(calls[0].options.body.document_ids, ['doc-one', 'unpublished']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   fixture.get('answer-citations').querySelector('button').dispatch('click'); await new Promise(resolve => setTimeout(resolve, 20));
   const panel = fixture.get('source-media-panel'), player = panel.querySelector('audio'); assert.ok(player);
   assert.doesNotMatch(fixture.get('source-metadata').textContent, /页码|字符区间/);
@@ -1113,7 +1200,7 @@ test('actual form submits three query files once, renders preparation and opens 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].path, '/v1/attachment-answers');
   assert.equal(calls[0].options.body.question, ' 原问题\n保持 ');
-  assert.deepEqual(calls[0].options.body.document_ids, ['doc-one', 'unpublished']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   assert.deepEqual(calls[0].options.body.attachments.map(item => item.media_type), ['image/png', 'audio/wav', 'video/mp4']);
   assert.match(fixture.get('answer-attachment-status').textContent, /query\.png.*已处理/u);
   assert.match(fixture.get('answer-attachment-status').textContent, /采样/u);
@@ -1132,7 +1219,7 @@ test('query attachment read is invalidated on scope change, and leaving answers 
   fixture.get('answer-attachment-files').files = [file]; fixture.get('answer-attachment-files').dispatch('change');
   fixture.app.setApi(async () => { calls++; return textAnswer; });
   fixture.get('answer-question').value = '问题'; fixture.get('answer-form').dispatch('submit');
-  fixture.get('answer-all').dispatch('click'); deliver(new Uint8Array([1, 2, 3]).buffer); await settleAnswer();
+  fixture.get('answer-new').dispatch('click'); deliver(new Uint8Array([1, 2, 3]).buffer); await settleAnswer();
   assert.equal(calls, 0); assert.equal(fixture.get('answer-result').hidden, true);
   fixture.app.showView('documents'); fixture.app.showView('answers');
   assert.equal(fixture.get('answer-attachment-list').children.length, 0);
@@ -1273,7 +1360,7 @@ test('default unified answer opens the document page and plays the video citatio
   await fixture.get('answer-form').dispatch('submit'); await settleAnswer();
   assert.equal(fixture.app.answerSession.value.phase, 'answered');
   assert.equal(calls[0].path, '/v1/knowledge-answers');
-  assert.deepEqual(Array.from(calls[0].options.body.document_ids), ['manual', 'tutorial']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(fixture.get('answer-citations').querySelectorAll('button').length, 2);
   await fixture.get('answer-citations').querySelectorAll('button')[0].dispatch('click');
   assert.equal(fixture.get('source-panel').open, true);
@@ -1303,7 +1390,7 @@ test('legacy product help hash opens unified answers and retains the draft and c
   assert.equal(fixture.get('view-answers').hidden, false);
   assert.equal(fixture.get('answer-mode').value, 'knowledge');
   assert.equal(fixture.get('answer-question').value, '保留的完整产品问题');
-  assert.match(fixture.get('answer-scope-label').textContent, /所选 2 份/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
   assert.equal(fixture.get('nav-product-help'), null); assert.equal(fixture.get('view-product-help'), null);
 });
 
@@ -1400,7 +1487,12 @@ test('voice input preserves manual question until review, then asks exact scope 
   });
   chooseVoiceFile(fixture, new File([bytes], '<voice>.wav'));
   fixture.get('answer-voice-transcribe').dispatch('click'); fixture.get('answer-voice-transcribe').dispatch('click');
-  await settleAnswer();
+  // File bytes and WebCrypto SHA finish outside the five setImmediate turns used by
+  // settleAnswer; observe the actual terminal phase without replaying transcription.
+  for (let attempt = 0; attempt < 200 && fixture.app.voiceSession.value.phase === 'loading'; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(fixture.app.voiceSession.value.phase, 'ready', 'voice transcription must reach the real ready phase');
   assert.equal(calls.length, 1); assert.equal(calls[0].path, '/v1/voice-questions');
   assert.deepEqual(Object.keys(calls[0].options.body).sort(), ['content_base64', 'filename', 'media_type']);
   assert.equal(calls[0].options.body.media_type, 'audio/wav'); assert.equal(calls[0].options.body.content_base64, Buffer.from(bytes).toString('base64'));
@@ -1412,7 +1504,7 @@ test('voice input preserves manual question until review, then asks exact scope 
   assert.equal(fixture.get('answer-attachment-list').children.length, 0, 'voice is not added as retrieval attachment');
   fixture.get('answer-form').dispatch('submit'); await settleAnswer();
   assert.equal(calls[1].path, '/v1/answers'); assert.equal(calls[1].options.body.question, '已核对问题 731-42？');
-  assert.deepEqual(Array.from(calls[1].options.body.document_ids), ['doc-one', 'unpublished']);
+  assert.equal(calls[1].options.body.document_ids, undefined);
   fixture.get('answer-citations').querySelector('button').dispatch('click'); await settleAnswer();
   assert.equal(fixture.get('source-quote').textContent, '合成证据');
 });
@@ -1424,7 +1516,7 @@ test('voice read cancellation and late transcription cannot change the current q
   const file = new File([bytes], 'voice.wav'); file.arrayBuffer = () => new Promise(resolve => { deliverRead = resolve; });
   fixture.app.setApi(() => { calls++; return new Promise(resolve => { deliverResponse = resolve; }); });
   chooseVoiceFile(fixture, file); fixture.get('answer-voice-transcribe').dispatch('click');
-  fixture.get('answer-all').dispatch('click'); deliverRead(bytes.buffer); await settleAnswer(); assert.equal(calls, 0);
+  fixture.get('answer-new').dispatch('click'); deliverRead(bytes.buffer); await settleAnswer(); assert.equal(calls, 0);
   fixture.get('answer-mode').value = 'text'; fixture.get('answer-mode').dispatch('change');
   chooseVoiceFile(fixture, new File([bytes], 'new.wav')); fixture.get('answer-voice-transcribe').dispatch('click');
   await settleAnswer(); assert.equal(calls, 1);
@@ -1480,7 +1572,7 @@ test('image vector build respects reader permission and leaving invalidates its 
   const reader = appFixture('indexing', task('indexing', 'indexed'), { ...data.item, can_edit: false });
   reader.app.setApi(async () => imageVectorReply(reader.app.state.items[0])); reader.app.enableImageVectors(); await settleAnswer();
   assert.ok(reader.get('detail-image-vector'), 'reader image vector panel must exist');
-  assert.equal(reader.get('image-vector-build').disabled, true);
+  assert.equal(reader.get('image-vector-build').disabled, false);
   let resolveBuild; const gate = { promise: new Promise(resolve => { resolveBuild = resolve; }), resolve: value => resolveBuild(value) };
   const fixture = appFixture('indexing', task('indexing', 'indexed'), data.item);
   let posted = 0, signal;
@@ -1541,7 +1633,7 @@ test('audio vector build respects reader permission and leaving invalidates its 
   const reader = appFixture('indexing', task('indexing', 'indexed'), { ...data.item, can_edit: false });
   reader.app.setApi(async () => audioVectorReply(reader.app.state.items[0])); reader.app.enableAudioVectors(); await settleAnswer();
   assert.ok(reader.get('detail-audio-vector'), 'reader audio vector panel must exist');
-  assert.equal(reader.get('audio-vector-build').disabled, true);
+  assert.equal(reader.get('audio-vector-build').disabled, false);
   let resolveBuild; const gate = { promise: new Promise(resolve => { resolveBuild = resolve; }), resolve: value => resolveBuild(value) };
   const fixture = appFixture('indexing', task('indexing', 'indexed'), data.item);
   let posted = 0, signal;
@@ -1661,7 +1753,7 @@ test('sound answer uses the complete scope and plays audio with sound facts rath
     return { answer_id: 'sound-answer', citation };
   });
   fixture.get('answer-question').value = '末段有什么声音？'; fixture.get('answer-form').dispatch('submit'); await settleAnswer();
-  assert.equal(calls[0].path, '/v1/sound-answers'); assert.deepEqual(calls[0].options.body.document_ids, ['doc-one', 'unpublished']);
+  assert.equal(calls[0].path, '/v1/sound-answers'); assert.equal(calls[0].options.body.document_ids, undefined);
   fixture.get('answer-citations').querySelector('button').dispatch('click'); await new Promise(resolve => setTimeout(resolve, 20));
   const panel = fixture.get('source-media-panel'), player = panel.querySelector('audio'); assert.ok(player); assert.equal(panel.querySelector('video'), null);
   assert.match(panel.textContent, /声音模型判断/u); assert.doesNotMatch(panel.textContent, /音频转录/u);
@@ -1749,7 +1841,7 @@ test('actual AV question renders joint facts and plays the checked original at t
     ? { answer_id: 'answer-av', citation } : { answer_id: 'answer-av', status: 'answered', mode: 'JOINT', answer: facts.map(fact => fact.text).join('\n'), reason_code: null, citations: [citation], policy_revision: citation.policy_revision }; });
   await prepareQuestion(fixture, ['doc-one', 'unindexed']); fixture.get('answer-mode').value = 'video-av-joint'; fixture.get('answer-mode').dispatch('change');
   fixture.get('answer-question').value = '完整原问题'; fixture.get('answer-form').dispatch('submit'); await settleAnswer();
-  assert.equal(calls[0].path, '/v1/video-av-answers'); assert.deepEqual(Array.from(calls[0].options.body.document_ids), ['doc-one', 'unindexed']);
+  assert.equal(calls[0].path, '/v1/video-av-answers'); assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(calls[0].options.body.mode, 'JOINT'); assert.equal(fixture.get('answer-attachment-files').disabled, true);
   assert.match(fixture.get('answer-citations').textContent, /0:02\.000.*0:03\.000/u);
   await fixture.app.answerSession.readSource(1); await settleAnswer();
@@ -1785,7 +1877,7 @@ test('actual AV reference controls require the independent capability and preser
   const calls = []; fixture.app.setApi(async (path, options) => { calls.push({ path, options }); return videoQueryRefusal(options.body); });
   fixture.get('answer-form').dispatch('submit'); fixture.get('answer-form').dispatch('submit'); await settleVideoQuery(fixture);
   assert.equal(calls.length, 1); assert.equal(calls[0].path, '/v1/video-av-query-answers');
-  assert.deepEqual(Array.from(calls[0].options.body.document_ids), ['doc-one', 'missing-index']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(calls[0].options.body.question, '  完整问题\n尾部  '); assert.equal(calls[0].options.body.mode, 'JOINT');
   assert.equal(calls[0].options.body.attachments.length, 2); assert.equal(fixture.get('answer-question').value, '  完整问题\n尾部  ');
   assert.match(fixture.get('answer-attachment-status').textContent, /first.mp4.*3.*tail.webm.*3/su);
@@ -1799,7 +1891,7 @@ test('actual AV reference empty selection keeps not-prepared inputs visible with
   fixture.get('answer-question').value = '完整问题'; let body;
   fixture.app.setApi(async (_path, options) => { body = options.body; return videoQueryRefusal(body, false); });
   fixture.get('answer-form').dispatch('submit'); await settleVideoQuery(fixture);
-  assert.deepEqual(Array.from(body.document_ids), []); assert.equal(fixture.app.answerSession.value.phase, 'abstained');
+  assert.equal(body.document_ids, undefined); assert.equal(fixture.app.answerSession.value.phase, 'abstained');
   assert.match(fixture.get('answer-attachment-status').textContent, /<original>.mp4.*未完成/u);
   assert.doesNotMatch(fixture.get('answer-attachment-status').textContent, /undefined|已处理|采样/u);
   assert.equal(fixture.get('answer-attachment-list').children.length, 1);
@@ -1844,7 +1936,7 @@ test('cleanup batch sends the captured complete selection and exposes each indep
   const fixture=appFixture('ingestion',task('ingestion','parsed'));fixture.app.enableCleanup();fixture.app.state.items.push({...fixture.app.state.items[0],document_id:'doc-reader',can_edit:false,latest_job:null,latest_index_job:null});fixture.app.state.selected.add('doc-one');fixture.app.state.selected.add('doc-reader');fixture.app.renderControls();const calls=[];
   fixture.app.setApi(async(path,options)=>{calls.push({path,options});if(path==='/v1/management/document-cleanups')return {items:[{document_id:'doc-one',status:'accepted',cleanup:cleanupReceipt(),error_code:null},{document_id:'doc-reader',status:'not_found',cleanup:null,error_code:'not_found'}],total:2};if(path.startsWith('/v1/management/documents?'))return {items:[],total:0,total_pages:0};return {items:[]};});
   fixture.get('batch-cleanup').dispatch('click');assert.match(fixture.get('dialog-description').textContent,/doc-one、doc-reader/u);fixture.get('dialog-form').dispatch('submit');await settleAnswer();
-  assert.equal(calls[0].options.body.document_ids.join(','),'doc-one,doc-reader');assert.match(fixture.get('feedback-items').textContent,/待完成/u);assert.match(fixture.get('feedback-items').textContent,/无管理权限/u);assert.equal(fixture.app.state.selected.size,0);
+  assert.equal(calls[0].options.body.document_ids.join(','),'doc-one,doc-reader');assert.match(fixture.get('feedback-items').textContent,/待完成/u);assert.match(fixture.get('feedback-items').textContent,/当前不可操作/u);assert.equal(fixture.app.state.selected.size,0);
 });
 test('cleanup unknown state remains refreshable after row loss and identity reset rejects a late receipt',async()=>{
   const fixture=appFixture('ingestion',task('ingestion','parsed'));fixture.app.enableCleanup();fixture.app.setApi(async()=>{throw new ApiError(504,'timeout');});fixture.get('detail-cleanup').dispatch('click');fixture.get('dialog-form').dispatch('submit');await settleAnswer();assert.match(fixture.get('cleanup-items').textContent,/结果未知/u);assert.equal(fixture.app.state.mutating,false);
@@ -1852,7 +1944,7 @@ test('cleanup unknown state remains refreshable after row loss and identity rese
   fixture.app.cleanupSession.close();let finish;fixture.app.setApi(()=>new Promise(resolve=>{finish=resolve;}));const pending=fixture.app.cleanupSession.requestOne('doc-one');fixture.app.resetContext({identity:true});finish(cleanupReceipt('doc-one','completed'));await pending;assert.equal(fixture.app.cleanupSession.value.records.length,0);assert.doesNotMatch(fixture.get('cleanup-items').textContent,/已完成/u);
 });
 test('cleanup readers and missing capability cannot create controls while records read does not lose a draft',async()=>{
-  const reader=appFixture('ingestion',task('ingestion','parsed'),{can_edit:false});assert.equal(reader.get('detail-cleanup').hidden,true);reader.app.enableCleanup();assert.equal(reader.get('detail-cleanup').disabled,true);
+  const reader=appFixture('ingestion',task('ingestion','parsed'),{can_edit:false});assert.equal(reader.get('detail-cleanup').hidden,true);reader.app.enableCleanup();assert.equal(reader.get('detail-cleanup').disabled,false);
   const fixture=appFixture('ingestion',task('ingestion','parsed'));fixture.app.enableCleanup();const draft=fixture.get('detail-name');draft.value='保持草稿';fixture.app.setApi(async()=>({items:[cleanupReceipt('removed-one','blocked')],total:1,page:1,page_size:20}));fixture.get('cleanup-refresh').dispatch('click');await settleAnswer();assert.equal(fixture.get('detail-name'),draft);assert.equal(draft.value,'保持草稿');assert.match(fixture.get('cleanup-items').textContent,/受阻/u);assert.equal(fixture.app.state.mutating,false);
 });
 
@@ -1869,13 +1961,13 @@ function retrievalScopeQuestion(fixture) {
   fixture.get('retrieval-question').value = '完整预算问题';
   fixture.get('retrieval-question').dispatch('input');
   fixture.get('retrieval-count').value = '5';
-  fixture.get('retrieval-rerank').value = 'false';
+  fixture.get('retrieval-ranking').value = 'weighted';
 }
 
 function retrievalScopeEmpty(count) {
   return { test_id: '00000000-0000-0000-0000-000000000003', configuration_version: 1,
     status: 'empty', reason: count ? 'no_matches' : 'empty_scope', scope_count: count,
-    score_kind: 'rrf', matches: [] };
+    effective_settings: retrievalSettings(), score_kind: 'rrf', matches: [] };
 }
 
 test('retrieval-only row opens its exact unpublished scope without generating or automatically testing', async () => {
@@ -1890,7 +1982,7 @@ test('retrieval-only row opens its exact unpublished scope without generating or
   assert.equal(scope.disabled, false);
   scope.dispatch('click');
   assert.equal(fixture.get('view-retrieval').hidden, false);
-  assert.match(fixture.get('retrieval-scope-label').textContent, /仅所选 1 份/u);
+  assert.match(fixture.get('retrieval-scope-label').textContent, /组织共享全库/u);
   assert.equal(calls.length, 0, 'choosing a scope must not send any request');
   retrievalScopeQuestion(fixture);
   assert.equal(fixture.get('retrieval-question').disabled, false);
@@ -1903,7 +1995,7 @@ test('retrieval-only row opens its exact unpublished scope without generating or
   fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
   assert.equal(calls.length, 1); assert.equal(calls[0].path, '/v1/retrieval-tests');
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0].options.body)), {
-    question: '完整预算问题', document_ids: ['doc-one'], top_k: 5, rerank: false });
+    question: '完整预算问题' });
   assert.equal(fixture.app.retrievalSession.value.phase, 'ready');
   assert.equal(fixture.get('retrieval-continue').disabled, true);
 });
@@ -1934,20 +2026,20 @@ test('retrieval-only batch keeps every selected ID and explicit all-scope switch
   assert.equal(calls.length, 0);
   fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
   assert.equal(calls.length, 1, 'unpublished selection must not be filtered or retried');
-  assert.deepEqual(Array.from(calls[0].options.body.document_ids), ['doc-one', 'doc-unpublished']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(fixture.app.retrievalSession.value.phase, 'error');
   assert.match(fixture.get('retrieval-error').textContent, /完整所选范围/u);
-  assert.match(fixture.get('retrieval-scope-label').textContent, /仅所选 2 份/u);
+  assert.match(fixture.get('retrieval-scope-label').textContent, /组织共享全库/u);
   fixture.get('retrieval-run').dispatch('click');
   assert.equal(calls.length, 2);
-  assert.deepEqual(Array.from(calls[1].options.body.document_ids), ['doc-one', 'doc-unpublished']);
-  const all = fixture.get('retrieval-all');
-  assert.equal(all.hidden, false); assert.equal(all.disabled, false);
-  assert.equal(all.textContent, '改为全库');
-  all.dispatch('click');
-  assert.equal(calls.length, 2, 'expanding scope also requires a separate explicit test action');
+  assert.equal(calls[1].options.body.document_ids, undefined);
+  const stop = fixture.get('retrieval-stop');
+  assert.equal(stop.hidden, false); assert.equal(stop.disabled, false);
+  assert.equal(fixture.get('retrieval-scope-label').textContent, '组织共享全库');
+  stop.dispatch('click');
+  assert.equal(calls.length, 2, 'stopping only cancels local waiting without retrying');
   assert.equal(fixedSignal.aborted, true);
-  assert.match(fixture.get('retrieval-scope-label').textContent, /全部/u);
+  assert.match(fixture.get('retrieval-scope-label').textContent, /组织共享全库/u);
   deliver(retrievalScopeEmpty(2)); await settleAnswer();
   assert.equal(fixture.app.retrievalSession.value.result, null);
   assert.equal(fixture.get('retrieval-matches').children.length, 0);
@@ -1957,7 +2049,7 @@ test('retrieval-only batch keeps every selected ID and explicit all-scope switch
   assert.equal(calls.length, 3);
   assert.equal(Object.hasOwn(calls[2].options.body, 'document_ids'), false);
   assert.deepEqual(JSON.parse(JSON.stringify(calls[2].options.body)), {
-    question: '完整预算问题', top_k: 5, rerank: false });
+    question: '完整预算问题' });
 });
 
 test('retrieval-only detail scope respects dirty-draft cancellation and then captures only that document', async () => {
@@ -1984,10 +2076,10 @@ test('retrieval-only detail scope respects dirty-draft cancellation and then cap
   assert.equal(fixture.get('details').open, false); assert.equal(fixture.app.state.detail, null);
   assert.equal(fixture.get('view-retrieval').hidden, false); assert.equal(calls.length, 0);
   assert.equal(fixture.get('retrieval-question').value, '保留完整问题');
-  fixture.get('retrieval-count').value = '5'; fixture.get('retrieval-rerank').value = 'false';
+  fixture.get('retrieval-count').value = '5';
   fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
   assert.equal(calls.length, 1); assert.equal(calls[0].path, '/v1/retrieval-tests');
-  assert.deepEqual(Array.from(calls[0].options.body.document_ids), ['doc-one']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(calls[0].options.body.question, '保留完整问题');
 });
 
@@ -2007,7 +2099,7 @@ test('text retrieval remains the chosen mode when only visual answering is avail
   fixture.get('answer-form').dispatch('submit'); assert.equal(calls.length, 0);
   fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
   assert.equal(calls.length, 1); assert.equal(calls[0].path, '/v1/retrieval-tests');
-  assert.deepEqual(Array.from(calls[0].options.body.document_ids), ['doc-one']);
+  assert.equal(calls[0].options.body.document_ids, undefined);
   assert.equal(fixture.get('retrieval-continue').disabled, true);
 });
 
@@ -2131,7 +2223,7 @@ test('reindex same-revision success trusts refreshed publication and clears stal
   assert.equal(fixture.app.answerSession.value.result, null);
   assert.equal(fixture.app.retrievalSession.value.result, null);
   assert.equal(fixture.get('answer-question').value, '保留完整问题');
-  assert.match(fixture.get('answer-scope-label').textContent, /仅所选 2 份/u);
+  assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
   assert.match(fixture.get('answer-error').textContent, /重新/u); preserved();
 });
 
@@ -2321,7 +2413,7 @@ for (const kind of ['image', 'audio']) {
     assert.equal(session().value.vector.vector_generation_id, generation);
     assert.equal(fixture.app.state.items[0].active_revision_id, data.item.active_revision_id);
     assert.equal(fixture.get('answer-question').value, '保留完整媒体问题');
-    assert.match(fixture.get('answer-scope-label').textContent, /仅所选 2 份/u);
+    assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
     assert.match(fixture.get('answer-error').textContent, /重新/u);
     assert.equal(fixture.get('detail-form'), originalForm); saved();
     assert.equal(calls.filter(call => call.options.method === 'POST').length, 0);
@@ -2361,7 +2453,7 @@ for (const kind of ['image', 'audio']) {
       assert.equal(calls.filter(call => call.options.method === 'POST').length, 0);
       assert.equal(fixture.get('detail-form'), originalForm); saved();
       assert.equal(fixture.get('answer-question').value, '保留完整媒体问题');
-      assert.match(fixture.get('answer-scope-label').textContent, /仅所选 2 份/u);
+      assert.match(fixture.get('answer-scope-label').textContent, /组织共享全库/u);
     });
   }
 

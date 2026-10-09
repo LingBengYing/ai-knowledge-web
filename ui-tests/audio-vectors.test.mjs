@@ -38,7 +38,7 @@ test('only explicit current editor build posts no body and returns a complete av
   assert.equal(calls.length, 2); assert.equal(calls[1].options.method, 'POST'); assert.equal(calls[1].options.body, undefined);
   assert.equal(session.value.vector.status, 'available'); assert.equal(Object.isFrozen(session.value.vector), true);
   await session.build(row); assert.equal(calls.length, 2, 'ready vector should not rebuild or retry');
-  const reader = item({ can_edit: false }); await session.open(reader); await session.build(reader); assert.equal(calls.length, 3);
+  const reader = item({ can_edit: false }); await session.open(reader); await session.build(reader); assert.equal(calls.length, 4);
 });
 
 test('all response fields bind current source, complete profile and readiness shape', async () => {
@@ -73,7 +73,7 @@ test('changing document or permission makes late build results inert and aborts 
   assert.equal(session.value.vector.document_id, 'audio-two'); assert.equal(session.matches(row), false);
   const reads = []; const reader = item({ can_edit: false });
   const other = new AudioVectorSession(async (path, options) => { reads.push(options); return reply(row); });
-  await other.open(row); await other.build(reader); assert.equal(reads.length, 1, 'permission drift must not post');
+  await other.open(row); await other.build(reader); assert.equal(reads.length, 2, 'legacy role changes do not block shared-workspace writes');
 });
 
 test('closed reads and authentication failures never restore an old document', async () => {
