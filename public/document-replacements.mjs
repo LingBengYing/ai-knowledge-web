@@ -1,11 +1,11 @@
-import { ApiError, validateReplacementUpload } from './api.mjs';
+import { ApiError, validateReplacementUpload, DOCUMENT_MIME_TYPES, DOCUMENT_ACCEPT } from './api.mjs';
 import { checkedTask, checkedIndexTask } from './workbench-state.mjs';
 
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
 const fields = ['document_id', 'base_revision_id', 'base_publication_id', 'candidate_revision_id', 'pipeline', 'state',
   'filename', 'document_type', 'media_type', 'source_sha256', 'size_bytes', 'ingestion_task', 'index_task', 'can_upload', 'can_index', 'publication_id'];
-const types = { document: ['application/pdf', 'text/plain', 'text/markdown'], image: ['image/png', 'image/jpeg'],
+const types = { document: DOCUMENT_MIME_TYPES, image: ['image/png', 'image/jpeg'],
   audio: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'],
   video: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'] };
 const labels = { none: '尚无新版本', stored: '新版本待索引', queued: '新版本等待解析', processing: '正在解析新版本',
@@ -20,7 +20,7 @@ const identity = row => JSON.stringify([row?.document_id, revision(row), row?.in
 export function replacementsEnabled(config) { return config?.capabilities?.includes('document_replacements') === true; }
 export function replacementLabel(value) { return labels[value?.state] ?? '状态待核对'; }
 export function replacementAccept(type) {
-  return { document: '.pdf,.txt,.md', image: '.png,.jpg,.jpeg', audio: '.wav,.mp3,.flac,.ogg,.m4a,.mp4,.webm', video: '.mp4,.mov,.webm,.mkv' }[type] ?? '';
+  return { document: DOCUMENT_ACCEPT, image: '.png,.jpg,.jpeg', audio: '.wav,.mp3,.flac,.ogg,.m4a,.mp4,.webm', video: '.mp4,.mov,.webm,.mkv' }[type] ?? '';
 }
 
 function expected(row) {

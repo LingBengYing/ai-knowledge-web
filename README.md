@@ -1,5 +1,9 @@
 # AI Knowledge Web · 知识库工作台
 
+## 基础文档格式（0045）
+
+文档上传/替换现接受 PDF、PROPERTIES、HTML、VTT、CSV、MSG、MARKDOWN、EML、PPT、DOCX、DOC、TXT、PPTX、MDX、XLS、ODT、MD、XLSX、XML、EPUB、HTM，需配套Java0059实际解析。原件保留MIME/SHA校验，主动格式只下载或纯文本显示。见 [验证与边界](docs/changes/0045-document-formats/REVIEW.md)。
+
 ## 当前同步（2026-10-09）
 
 本版包含 Wiki 建设工作台、新版模型设置与可选 DB-GPT 知识问答。后端启用 Agent 时，问答显示真实检索/阅读进度、停止、原文引用与维护建议；明确关闭时保留普通综合问答。启动仍为 `npm run dev:workspace`，后端连接见 [API说明](docs/API_CONNECTION.md)。

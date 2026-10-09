@@ -335,6 +335,10 @@ test('authenticated original-file details use only pinned GET paths and load the
 
 test('public address must be a canonical HTTPS origin and backend remains literal loopback', () => {
   assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin }).publicOrigin, publicOrigin);
+  assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin }).wikiEntry, false);
+  assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin, RAG_WEB_WIKI_ENTRY: 'true' }).wikiEntry, true);
+  assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin, RAG_WEB_WIKI_ENTRY: 'false' }).wikiEntry, false);
+  assert.throws(() => readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin, RAG_WEB_WIKI_ENTRY: 'yes' }));
   for (const invalid of [undefined, 'http://knowledge.example.invalid', publicOrigin + '/', publicOrigin + '?x=1', 'https://user@knowledge.example.invalid', 'https://127.0.0.1', publicOrigin + ':443']) {
     assert.throws(() => readConfiguration({ RAG_PUBLIC_ORIGIN: invalid }));
   }

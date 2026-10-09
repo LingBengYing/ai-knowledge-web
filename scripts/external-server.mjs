@@ -147,7 +147,9 @@ export function readConfiguration(env = process.env) {
   backendAddress(backendOrigin);
   const value = env.RAG_WEB_PORT ?? '18085';
   if (!/^[1-9][0-9]{0,4}$/.test(value) || Number(value) < 1024 || Number(value) > 65535) throw new TransportError(500, 'invalid_port');
-  return { publicOrigin, backendOrigin, port: Number(value) };
+  const wikiEntry = env.RAG_WEB_WIKI_ENTRY ?? 'false';
+  if (!['true', 'false'].includes(wikiEntry)) throw new TransportError(500, 'invalid_wiki_entry');
+  return { publicOrigin, backendOrigin, port: Number(value), wikiEntry: wikiEntry === 'true' };
 }
 
 function singleHeader(req, name, status = 400) {
@@ -250,7 +252,7 @@ function validateUploadTarget(target, contentType, replacement = false) {
     const videoTypes = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' };
     if (contentType?.startsWith('video/')) {
       if (videoTypes[extension] !== contentType) throw new Error('invalid video type');
-    } else if (!/\.(?:pdf|txt|md|png|jpe?g|wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(filename)) throw new Error('invalid upload target');
+    } else if (!/\.(?:pdf|properties|html?|vtt|csv|msg|markdown|eml|pptx?|docx?|txt|mdx?|xlsx?|odt|xml|epub|png|jpe?g|wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(filename)) throw new Error('invalid upload target');
     return /\.(?:png|jpe?g)$/iu.test(filename);
   } catch { throw new TransportError(400, 'invalid_upload_filename'); }
 }
@@ -284,7 +286,7 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
           || !Number.isSafeInteger(Number(value)) || Number(value) > (key === 'page_size' ? 100 : 2147483647)) throw new TransportError(400, 'query_denied');
     }
   }
-  const bodyless = kind === 'wiki-draft' && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
+  const bodyless = ['wiki-draft', 'wiki-page'].includes(kind) && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
   if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'attachment', 'voice', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'replacement' && req.method === 'GET' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (['sound-upload', 'video-av-upload'].includes(kind)) {
@@ -318,6 +320,11 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
   catch (error) { response.destroy(); throw error; }
   const output = {};
   for (const name of ['content-type', 'www-authenticate']) if (response.headers[name]) output[name] = response.headers[name];
+  const originalContent = req.method === 'GET' && /^\/v1\/(?:documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]|wiki\/(?:pages\/[A-Za-z0-9_-]{1,128}\/versions\/[1-9][0-9]*|proposals\/[A-Za-z0-9_-]{1,128})\/sources\/[A-Za-z0-9_-]{1,128})\/content$/u.test(req.url);
+  if (originalContent && [200, 206].includes(response.statusCode)) {
+    if (response.headers['content-disposition'] === 'attachment') output['content-disposition'] = 'attachment';
+    if (response.headers['content-security-policy'] === "sandbox; default-src 'none'") output['content-security-policy'] = "sandbox; default-src 'none'";
+  }
   if (req.url.split('?')[0] === '/v1/session') {
     const cookies = sessionCookies(response.headers['set-cookie']);
     if (response.headers['set-cookie'] && cookies.length !== 1) throw new TransportError(502, 'unsafe_session_cookie');
@@ -363,7 +370,7 @@ async function backendJson(backend, path, headers = {}, signal) {
 }
 
 export async function startExternalServer({ publicOrigin, backendOrigin = 'http://127.0.0.1:18084', port = 18085,
-  publicDirectory = DEFAULT_PUBLIC, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
+  publicDirectory = DEFAULT_PUBLIC, wikiEntry = false, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
   deadlineMs = 10_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000,
   attachmentBytes = 28 * 1024 * 1024, voiceBytes = 28 * 1024 * 1024, voiceDeadlineMs = 180_000, imageVectorDeadlineMs = 180_000, audioVectorDeadlineMs = 180_000,
   modelTestDeadlineMs = 70_000, retrievalDeadlineMs = 180_000, answerDeadlineMs = 180_000, imageUploadBytes = 10 * 1024 * 1024, contentBytes = 10 * 1024 * 1024, mediaBytes = 20 * 1024 * 1024 } = {}) {
@@ -432,7 +439,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         if (Date.now() - loginWindow >= 60_000) { loginWindow = Date.now(); loginAttempts = 0; }
         if (++loginAttempts > 20) throw new TransportError(429, 'login_capacity_reached');
       }
-      const asset = ASSETS.get(path);
+      const asset = ASSETS.get(wikiEntry && path === '/' ? '/wiki/' : path);
       if (!anonymous && !sessionRoute) {
         const identity = await backendJson(backend, '/v1/session', headers, controller.signal);
         if (identity.status === 401) {

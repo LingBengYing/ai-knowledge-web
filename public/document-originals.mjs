@@ -1,10 +1,10 @@
-import { ApiError } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
 
 const id = /^[A-Za-z0-9_-]{1,128}$/u;
 const hashes = /^[a-f0-9]{64}$/u;
 const maxBytes = 20 * 1024 * 1024;
 const types = {
-  document: ['application/pdf', 'text/plain', 'text/markdown'],
+  document: DOCUMENT_MIME_TYPES,
   image: ['image/png', 'image/jpeg'],
   audio: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'],
   video: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'],
@@ -76,12 +76,12 @@ export class DocumentOriginalSession {
       if (!current()) return this.value;
       if ([...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('') !== original.source_sha256) throw invalid();
       let text = null, textError = null;
-      if (['text/plain', 'text/markdown'].includes(original.media_type)) {
+      if (documentTextPreview(original.media_type)) {
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
         catch { textError = '原文件不是有效 UTF-8 文本，无法在此预览；可打开或下载原文件。'; }
       }
-      this.#url = this.#objectUrls.createObjectURL(blob);
-      this.#publish({ phase: 'ready', original: Object.freeze({ ...original, url: this.#url, text, textError,
+      this.#url = this.#objectUrls.createObjectURL(safeOriginalBlob(blob));
+      this.#publish({ phase: 'ready', original: Object.freeze({ ...original, url: this.#url, text, textError, downloadOnly: documentDownloadOnly(original.media_type),
         ...(original.media_type === 'application/pdf' ? { blob } : {}) }), error: null });
     } catch (error) {
       if (current() && error.name !== 'AbortError') {

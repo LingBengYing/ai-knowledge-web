@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createApi } from '../public/api.mjs';
 import { createWikiWorkspaceApi } from '../public/wiki-workspace-api.mjs';
 import { parseWorkspaceRoute, escapeHtml, filterKnowledge, commonSourceRelations, formatLocator, formatTimestamp, createWikiWorkspace } from '../public/wiki-workspace.mjs';
@@ -46,9 +47,35 @@ const knowledge = { page_id: 'p1', version: 1, source_state: 'current', created_
 const draft = { id: 'd1', title: '草稿', body: '未核验的正文', version: 2, created_at: timestamp, updated_at: timestamp };
 const proposal = { id: 'proposal', page_id: 'p1', base_version: 1, before: knowledge.content, after: knowledge.content, status: 'pending', generation_method: 'extractive', source_state: 'current', created_at: timestamp };
 const settings = { version: 2, search_method: 'hybrid', ranking_mode: 'rerank', dense_weight: 0.5, top_k: 5, score_threshold_enabled: false, score_threshold: 0.5 };
+test('native recall and maintenance routes preserve identity and reject extra segments', () => {
+  for (const view of ['retrieval', 'documents', 'tasks', 'directories']) assert.deepEqual(parseWorkspaceRoute(`#/${view}`), { view });
+  for (const view of ['documents', 'tasks']) assert.deepEqual(parseWorkspaceRoute(`#/${view}/doc-123`), { view, id: 'doc-123' });
+  for (const route of ['#/retrieval/id', '#/directories/id', '#/documents/id/extra', '#/tasks/%2F']) assert.equal(parseWorkspaceRoute(route).view, 'missing');
+});
+
+test('workspace navigation and original maintenance stay native with exact document identity', async () => {
+  const f = fixture('#/sources'); await f.workspace.start();
+  assert.match(f.nodes.get('sidebar').innerHTML, /href="#\/retrieval"/u);
+  assert.match(f.nodes.get('sidebar').innerHTML, /href="#\/tasks"/u);
+  assert.match(f.html(), /href="#\/documents"/u);
+  await f.go('#/sources/doc'); assert.match(f.html(), /href="#\/documents\/doc"/u);
+  assert.doesNotMatch(f.html(), /\/classic\//u);
+  await f.go('#/settings'); assert.match(f.html(), /href="#\/documents"/u);
+  assert.doesNotMatch(f.html(), /\/classic\//u); f.workspace.close();
+});
+
+test('failed Agent shows safe cause and task number in its progress record', async () => {
+  const run = { ...agentRun('failed'), error: { code: 'agent_timeout', message: 'private provider text' } };
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'db-gpt', max_steps: 8 }), createAgentRun: async () => run });
+  await f.workspace.start(); await f.submit('question-form', [['question', '合成问题']]); await tick();
+  const html = f.nodes.get('chat-turns').innerHTML;
+  assert.match(html, new RegExp(agentRunId, 'u')); assert.match(html, /agent_timeout/u);
+  assert.doesNotMatch(html, /private provider text/u); f.workspace.close();
+});
+
 function fixture(hash = '#/home', overrides = {}, config) {
-  const nodes = new Map(), events = {}, windowEvents = {}, calls = [];
-  const node = id => { if (!nodes.has(id)) { const listeners = {}; nodes.set(id, { innerHTML: '', textContent: '', hidden: false, disabled: false, value: '', open: false, focus() {}, showModal() { this.open = true; }, close() { this.open = false; listeners.close?.(); }, addEventListener(name, callback) { listeners[name] = callback; }, dispatch(name) { listeners[name]?.({ preventDefault() {} }); } }); } return nodes.get(id); };
+  const nodes = new Map(), events = {}, windowEvents = {}, calls = [], timers = new Map(); let timerId = 0;
+  const node = id => { if (!nodes.has(id)) { const listeners = {}; nodes.set(id, { innerHTML: '', textContent: '', hidden: false, disabled: false, value: '', open: false, focus() {}, showModal() { this.open = true; }, close() { this.open = false; listeners.close?.(); }, addEventListener(name, callback) { listeners[name] = callback; }, removeEventListener(name, callback) { if (listeners[name] === callback) delete listeners[name]; }, querySelector: selector => node(selector.slice(1)), contains: () => true, dispatch(name) { listeners[name]?.({ preventDefault() {} }); } }); } return nodes.get(id); };
   const list = items => async ({ offset = 0, limit = 100 } = {}) => ({ items, offset, limit, total: items.length });
   const wiki = {
     request: async path => { calls.push(['request', path]); throw new Error('Unexpected request'); },
@@ -60,6 +87,7 @@ function fixture(hash = '#/home', overrides = {}, config) {
     updateDraft: async (id, command) => { calls.push(['updateDraft', id, command]); return { ...command, id, version: command.version + 1 }; },
     deleteDraft: async (id, version) => { calls.push(['deleteDraft', id, version]); },
     getDocument: async id => ({ document_id: id, filename: 'source.txt', can_index: true, status: 'parsed', index_status: 'not_indexed' }),
+    listDocuments: async ({ page = 1, page_size = 100 } = {}) => ({ page, page_size, total: 2, items: [{ document_id: 'doc', status: 'parsed', index_status: 'indexed' }, { document_id: 'waiting', status: 'parsed', index_status: 'not_indexed' }] }),
     startIndexing: async id => { calls.push(['startIndexing', id]); return { task_id: 'index1', document_id: id, state: 'indexed' }; },
     createProposal: async command => { calls.push(['createProposal', command]); return proposal; },
     acceptProposal: async (id, version) => { calls.push(['acceptProposal', id, version]); return knowledge; },
@@ -67,16 +95,142 @@ function fixture(hash = '#/home', overrides = {}, config) {
     saveSettings: async command => { calls.push(['saveSettings', command]); return { ...command, version: command.version + 1 }; },
     ...overrides,
   };
-  const win = { location: { hash, hostname: '127.0.0.1' }, addEventListener: (name, callback) => { windowEvents[name] = callback; }, scrollTo() {}, confirm: () => { throw new Error('Browser-blocking confirm must not be used'); } };
+  const win = { location: { hash, hostname: '127.0.0.1' }, addEventListener: (name, callback) => { windowEvents[name] = callback; }, setTimeout: fn => { const key = ++timerId; timers.set(key, fn); return key; }, clearTimeout: key => timers.delete(key), scrollTo() {}, confirm: () => { throw new Error('Browser-blocking confirm must not be used'); } };
   const doc = { title: '', getElementById: node, querySelectorAll: () => [], addEventListener: (name, callback) => { events[name] = callback; } };
   class Values { constructor(form) { this.values = form.values; } get(key) { return this.values.find(([name]) => name === key)?.[1] ?? null; } has(key) { return this.values.some(([name]) => name === key); } getAll(key) { return this.values.filter(([name]) => name === key).map(([, value]) => value); } }
   const workspace = createWikiWorkspace({ document: doc, window: win, wiki, config, FormData: Values });
-  return { workspace, nodes, calls, win, events, html: () => node('content').innerHTML,
+  return { workspace, nodes, calls, win, doc, events, timers, html: () => node('content').innerHTML,
+    poll: async () => { const [key, fn] = timers.entries().next().value ?? []; if (!fn) throw new Error('No read-only source poll scheduled'); timers.delete(key); await fn(); },
     go: async hash => { win.location.hash = hash; await workspace.load(); },
     submit: (id, values) => events.submit({ target: { id, values }, preventDefault() {} }),
     click: (action, other = {}) => events.click({ target: { closest: () => ({ dataset: { action, ...other } }) }, preventDefault() {} }),
   };
 }
+
+test('source list keeps processing state in rows without repeating the task menu', async () => {
+  const f = fixture('#/sources', { listDocuments: async () => ({ page: 1, page_size: 100, total: 2, items: [
+    { document_id: 'doc', status: 'parsed', index_status: 'indexed' },
+    { document_id: 'waiting', status: 'parsed', index_status: 'processing', latest_index_job: { task_id: 'idx', state: 'processing' } },
+  ] }) });
+  f.workspace.state.tasks?.push({ kind: 'ingestion', filename: 'pending.txt', task: { task_id: 'parse', document_id: 'waiting', state: 'parsed' } });
+  await f.workspace.start();
+  assert.doesNotMatch(f.html(), /本次上传与索引任务|task-status|刷新任务|查看资料 \/ 建立索引/u);
+  assert.match(f.html(), /正在索引/u); assert.match(f.nodes.get('sidebar').innerHTML, /href="#\/tasks"/u);
+  assert.equal(f.calls.length, 0); f.workspace.close();
+});
+
+test('source detail leaves index management in maintenance instead of requesting another import step', async () => {
+  const f = fixture('#/sources/doc'); await f.workspace.start();
+  assert.doesNotMatch(f.html(), /data-action="index"/u);
+  assert.match(f.html(), /href="#\/documents\/doc"/u);
+  assert.match(f.html(), /href="#\/tasks"/u);
+  f.workspace.close();
+});
+
+test('import uploads once and explains automatic processing without a client indexing write', async () => {
+  let finish; const file = new File(['synthetic import'], 'new.txt');
+  const pending = new Promise(resolve => { finish = resolve; });
+  const f = fixture('#/home', { upload: (bytes, options) => { f.calls.push(['upload', bytes, options.uploadKind]); return pending; } });
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document';
+  f.events.change({ target: { id: 'workspace-files', files: [file] } });
+  const submitting = f.click('confirm-import'); await f.click('confirm-import');
+  assert.deepEqual(f.calls, [['upload', file, 'document']]);
+  finish({ task_id: 'parse-new', document_id: 'new-doc', state: 'queued' }); await submitting; await tick();
+  assert.match(f.nodes.get('toast').textContent, /自动解析.*索引.*处理任务/u);
+  assert.doesNotMatch(f.nodes.get('toast').textContent, /再明确建立索引/u);
+  assert.equal(f.workspace.state.pendingFiles.length, 0); assert.equal(f.calls.length, 1); f.workspace.close();
+});
+
+test('source reload restores automatic indexing progress and read-only polling reaches publication', async () => {
+  let current = 'pending', reads = 0;
+  const f = fixture('#/sources', {
+    listCatalog: async ({ offset = 0, limit = 20 } = {}) => ({ items: [{ document_id: 'new-doc', filename: 'new.txt', kind: 'document', state: current === 'indexed' ? 'indexed' : 'parsed', answerable: current === 'indexed' }], offset, limit, total: 1 }),
+    listDocuments: async () => { reads++; return { page: 1, page_size: 100, total: 1, items: [{ document_id: 'new-doc', status: 'parsed', index_status: current === 'pending' ? 'not_indexed' : current, auto_index: { state: current === 'pending' ? 'pending' : 'submitted' }, latest_index_job: current === 'pending' ? null : { task_id: 'index-new', state: current } }] }; },
+  });
+  await f.workspace.start(); assert.match(f.html(), /等待索引/u); assert.equal(f.timers.size, 1);
+  current = 'processing'; await f.poll(); assert.match(f.html(), /正在索引/u); assert.equal(f.timers.size, 1);
+  current = 'indexed'; await f.poll(); assert.match(f.html(), /已发布/u); assert.equal(f.timers.size, 0);
+  assert.equal(reads, 3); assert.deepEqual(f.calls, []); f.workspace.close();
+});
+
+test('source polling stops at automatic dispatch failure and cannot overwrite another route', async () => {
+  let late, readSignal, count = 0;
+  const f = fixture('#/sources', { listDocuments: async ({ signal }) => {
+    count++; if (count > 1) { readSignal = signal; return new Promise(resolve => { late = resolve; }); }
+    return { page: 1, page_size: 100, total: 2, items: [{ document_id: 'doc', status: 'parsed', index_status: 'indexed' }, { document_id: 'waiting', status: 'parsed', auto_index: { state: 'dispatching' } }] };
+  } });
+  await f.workspace.start(); assert.match(f.html(), /正在准备索引/u);
+  const reading = f.poll(); await tick(); assert.equal(typeof late, 'function');
+  await f.go('#/knowledge'); assert.equal(readSignal.aborted, true);
+  late({ page: 1, page_size: 100, total: 0, items: [] }); await reading;
+  assert.match(f.html(), /真实知识页/u); assert.equal(f.timers.size, 0); f.workspace.close();
+  const failed = fixture('#/sources', { listDocuments: async () => ({ page: 1, page_size: 100, total: 2, items: [{ document_id: 'doc', status: 'parsed', index_status: 'indexed' }, { document_id: 'waiting', status: 'parsed', auto_index: { state: 'failed', error_code: 'text_configuration_required' } }] }) });
+  await failed.workspace.start(); assert.match(failed.html(), /索引未完成/u); assert.equal(failed.timers.size, 0); assert.equal(failed.calls.length, 0); failed.workspace.close();
+});
+
+test('source status joins paginated management rows in batches and never reads per-document details', async () => {
+  const requested = [], first = Array.from({ length: 100 }, (_, index) => ({ document_id: `old-${index}`, status: 'parsed', index_status: 'indexed' }));
+  const f = fixture('#/sources', {
+    listCatalog: async ({ offset = 0, limit = 20 } = {}) => ({ items: [{ document_id: 'new-doc', filename: 'new.txt', kind: 'document', state: 'parsed', answerable: false }], offset, limit, total: 1 }),
+    listDocuments: async ({ page, page_size }) => { requested.push([page, page_size]); return { page, page_size, total: 101, items: page === 1 ? first : [{ document_id: 'new-doc', status: 'parsed', index_status: 'failed', latest_index_job: { task_id: 'failed-index', state: 'failed' } }] }; },
+    getDocument: async () => { throw new Error('No per-document requests are needed for catalog status'); },
+  });
+  await f.workspace.start(); assert.deepEqual(requested, [[1, 100], [2, 100]]);
+  assert.match(f.html(), /索引失败/u); assert.match(f.html(), /尚未发布/u); assert.equal(f.timers.size, 0); f.workspace.close();
+});
+
+test('source status read failures stop polling without submitting or retrying any indexing write', async () => {
+  let reads = 0;
+  const f = fixture('#/sources', { listDocuments: async () => {
+    reads++; if (reads > 1) throw new Error('状态暂不可用');
+    return { page: 1, page_size: 100, total: 2, items: [{ document_id: 'doc', status: 'parsed', index_status: 'indexed' }, { document_id: 'waiting', status: 'parsed', auto_index: { state: 'pending' } }] };
+  } });
+  await f.workspace.start(); await f.poll();
+  assert.equal(reads, 2); assert.equal(f.timers.size, 0); assert.deepEqual(f.calls, []);
+  assert.match(f.nodes.get('toast').textContent, /资料状态读取暂停.*处理任务/u); f.workspace.close();
+});
+
+test('native registered media uses automatic index state without claiming parsing or publication', async () => {
+  for (const [state, label] of [['pending', '等待索引'], ['dispatching', '正在准备索引'], ['failed', '索引未完成']]) {
+    const f = fixture('#/sources', {
+      listCatalog: async ({ offset = 0, limit = 20 } = {}) => ({ items: [{ document_id: 'sound-doc', filename: 'sound.wav', kind: 'audio', state: 'ready', answerable: false }], offset, limit, total: 1 }),
+      listDocuments: async () => ({ page: 1, page_size: 100, total: 1, items: [{ document_id: 'sound-doc', status: 'ready', index_status: 'not_indexed', auto_index: { state } }] }),
+    });
+    await f.workspace.start(); assert.match(f.html(), new RegExp(label, 'u'));
+    assert.doesNotMatch(f.html(), /演示就绪|已解析/u); assert.match(f.html(), /尚未发布/u);
+    assert.equal(f.timers.size, state === 'failed' ? 0 : 1); f.workspace.close();
+  }
+});
+
+test('native recall mounts the real module and leaving cancels its pending read', async () => {
+  let complete, signal;
+  const config = { capabilities: ['retrieval_test', 'retrieval_settings'] };
+  const f = fixture('#/retrieval', { request: (path, options) => {
+    assert.equal(path, '/v1/retrieval-settings'); signal = options.signal;
+    return new Promise(resolve => { complete = resolve; });
+  } }, config);
+  const loading = f.workspace.start();
+  for (let i = 0; i < 40 && !complete; i++) await tick();
+  assert.equal(typeof complete, 'function'); assert.match(f.html(), /wiki-retrieval-form/u);
+  await f.go('#/knowledge'); assert.equal(signal.aborted, true);
+  complete(settings); await loading;
+  assert.match(f.html(), /真实知识页/u); assert.doesNotMatch(f.html(), /wiki-retrieval-form/u);
+  f.workspace.close();
+});
+
+test('native loading error offers a working root refresh without intercepting module actions', async () => {
+  const f = fixture('#/retrieval');
+  await f.workspace.start();
+  const content = f.nodes.get('content'), query = content.querySelector;
+  content.querySelector = null; await f.workspace.load();
+  assert.ok(f.workspace.state.error); assert.match(f.html(), /重新读取/u);
+  content.querySelector = query; await f.click('refresh');
+  for (let i = 0; i < 20 && f.workspace.state.loading; i++) await tick();
+  assert.equal(f.workspace.state.error, null); assert.match(f.html(), /wiki-retrieval-form/u);
+  await f.click('index');
+  assert.equal(f.calls.filter(([name]) => name === 'startIndexing').length, 0);
+  f.workspace.close();
+});
 
 test('real workflow views render server data, known versions and no fake terminal controls', async () => {
   const f = fixture(); await f.workspace.start();
@@ -87,6 +241,124 @@ test('real workflow views render server data, known versions and no fake termina
   await f.go('#/knowledge/p1'); assert.match(f.html(), /&lt;script&gt;正文灯塔/u); assert.match(f.html(), /#\/page-source\/p1\/1\/s1/u);
   assert.doesNotMatch(f.html(), /<script>/u);
   f.workspace.close();
+});
+
+test('workspace import picker offers every document format and keeps media selection distinct', async () => {
+  const f = fixture(); await f.workspace.start(); await f.click('import');
+  const formats = 'pdf properties html vtt csv msg markdown eml ppt docx doc txt pptx mdx xls odt md xlsx xml epub htm'.split(' ');
+  for (const extension of formats) assert.ok(f.nodes.get('workspace-files').accept.split(',').includes(`.${extension}`));
+  assert.match(f.nodes.get('workspace-files').accept, /\.png/u);
+  f.nodes.get('upload-kind').value = 'video'; f.events.change({ target: { id: 'upload-kind' } });
+  assert.match(f.nodes.get('workspace-files').accept, /\.mp4/u); assert.doesNotMatch(f.nodes.get('workspace-files').accept, /\.docx/u);
+  f.workspace.close();
+});
+
+test('HTML knowledge source renders escaped text and download only, never an active open link', async () => {
+  const text = 'Synthetic original evidence';
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const original = '<script>untrusted()</script>', pinned = { ...source, kind: 'text', source_sha256: hash(original), evidence_sha256: hash(text) };
+  const htmlPage = { ...knowledge, content: { ...knowledge.content, sections: [{ ...knowledge.content.sections[0], sources: [pinned] }] } };
+  const f = fixture('#/page-source/p1/1/s1', {
+    getPageVersion: async () => htmlPage,
+    getSource: async () => ({ evidence_id: pinned.evidence_id, sha256: hash(text), kind: 'text', media_type: 'text/html', filename: 'synthetic.html', text, frame_url: null, locator: { page: 1, start_code_point: 0, end_code_point: text.length } }),
+    sourceContent: async () => new Blob([original], { type: 'text/html' }),
+  });
+  await f.workspace.start(); const html = f.nodes.get('reader').innerHTML;
+  assert.match(html, /&lt;script&gt;untrusted\(\)&lt;\/script&gt;/u);
+  assert.match(html, /download="synthetic.html"/u); assert.match(html, /解析文本/u);
+  assert.doesNotMatch(html, /<script>|打开原文件|target="_blank"|第 1 页/u);
+  f.workspace.close();
+});
+
+test('knowledge deletion confirms, reads latest CAS and keeps deleted pages out of active cache', async () => {
+  let current = { ...knowledge, version: 4, state: 'active', lifecycle_version: 2 };
+  const calls = [];
+  const f = fixture('#/knowledge/p1/1', {
+    allPages: async ({ state = 'active' }) => state === current.state ? [current] : [],
+    getPage: async () => { calls.push(['get']); return current; },
+    deletePage: async (...args) => { calls.push(['delete', ...args]); current = { ...current, state: 'deleted', lifecycle_version: 3 }; return current; },
+    restorePage: async (...args) => { calls.push(['restore', ...args]); current = { ...current, state: 'active', lifecycle_version: 4 }; return current; },
+  });
+  await f.workspace.start();
+  assert.match(f.html(), /data-action="delete-page"/u);
+  const cancel = f.click('delete-page', { page: 'p1' }); await tick();
+  assert.match(f.nodes.get('action-confirm-message').textContent, /可恢复.*不删除原始资料/u);
+  await f.click('cancel-operation'); await cancel; assert.deepEqual(calls, []);
+  const deleting = f.click('delete-page', { page: 'p1' }); await tick();
+  await f.click('confirm-operation'); await deleting; await tick();
+  assert.deepEqual(calls.slice(0, 2), [['get'], ['delete', 'p1', 4, 2]]);
+  await f.go('#/knowledge-deleted');
+  assert.match(f.html(), /data-action="restore-page"/u);
+  assert.deepEqual(f.workspace.state.pages, []);
+  assert.equal(f.workspace.state.deletedPages.length, 1);
+  await f.go('#/knowledge/p1');
+  assert.match(f.html(), /已删除/u); assert.doesNotMatch(f.html(), /href="#\/compile\/p1"/u);
+  await f.click('restore-page', { page: 'p1' }); await tick();
+  assert.deepEqual(calls.find(call => call[0] === 'restore'), ['restore', 'p1', 4, 3]);
+  await f.go('#/knowledge'); assert.match(f.html(), /真实知识页/u);
+  assert.equal(f.workspace.state.pages.length, 1);
+  f.workspace.close();
+});
+
+test('deleted page compile deep links cannot submit and failed lifecycle writes do not retry', async () => {
+  const deleted = { ...knowledge, state: 'deleted', lifecycle_version: 1 };
+  let writes = 0;
+  const f = fixture('#/compile/p1', { getPage: async () => deleted,
+    restorePage: async () => { writes++; throw new Error('版本已变化'); } });
+  await f.workspace.start(); assert.doesNotMatch(f.html(), /id="compile-form"/u);
+  assert.match(f.html(), /已删除/u);
+  await f.go('#/knowledge/p1'); await f.click('restore-page', { page: 'p1' }); await tick();
+  assert.equal(writes, 1); assert.match(f.nodes.get('toast').textContent, /没有自动重试/u);
+  assert.match(f.html(), /data-action="restore-page"/u); f.workspace.close();
+});
+
+test('recycle bin and deleted detail purge latest version once only after irreversible confirmation', async () => {
+  let current = { ...knowledge, version: 4, state: 'deleted', lifecycle_version: 3 };
+  const calls = [];
+  const f = fixture('#/knowledge-deleted', {
+    allPages: async ({ state = 'active' }) => current && state === current.state ? [current] : [],
+    getPage: async () => { calls.push(['read']); return current; },
+    purgePage: async (...args) => { calls.push(['purge', ...args]); current = null; return { page_id: 'p1', state: 'purged' }; },
+  });
+  await f.workspace.start();
+  assert.match(f.html(), /data-action="restore-page"/u); assert.match(f.html(), /data-action="purge-page"/u);
+  await f.go('#/knowledge/p1'); assert.match(f.html(), /data-action="purge-page"/u);
+  calls.length = 0;
+  const cancel = f.click('purge-page', { page: 'p1' }); await tick();
+  assert.deepEqual(calls, [['read']]);
+  assert.match(f.nodes.get('action-confirm-message').textContent, /无法恢复/u);
+  assert.match(f.nodes.get('action-confirm-message').textContent, /不会删除原始文件/u);
+  await f.click('cancel-operation'); await cancel;
+  assert.equal(calls.filter(call => call[0] === 'purge').length, 0);
+  const purging = f.click('purge-page', { page: 'p1' }); await tick();
+  await f.click('purge-page', { page: 'p1' });
+  await f.click('confirm-operation'); await purging; await tick();
+  assert.deepEqual(calls.filter(call => call[0] === 'purge'), [['purge', 'p1', 4, 3]]);
+  assert.equal(f.win.location.hash, '#/knowledge-deleted');
+  assert.equal(f.workspace.state.deletedPages.length, 0);
+  assert.match(f.nodes.get('toast').textContent, /彻底删除/u);
+  f.workspace.close();
+});
+
+test('purge failures and restored or navigated pages cannot silently remove recycle bin cards', async () => {
+  const deleted = { ...knowledge, state: 'deleted', lifecycle_version: 1 };
+  let current = deleted, writes = 0;
+  const f = fixture('#/knowledge-deleted', {
+    allPages: async ({ state = 'active' }) => state === 'deleted' ? [deleted] : [],
+    getPage: async () => current,
+    purgePage: async () => { writes++; throw new Error('版本已变化'); },
+  });
+  await f.workspace.start();
+  const pending = f.click('purge-page', { page: 'p1' }); await tick();
+  await f.click('confirm-operation'); await pending;
+  assert.equal(writes, 1); assert.match(f.html(), /data-action="purge-page"/u);
+  assert.equal(f.workspace.state.deletedPages.length, 1); assert.match(f.nodes.get('toast').textContent, /没有自动重试/u);
+  current = { ...deleted, state: 'active', lifecycle_version: 2 };
+  await f.click('purge-page', { page: 'p1' }); assert.equal(writes, 1);
+  assert.equal(f.nodes.get('action-confirm-dialog').open, false);
+  current = deleted;
+  const leaving = f.click('purge-page', { page: 'p1' }); await tick(); await f.go('#/settings'); await leaving;
+  assert.equal(writes, 1); f.workspace.close();
 });
 
 test('disabled Agent preserves one ordinary knowledge answer while enabled Agent never silently falls back', async () => {
@@ -143,6 +415,76 @@ test('Agent stop and leaving isolate late responses from the visible question', 
   assert.match(late.html(), /空间设置/u); late.workspace.close();
 });
 
+test('live Agent presents only received stages in an expanded activity timeline', async t => {
+  const run = { ...agentRun(), events: ['running', 'planning', 'searching'].map((type, index) => ({ sequence: index + 1, type, message: 'untrusted hidden reasoning' })) };
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => run });
+  t.after(() => f.workspace.close());
+  await f.workspace.start(); await f.submit('question-form', [['question', '合成过程验证']]);
+  const html = f.nodes.get('chat-turns').innerHTML;
+  assert.match(html, /data-current-stage="searching"/u);
+  assert.match(html, /正在检索知识库/u);
+  assert.match(html, /class="agent-progress-trace" open/u);
+  assert.match(html, /aria-current="step"/u);
+  assert.doesNotMatch(html, /untrusted hidden reasoning|已命中|已读完|\d+%/u);
+  f.workspace.close();
+});
+
+test('unchanged polling does not repaint Agent progress or pretend to read original documents', async t => {
+  let finish;
+  const run = agentRun();
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => run,
+    getAgentRun: () => new Promise(resolve => { finish = resolve; }) });
+  t.after(() => f.workspace.close());
+  await f.workspace.start(); await f.submit('question-form', [['question', '合成过程验证']]);
+  const container = f.nodes.get('chat-turns'); let html = container.innerHTML, writes = 0;
+  Object.defineProperty(container, 'innerHTML', { get: () => html, set: value => { writes++; html = value; } });
+  const refresh = f.click('refresh-agent', { turn: '0' }); await tick();
+  assert.match(html, /正在检索知识库/u); assert.doesNotMatch(html, /正在阅读原始资料/u);
+  finish(run); await refresh;
+  assert.equal(writes, 0); f.workspace.close();
+});
+
+test('progress update preserves disclosure state and keyboard focus within an existing answer', async t => {
+  let current = agentRun();
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => current, getAgentRun: async () => current });
+  t.after(() => f.workspace.close());
+  await f.workspace.start(); await f.submit('question-form', [['question', '合成过程验证']]);
+  const article = { dataset: { chatTurn: '0' } };
+  const detail = { className: 'agent-progress-trace', open: false, closest: () => article };
+  const focused = { tagName: 'SUMMARY', parentElement: detail, dataset: {}, getAttribute: () => null, closest: () => article, focus() { f.doc.activeElement = this; } };
+  const container = f.nodes.get('chat-turns');
+  container.querySelectorAll = selector => selector === 'details' ? [detail] : [focused];
+  f.doc.activeElement = focused;
+  let html = container.innerHTML;
+  Object.defineProperty(container, 'innerHTML', { get: () => html, set: value => { html = value; detail.open = true; f.doc.activeElement = null; } });
+  current = { ...current, events: [...current.events, { sequence: 2, type: 'reading', message: '阅读原始资料' }] };
+  await f.click('refresh-agent', { turn: '0' });
+  assert.equal(detail.open, false); assert.equal(f.doc.activeElement, focused);
+  assert.match(html, /data-current-stage="reading"/u); f.workspace.close();
+});
+
+test('terminal progress retains keyboard focus when a live summary or action is replaced', async t => {
+  for (const origin of ['summary', 'stop-agent', 'refresh-agent']) {
+    const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => agentRun(), getAgentRun: async () => agentRun('completed') });
+    t.after(() => f.workspace.close());
+    await f.workspace.start(); await f.submit('question-form', [['question', '合成结束验证']]);
+    const article = { dataset: { chatTurn: '0' } };
+    let detail = { className: 'agent-progress-trace', open: true, closest: () => article };
+    const summary = () => ({ tagName: 'SUMMARY', parentElement: detail, dataset: {}, getAttribute: () => null, closest: () => article, focus() { f.doc.activeElement = this; } });
+    let control = origin === 'summary' ? summary() : { tagName: 'BUTTON', dataset: { action: origin, turn: '0' }, getAttribute: () => null, closest: () => article };
+    f.doc.activeElement = control;
+    const container = f.nodes.get('chat-turns'); let html = container.innerHTML;
+    container.querySelectorAll = selector => selector === 'details' ? [detail] : [control];
+    Object.defineProperty(container, 'innerHTML', { get: () => html, set: value => {
+      html = value; f.doc.activeElement = null;
+      detail = { className: 'agent-progress agent-progress-complete', open: false, closest: () => article }; control = summary();
+    } });
+    await f.click('refresh-agent', { turn: '0' });
+    assert.equal(f.doc.activeElement, control, origin); assert.equal(detail.open, false, 'completion stays collapsed');
+    f.workspace.close();
+  }
+});
+
 test('workspace removes permanent development notes without hiding content, states or actions', async () => {
   const f = fixture(); await f.workspace.start();
   for (const route of ['#/home', '#/knowledge', '#/knowledge/p1', '#/sources', '#/compile', '#/drafts', '#/drafts/d1', '#/ask', '#/graph', '#/review', '#/review/proposal', '#/settings']) {
@@ -155,7 +497,7 @@ test('workspace removes permanent development notes without hiding content, stat
   assert.doesNotMatch(document, /environment-notice|本轮验收|模型替身|不只保存文件名/u);
   assert.match(document, /id="action-confirm-dialog"[^>]*aria-describedby="action-confirm-message"/u);
   await f.go('#/compile'); assert.match(f.html(), /value="waiting" disabled/u);
-  await f.go('#/sources'); assert.match(f.html(), /已解析，尚未发布索引/u); assert.match(f.html(), /尚未发布/u);
+  await f.go('#/sources'); assert.match(f.html(), /已解析 · 未索引/u); assert.match(f.html(), /尚未发布/u);
   await f.go('#/knowledge/p1'); assert.match(f.html(), /#\/page-source\/p1\/1\/s1/u);
   await f.go('#/ask'); assert.match(f.html(), /id="question-form"/u); assert.match(f.html(), /发送/u);
   f.workspace.close();
@@ -239,17 +581,11 @@ test('model compilation submits directly once and blocks duplicate clicks while 
   assert.equal(f.calls.length, 1); f.workspace.close();
 });
 
-test('indexing submits directly once and blocks duplicate clicks while pending', async () => {
-  let finish;
-  const pending = new Promise(resolve => { finish = resolve; });
-  const f = fixture('#/sources/doc', { startIndexing: id => { f.calls.push(['startIndexing', id]); return pending; } }); await f.workspace.start();
-  f.click('index', { document: 'doc' });
-  assert.deepEqual(f.calls, [['startIndexing', 'doc']]);
-  assert.equal(f.nodes.get('action-confirm-dialog').open, false); assert.equal(f.workspace.state.busy, true);
-  await f.click('index', { document: 'doc' }); await tick(); assert.equal(f.calls.length, 1);
-  finish({ task_id: 'index1', document_id: 'doc', state: 'indexed' }); await tick();
-  assert.equal(f.workspace.state.busy, false); assert.equal(f.win.location.hash, '#/sources');
-  assert.equal(f.workspace.state.tasks[0].task.state, 'indexed'); assert.equal(f.calls.length, 1); f.workspace.close();
+test('obsolete source indexing action cannot submit writes after importing became automatic', async () => {
+  const f = fixture('#/sources/doc'); await f.workspace.start();
+  await f.click('index', { document: 'doc' }); await f.click('index', { document: 'doc' });
+  assert.deepEqual(f.calls, []); assert.equal(f.workspace.state.busy, false);
+  assert.match(f.html(), /href="#\/documents\/doc"/u); f.workspace.close();
 });
 
 test('cancel, Escape and navigation abort unconfirmed draft deletion without writes', async () => {
@@ -278,7 +614,7 @@ test('draft deletion still requires one explicit page-dialog confirmation', asyn
 test('upload dialog keeps file selection and explicit upload without fee remarks', () => {
   const document = readFileSync(new URL('../public/wiki-workspace.html', import.meta.url), 'utf8');
   assert.match(document, /id="workspace-files" type="file" multiple/u);
-  assert.match(document, /data-action="confirm-import" disabled>确认上传并解析/u);
+  assert.match(document, /data-action="confirm-import" disabled>确认导入/u);
   assert.doesNotMatch(document, /费用|收费/u);
 });
 
@@ -407,5 +743,5 @@ test('applying model capabilities updates the existing request client for video 
   assert.ok(upload, 'the original createApi must see newly enabled video_upload');
   assert.equal(upload[1].body, file); assert.equal(upload[1].headers['Content-Type'], 'video/mp4');
   assert.equal(f.workspace.state.config, sharedConfig); assert.equal(sharedConfig.capabilities.includes('video_upload'), true);
-  assert.equal(f.workspace.state.tasks[0].task.document_id, 'video-doc'); f.workspace.close();
+  assert.equal(f.workspace.state.pendingFiles.length, 0); assert.match(f.nodes.get('toast').textContent, /自动解析.*索引/u); f.workspace.close();
 });

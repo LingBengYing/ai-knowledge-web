@@ -229,7 +229,7 @@ function validateUploadTarget(target, contentType, replacement = false) {
     const videoTypes = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' };
     if (contentType?.startsWith('video/')) {
       if (videoTypes[extension] !== contentType) throw new Error('invalid video type');
-    } else if (!/\.(?:pdf|txt|md|png|jpe?g|wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(filename)) throw new Error('invalid upload target');
+    } else if (!/\.(?:pdf|properties|html?|vtt|csv|msg|markdown|eml|pptx?|docx?|txt|mdx?|xlsx?|odt|xml|epub|png|jpe?g|wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(filename)) throw new Error('invalid upload target');
     return /\.(?:png|jpe?g)$/iu.test(filename);
   } catch { throw new TransportError(400, 'invalid_upload_filename'); }
 }
@@ -263,7 +263,7 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
           || !Number.isSafeInteger(Number(value)) || Number(value) > (key === 'page_size' ? 100 : 2147483647)) throw new TransportError(400, 'query_denied');
     }
   }
-  const bodyless = kind === 'wiki-draft' && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
+  const bodyless = ['wiki-draft', 'wiki-page'].includes(kind) && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
   if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'attachment', 'voice', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'replacement' && req.method === 'GET' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (['sound-upload', 'video-av-upload'].includes(kind)) {
@@ -297,6 +297,11 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
   catch (error) { response.destroy(); throw error; }
   const output = {};
   for (const name of ['content-type', 'www-authenticate']) if (response.headers[name]) output[name] = response.headers[name];
+  const originalContent = req.method === 'GET' && /^\/v1\/(?:documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]|wiki\/(?:pages\/[A-Za-z0-9_-]{1,128}\/versions\/[1-9][0-9]*|proposals\/[A-Za-z0-9_-]{1,128})\/sources\/[A-Za-z0-9_-]{1,128})\/content$/u.test(req.url);
+  if (originalContent && [200, 206].includes(response.statusCode)) {
+    if (response.headers['content-disposition'] === 'attachment') output['content-disposition'] = 'attachment';
+    if (response.headers['content-security-policy'] === "sandbox; default-src 'none'") output['content-security-policy'] = "sandbox; default-src 'none'";
+  }
   if (req.url.split('?')[0] === '/v1/session') {
     const cookies = sessionCookies(response.headers['set-cookie']);
     if (cookies.length === 1) output['Set-Cookie'] = cookies;

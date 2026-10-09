@@ -1,4 +1,4 @@
-import { ApiError } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES } from './api.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
 import { mediaModes, checkedMediaCitation } from './media-sources.mjs';
 import { checkedQueryAttachments, encodeQueryAttachments, encodeQueryAttachmentsWithHashes, attachmentMode, checkedAttachmentResponse } from './query-attachments.mjs';
@@ -129,7 +129,7 @@ async function checkedKnowledgeCitation(value, answerId, ordinal) {
     || value.source_url !== `/v1/knowledge-sources/${answerId}/${ordinal}`
     || value.content_url !== `/v1/documents/${value.document_id}/revisions/${value.revision_id}/content`) throw invalidResponse();
   if (value.evidence_kind === 'document_text') {
-    if (!['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg'].includes(value.media_type)
+    if (![...DOCUMENT_MIME_TYPES, 'image/png', 'image/jpeg'].includes(value.media_type)
       || !['source_text', 'machine_ocr'].includes(value.origin)
       || !Number.isSafeInteger(value.page) || value.page < 1
       || !Number.isSafeInteger(value.start) || value.start < 0

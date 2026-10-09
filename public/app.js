@@ -4,7 +4,7 @@ import { RetrievalSession, retrievalEnabled, matchCurrentOriginal } from './retr
 import { RetrievalSettingsSession, retrievalSettingsEnabled, retrievalSettingsSummary, retrievalThresholdHelp, retrievalScoreLabel } from './retrieval-settings.mjs';
 
 import { CleanupSession, cleanupEnabled, canRequestCleanup, cleanupLabel } from './document-cleanup.mjs';
-import { createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode } from './api.mjs';
+import { createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode, DOCUMENT_ACCEPT, DOCUMENT_FORMATS, documentExtension, documentDownloadOnly } from './api.mjs';
 import { WorkbenchState, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel } from './workbench-state.mjs';
 import { showNotice } from './notices.mjs';
 import { AnswerSession, answersEnabled, answerRequest } from './answers.mjs';
@@ -22,6 +22,7 @@ import { SoundIndexSession, soundEnabled, canReadSoundIndex, checkedSoundUpload 
 import { DocumentReplacementSession, replacementsEnabled, replacementLabel, replacementAccept } from './document-replacements.mjs';
 
 const $ = id => document.getElementById(id);
+const documentPageLabel = source => documentDownloadOnly(source.media_type ?? DOCUMENT_FORMATS[documentExtension(source.filename)]) || documentExtension(source.filename) === 'mdx' ? '解析文本' : `第 ${source.page} 页`;
 const state = new WorkbenchState();
 const controllers = new Map();
 let config = null;
@@ -387,7 +388,7 @@ function renderRetrieval() {
   const list = $('retrieval-matches'); list.replaceChildren();
   for (const match of value.result?.matches ?? []) {
     const item = element('li');
-    item.append(element('h3', `${match.rank}. ${match.filename} · 第 ${match.page} 页`), element('pre', match.text, 'evidence-text'),
+    item.append(element('h3', `${match.rank}. ${match.filename} · ${documentPageLabel(match)}`), element('pre', match.text, 'evidence-text'),
       element('p', `${retrievalScoreLabel(value.result.score_kind)} ${match.retrieval_score.toPrecision(5)} · ${match.rerank_score === null ? '未重排' : `原始重排分 ${match.rerank_score.toPrecision(5)}`} · Unicode码点 ${match.start}–${match.end}`, 'help-text'));
     const open = button('核对并打开同版本原文件', () => openRetrievalOriginal(match)); open.disabled = !config.capabilities.includes('document_originals');
     item.append(open, button('在资料库查看详情', () => openRetrievalDetail(match))); list.append(item);
@@ -417,7 +418,8 @@ function renderRetrievalOriginal() {
   const original = value.original;
   const link = element('a', `打开原文件：${original.filename}`); link.href = original.media_type === 'application/pdf' && retrievalSourceMatch ? `${original.url}#page=${retrievalSourceMatch.page}` : original.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
   const download = element('a', '下载原文件'); download.href = original.url; download.download = original.filename;
-  panel.append(link, download, element('p', `版本 ${original.revision_id} · SHA-256 ${original.source_sha256}`, 'help-text'));
+  if (!original.downloadOnly) panel.append(link);
+  panel.append(download, element('p', `版本 ${original.revision_id} · SHA-256 ${original.source_sha256}`, 'help-text'));
 }
 
 async function openRetrievalDetail(match) {
@@ -904,8 +906,9 @@ function renderSynopsisSource(panel, source) {
   const links = element('div', undefined, 'original-actions');
   const open = element('a', '打开原文件'); open.href = source.originalUrl; open.target = '_blank'; open.rel = 'noopener noreferrer';
   const download = element('a', '下载原文件'); download.href = source.originalUrl; download.download = source.filename;
-  links.append(open, download); panel.append(links);
-  if (locator.type === 'page') panel.append(element('p', `第 ${locator.page} 页 · 字符区间 ${locator.start_code_point}–${locator.end_code_point}（Unicode码点）`, 'help-text'));
+  if (!documentDownloadOnly(source.media_type)) links.append(open);
+  links.append(download); panel.append(links);
+  if (locator.type === 'page') panel.append(element('p', `${documentPageLabel({ ...source, page: locator.page })} · 字符区间 ${locator.start_code_point}–${locator.end_code_point}（Unicode码点）`, 'help-text'));
   if (source.media_type === 'application/pdf') {
     const pdf = element('object', undefined, 'original-pdf'); pdf.data = `${source.originalUrl}#page=${locator.page}`; pdf.type = 'application/pdf'; pdf.setAttribute('aria-label', `PDF原始依据：${source.filename}`);
     pdf.append(element('p', '浏览器无法显示时，可打开或下载原文件。')); panel.append(pdf);
@@ -962,14 +965,15 @@ function renderDetailOriginal() {
   const actions = element('div', undefined, 'original-actions');
   const open = element('a', '打开原文件'); open.href = original.url; open.target = '_blank'; open.rel = 'noopener noreferrer';
   const download = element('a', '下载原文件'); download.href = original.url; download.download = original.filename;
-  actions.append(open, download); preview.append(actions);
+  if (!original.downloadOnly) actions.append(open);
+  actions.append(download); preview.append(actions);
   if (original.media_type === 'application/pdf') {
     const pdf = element('object', undefined, 'original-pdf'); pdf.data = original.url; pdf.type = 'application/pdf';
     pdf.setAttribute('aria-label', `原始 PDF：${original.filename}`);
     pdf.append(element('p', '浏览器无法在此显示 PDF 时，请使用“打开原文件”或“下载原文件”。'));
     preview.append(pdf);
   } else if (original.document_type === 'document') {
-    preview.append(original.textError ? element('p', original.textError, 'help-text') : element('pre', original.text, 'original-text'));
+    if (original.text !== null || original.textError) preview.append(original.textError ? element('p', original.textError, 'help-text') : element('pre', original.text, 'original-text'));
   } else if (original.document_type === 'image') {
     const image = element('img', undefined, 'original-image'); image.src = original.url; image.alt = `原图：${original.filename}`; preview.append(image);
   } else {
@@ -1357,7 +1361,7 @@ function renderAnswers() {
       if (currentView === 'answers') $('source-heading').focus();
     }, 'citation-link');
     read.disabled = !connected || value.sourcePhase === 'loading';
-    const locator = citation.kind === 'video_av_window' ? `${timeLabel(citation.window.start_ms)}–${timeLabel(citation.window.end_ms)}` : citation.kind === 'image_region' ? `整图来源 · ${citation.width} × ${citation.height}` : citation.content_url && Number.isFinite(citation.start_ms) && Number.isFinite(citation.end_ms) ? `${timeLabel(citation.start_ms)}–${timeLabel(citation.end_ms)}` : `第 ${citation.page} 页`;
+    const locator = citation.kind === 'video_av_window' ? `${timeLabel(citation.window.start_ms)}–${timeLabel(citation.window.end_ms)}` : citation.kind === 'image_region' ? `整图来源 · ${citation.width} × ${citation.height}` : citation.content_url && Number.isFinite(citation.start_ms) && Number.isFinite(citation.end_ms) ? `${timeLabel(citation.start_ms)}–${timeLabel(citation.end_ms)}` : documentPageLabel(citation);
     item.append(read, element('p', locator, 'help-text'));
     if (mediaQuote(citation)) {
       const excerpt = element('details', undefined, 'citation-excerpt');
@@ -1475,7 +1479,8 @@ function renderSourceImage(source) {
     const actions = element('div', undefined, 'original-actions');
     const open = element('a', '打开本次校验的原文件'); open.href = source.originalUrl; open.target = '_blank'; open.rel = 'noopener noreferrer';
     const download = element('a', '下载原文件'); download.href = source.originalUrl; download.download = source.filename;
-    actions.append(open, download, button('关闭来源', () => answerSession.closeSource())); panel.append(actions);
+    if (!documentDownloadOnly(source.media_type)) actions.append(open);
+    actions.append(download, button('关闭来源', () => answerSession.closeSource())); panel.append(actions);
     if (source.media_type.startsWith('image/')) {
       const picture = element('img'); picture.src = source.originalUrl; picture.alt = `${source.filename}：引用文字所在原图`;
       const canvas = element('div', undefined, 'source-image-canvas'); canvas.append(picture);
@@ -1682,7 +1687,7 @@ function renderControls() {
   $('refresh').disabled = unavailable || loading;
   $('new-folder').disabled = unavailable;
   $('upload').disabled = unavailable || !ingestionEnabled();
-  $('upload').title = ingestionEnabled() ? (imageUploadMode(config) ? '文本最多20MiB；PNG/JPEG最多10MiB' : 'PDF / TXT / Markdown，1字节至20MiB') : '服务未启用上传';
+  $('upload').title = ingestionEnabled() ? (imageUploadMode(config) ? '文档最多20MiB；PNG/JPEG最多10MiB' : '文档，1字节至20MiB') : '服务未启用上传';
   for (const id of ['task-refresh', 'task-dismiss']) $(id).disabled = unavailable;
   $('task-cancel').disabled = unavailable || !currentTask()?.can_cancel;
   $('task-retry').disabled = unavailable || !currentTask()?.can_retry;
@@ -1875,7 +1880,7 @@ function renderRows() {
     return;
   }
   const empty = $('list-empty');
-  empty.replaceChildren(element('strong', connected ? '当前筛选下没有资料' : '请先确认访问身份'), element('p', connected ? (ingestionEnabled() ? '上传PDF、TXT或Markdown，或试试清除筛选条件。解析完成后仍未索引，不能问答。' : '试试清除筛选条件。当前服务未启用文本上传，合成演示资料需由Java显式seed工具创建。') : '只有通过服务器身份验证后，才会显示有权访问的资料。'));
+  empty.replaceChildren(element('strong', connected ? '当前筛选下没有资料' : '请先确认访问身份'), element('p', connected ? (ingestionEnabled() ? '上传资料，或清除筛选条件。' : '试试清除筛选条件。当前服务未启用文本上传，合成演示资料需由Java显式seed工具创建。') : '只有通过服务器身份验证后，才会显示有权访问的资料。'));
   for (const item of state.items) {
     const row = element('tr');
     row.classList.toggle('active', state.detail?.document_id === item.document_id);
@@ -2558,7 +2563,7 @@ function showUpload() {
   const updateAccept = () => {
     input.value = '';
     input.accept = ['audio', 'sound'].includes(kind.value) ? '.wav,.mp3,.flac,.ogg,.m4a,.mp4,.webm' : ['video', 'video-av'].includes(kind.value) ? '.mp4,.mov,.webm,.mkv'
-      : [config.capabilities.includes('text_upload') ? '.pdf,.txt,.md,application/pdf,text/plain,text/markdown' : '', mode ? '.png,.jpg,.jpeg,image/png,image/jpeg' : ''].filter(Boolean).join(',');
+      : [config.capabilities.includes('text_upload') ? DOCUMENT_ACCEPT : '', mode ? '.png,.jpg,.jpeg,image/png,image/jpeg' : ''].filter(Boolean).join(',');
     uploadHelp.textContent = kind.value === 'video-av' ? '只保存原视频，不调用转录或音画模型。保存后在详情显式建立连续画面与原声索引。' : kind.value === 'sound' ? '只保存原声音资料，不调用转录或声音模型。保存后在详情显式建立声音索引，再用声音理解提问。' : '上传后查看解析任务，再显式建立索引。资料与原文件按当前身份保存。';
     $('dialog-submit').textContent = kind.value === 'video-av' ? '保存原视频资料' : kind.value === 'sound' ? '保存原声音资料' : '上传并解析';
   };
@@ -2566,7 +2571,7 @@ function showUpload() {
   const imageHelp = mode === 'visual' ? '图片按原图视觉处理，会发送到服务器配置的视觉模型，可能产生费用；画面文字不会自动转为OCR证据。' : mode === 'ocr' ? '图片使用服务器OCR识别文字，提问时请选择文字证据模式。' : '';
   const mediaHelp = choices.slice(1).some(([, , enabled]) => enabled) ? '音视频最多20MiB，请按素材类型选择，MP4/WebM不会自动判为视频。处理会使用服务器配置的转录或视觉模型，可能产生费用。' : '';
   const pdfHelp = config.capabilities.includes('pdf_ocr_upload') ? 'PDF使用服务器本机逐页OCR识别整页画面，支持扫描件；识别结果请按原页核对。' : '';
-  showDialog('上传资料', `文本支持PDF/TXT/Markdown，最多20MiB。${pdfHelp}${mode ? '图片支持PNG/JPEG，最多10MiB、1200万像素。' : ''}${imageHelp}${mediaHelp}`, [field('资料类型', kind), field('选择原文件', input), uploadHelp], { kind: 'upload' }, kind.value === 'video-av' ? '保存原视频资料' : kind.value === 'sound' ? '保存原声音资料' : '上传并解析');
+  showDialog('上传资料', `文档支持PDF、Office、文本、网页、邮件及EPUB，最多20MiB。${pdfHelp}${mode ? '图片支持PNG/JPEG，最多10MiB、1200万像素。' : ''}${imageHelp}${mediaHelp}`, [field('资料类型', kind), field('选择原文件', input), uploadHelp], { kind: 'upload' }, kind.value === 'video-av' ? '保存原视频资料' : kind.value === 'sound' ? '保存原声音资料' : '上传并解析');
 }
 $('upload').addEventListener('click', showUpload);
 $('task-refresh').addEventListener('click', () => { taskPollPaused = false; notice('task-error'); loadTask(); });

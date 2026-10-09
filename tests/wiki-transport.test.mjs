@@ -14,6 +14,97 @@ const sessionPair = 'rag_session=REPLACE_ME';
 const body = JSON.stringify({ title: '合成知识', body: '原样保留', version: 2 });
 const close = server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
 
+test('all requested document formats preserve original upload and replacement bytes on both transports', async t => {
+  const extensions = 'pdf properties html vtt csv msg markdown eml ppt docx doc txt pptx mdx xls odt md xlsx xml epub htm'.split(' ');
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => { seen.push([req.url, req.headers['content-type'], Buffer.concat(chunks).toString()]); res.end('{}'); }); }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/octet-stream' } : { Origin: origin, 'Content-Type': 'application/octet-stream' };
+    for (const extension of extensions) {
+      for (const path of [`/v1/documents?filename=synthetic.${extension}`, `/v1/documents/doc-one/replacement?filename=synthetic.${extension}&base_revision_id=rev-one`]) {
+        assert.equal((await raw(origin, path, { method: 'POST', headers, body: 'synthetic original bytes' })).status, 200, path);
+      }
+    }
+    assert.equal(seen.length, 42); assert.ok(seen.every(([, type, bytes]) => type === 'application/octet-stream' && bytes === 'synthetic original bytes'));
+    assert.equal((await raw(origin, '/v1/documents?filename=synthetic.zip', { method: 'POST', headers, body: 'x' })).status, 400);
+  }
+});
+
+test('original downloads preserve only bounded attachment protection on 200 and 206 responses', async t => {
+  const originals = ['/v1/documents/doc-one/revisions/rev-one/content', '/v1/synopsis-sources/synopsis-one/1/1/content', ...sourcePaths.map(path => `${path}/content`)];
+  for (const external of [false, true]) {
+    let responseStatus = 200, disposition = 'attachment', policy = "sandbox; default-src 'none'";
+    const { origin } = await fixture(t, (_req, res) => {
+      res.statusCode = responseStatus;
+      res.setHeader('Content-Type', 'text/html'); res.setHeader('Content-Disposition', disposition);
+      res.setHeader('Content-Security-Policy', policy); res.setHeader('X-Content-Type-Options', 'unsafe');
+      res.setHeader('X-Internal-Secret', 'synthetic-only'); res.setHeader('Access-Control-Allow-Origin', '*');
+      res.end('<p>synthetic original</p>');
+    }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Cookie: sessionPair } : {};
+    for (const status of [200, 206]) {
+      responseStatus = status;
+      for (const path of originals) {
+        const result = await raw(origin, path, { headers });
+        assert.equal(result.status, status); assert.equal(result.body, '<p>synthetic original</p>');
+        assert.equal(result.headers['content-disposition'], 'attachment', path);
+        assert.equal(result.headers['content-security-policy'], "sandbox; default-src 'none'");
+        assert.equal(result.headers['x-content-type-options'], 'nosniff');
+        assert.equal(result.headers['x-internal-secret'], undefined);
+        assert.equal(result.headers['access-control-allow-origin'], undefined);
+      }
+    }
+    responseStatus = 200;
+    const metadata = await raw(origin, '/v1/documents/doc-one/original', { headers });
+    assert.equal(metadata.headers['content-disposition'], undefined);
+    assert.match(metadata.headers['content-security-policy'], /default-src 'self'/u);
+    disposition = 'inline'; policy = "default-src *; script-src 'unsafe-inline'";
+    const unsafe = await raw(origin, originals[0], { headers });
+    assert.equal(unsafe.headers['content-disposition'], undefined);
+    assert.match(unsafe.headers['content-security-policy'], /default-src 'self'/u);
+    assert.equal(unsafe.headers['x-content-type-options'], 'nosniff');
+  }
+});
+
+test('Wiki lifecycle routes keep double CAS, bodyless delete and exact restore on both transports', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => { seen.push([req.url, req.method, Buffer.concat(chunks).toString()]); res.end('{}'); }); }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/json' } : { Origin: origin, 'Content-Type': 'application/json' };
+    const deletion = '/v1/wiki/pages/page-one?version=2&lifecycle_version=0';
+    assert.equal((await raw(origin, '/v1/wiki/pages?state=deleted', { headers })).status, 200);
+    assert.equal((await raw(origin, deletion, { method: 'DELETE', headers })).status, 200);
+    assert.equal((await raw(origin, '/v1/wiki/pages/page-one/restore', { method: 'POST', headers, body: '{"version":2,"lifecycle_version":1}' })).status, 200);
+    assert.equal((await raw(origin, deletion, { method: 'DELETE', headers: { ...headers, 'Content-Length': '2' }, body: '{}' })).status, 400);
+    assert.equal((await raw(origin, `${deletion}&lifecycle_version=1`, { method: 'DELETE', headers })).status, 400);
+    assert.equal((await raw(origin, '/v1/wiki/pages/page-one/versions/2', { method: 'DELETE', headers })).status, 405);
+    assert.equal((await raw(origin, '/v1/wiki/pages/page-one/restore?version=2', { method: 'POST', headers, body: '{}' })).status, 400);
+    assert.equal(seen.length, 3);
+    assert.equal(seen[1][2], '');
+  }
+});
+
+test('Wiki permanent deletion is bodyless double CAS DELETE only on both transports', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { seen.push([req.url, req.method]); res.end('{"page_id":"page-one","state":"purged"}'); }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/json' } : { Origin: origin, 'Content-Type': 'application/json' };
+    const path = '/v1/wiki/pages/page-one/purge?version=4&lifecycle_version=2';
+    assert.equal((await raw(origin, path, { method: 'DELETE', headers })).status, 200);
+    for (const invalid of ['/v1/wiki/pages/page-one/purge', `${path}&unexpected=1`, `${path}&version=4`, '/v1/wiki/pages/page-one/purge?version=0&lifecycle_version=2']) {
+      assert.equal((await raw(origin, invalid, { method: 'DELETE', headers })).status, 400);
+    }
+    assert.equal((await raw(origin, path, { method: 'DELETE', headers: { ...headers, 'Content-Length': '2' }, body: '{}' })).status, 400);
+    for (const method of ['GET', 'POST']) {
+      assert.equal((await raw(origin, '/v1/wiki/pages/page-one/purge', { method, headers })).status, 405);
+      assert.equal((await raw(origin, path, { method, headers })).status, external ? 400 : 405);
+    }
+    assert.equal((await raw(origin, path, { method: 'DELETE', headers: { ...headers, Origin: 'http://unexpected.invalid' } })).status, 403);
+    assert.equal((await raw(origin, '/v1/wiki/pages/page-one/purge/extra', { method: 'DELETE', headers })).status, 404);
+    assert.deepEqual(seen, [[path, 'DELETE']]);
+  }
+});
+
 function raw(origin, path, { method = 'GET', headers = {}, body: content } = {}) {
   return new Promise((resolve, reject) => {
     const request = http.request(origin, { path, method, headers }, response => {
@@ -73,7 +164,7 @@ test('Wiki exact reads and persistent mutations preserve payloads, methods, iden
 test('Wiki transport rejects wrong methods, query keys, duplicate parameters and expanded routes before upstream', async t => {
   let calls = 0; const { origin } = await fixture(t, (_req, res) => { calls++; res.end('{}'); });
   const headers = { Origin: origin, 'Content-Type': 'application/json' };
-  for (const [path, method] of [['/v1/wiki/catalog', 'POST'], ['/v1/wiki/pages', 'PUT'], ['/v1/wiki/pages/page-one', 'DELETE'],
+  for (const [path, method] of [['/v1/wiki/catalog', 'POST'], ['/v1/wiki/pages', 'PUT'], ['/v1/wiki/pages/page-one', 'PUT'],
     ['/v1/wiki/proposals', 'DELETE'], ['/v1/wiki/proposals/proposal-one', 'PUT'], ['/v1/wiki/proposals/proposal-one/accept', 'GET'], ['/v1/wiki/drafts/draft-one', 'POST']]) {
     assert.equal((await raw(origin, path, { method, headers })).status, 405, `${method} ${path}`);
   }
@@ -81,7 +172,8 @@ test('Wiki transport rejects wrong methods, query keys, duplicate parameters and
     ['/v1/wiki/drafts?q=word', 'GET'], ['/v1/wiki/proposals?offset=0', 'POST'], ['/v1/wiki/proposals?', 'POST'],
     ['/v1/wiki/proposals/proposal-one/accept?base_version=1', 'POST'], ['/v1/wiki/drafts/draft-one?version=1', 'GET'],
     ['/v1/wiki/drafts/draft-one?version=1', 'PUT'], ['/v1/wiki/drafts/draft-one?version=1&version=2', 'DELETE'],
-    ['/v1/wiki/drafts/draft-one?unknown=2', 'DELETE'], ['/v1/wiki/pages/page-one?', 'GET']]) {
+    ['/v1/wiki/drafts/draft-one?unknown=2', 'DELETE'], ['/v1/wiki/pages/page-one?', 'GET'],
+    ['/v1/wiki/pages/page-one', 'DELETE'], ['/v1/wiki/pages/page-one?version=1', 'DELETE']]) {
     assert.equal((await raw(origin, path, { method, headers, ...(['POST', 'PUT'].includes(method) ? { body } : {}) })).status, 400, `${method} ${path}`);
   }
   for (const path of ['/v1/wiki/pages/%70age-one', '/v1/wiki/pages/page.one', '/v1/wiki/pages/page-one/versions/0',
@@ -163,13 +255,14 @@ test('Wiki root entry and classic alias serve distinct exact assets without expo
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));
   const files = { 'wiki-workspace.html': '<main>Live Wiki</main>', 'index.html': '<main>Classic management</main>',
     'wiki-workspace.mjs': 'export const live = true;', 'wiki-workspace-api.mjs': 'export const api = true;',
+    'wiki-retrieval.mjs': 'export const retrieval = true;', 'wiki-maintenance.mjs': 'export const maintenance = true;',
     'wiki-workspace.css': 'body { color: green; }', 'wiki-preview.css': 'body { margin: 0; }' };
   await Promise.all(Object.entries(files).map(([name, content]) => writeFile(join(publicDirectory, name), content)));
   const { origin } = await fixture(t, undefined, { publicDirectory, wikiEntry: true });
   assert.equal((await raw(origin, '/')).body, files['wiki-workspace.html']);
   assert.equal((await raw(origin, '/classic/')).body, files['index.html']);
   assert.equal((await raw(origin, '/index.html')).body, files['index.html']);
-  for (const path of ['/wiki/', '/wiki-workspace.html', '/wiki-workspace.mjs', '/wiki-workspace-api.mjs', '/wiki-workspace.css', '/wiki-preview.css']) {
+  for (const path of ['/wiki/', '/wiki-workspace.html', '/wiki-workspace.mjs', '/wiki-workspace-api.mjs', '/wiki-retrieval.mjs', '/wiki-maintenance.mjs', '/wiki-workspace.css', '/wiki-preview.css']) {
     const response = await raw(origin, path); assert.equal(response.status, 200, path); assert.match(response.headers['cache-control'], /no-store/u);
     assert.equal((await raw(origin, path, { method: 'HEAD' })).status, 200, path);
     assert.equal((await raw(origin, path, { method: 'POST', headers: { Origin: origin } })).status, 405, path);
@@ -181,6 +274,11 @@ test('Wiki root entry and classic alias serve distinct exact assets without expo
   const headers = { Host: new URL(publicOrigin).host, Cookie: sessionPair };
   assert.equal((await raw(external.origin, '/', { headers })).body, files['wiki-workspace.html'], 'production entry can select the live Wiki root');
   assert.equal((await raw(external.origin, '/classic/', { headers })).body, files['index.html']);
+  for (const name of ['wiki-retrieval.mjs', 'wiki-maintenance.mjs']) {
+    assert.equal((await raw(external.origin, `/${name}`, { headers })).body, files[name]);
+    assert.equal((await raw(external.origin, `/${name}/extra`, { headers })).status, 404);
+    assert.equal((await raw(external.origin, `/${name}?x=1`, { headers })).status, 400);
+  }
   assert.equal((await raw(external.origin, '/', { headers: { Host: headers.Host } })).status, 303, 'the root selection preserves standard session enforcement');
   const ordinaryExternal = await fixture(t, undefined, { publicDirectory }, true);
   assert.equal((await raw(ordinaryExternal.origin, '/', { headers })).body, files['index.html'], 'default production entry remains unchanged');

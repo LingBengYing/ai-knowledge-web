@@ -1,4 +1,4 @@
-import { ApiError } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES } from './api.mjs';
 import { checkedRetrievalSettings } from './retrieval-settings.mjs';
 import { createKnowledgeAgentApi } from './knowledge-agent.mjs';
 
@@ -32,7 +32,7 @@ async function verifyBlob(blob, expectedHash, expectedType, expectedSize) {
 
 function validAnswerLocator(citation) {
   if (typeof citation.filename !== 'string' || !citation.filename || typeof citation.media_type !== 'string') return false;
-  if (citation.evidence_kind === 'document_text') return ['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg'].includes(citation.media_type)
+  if (citation.evidence_kind === 'document_text') return [...DOCUMENT_MIME_TYPES, 'image/png', 'image/jpeg'].includes(citation.media_type)
     && ['source_text', 'machine_ocr'].includes(citation.origin) && Number.isSafeInteger(citation.page) && citation.page > 0
     && Number.isSafeInteger(citation.start) && citation.start >= 0 && Number.isSafeInteger(citation.end) && citation.end > citation.start
     && [...citation.quote].length === citation.end - citation.start && citation.start_ms === null && citation.end_ms === null && citation.time_precision === null;
@@ -52,9 +52,20 @@ export function createWikiWorkspaceApi({ api }) {
     request: api,
     config: options => get('/v1/config', options),
     modelConfiguration: options => get('/v1/model-configuration', options),
-    listPages: ({ offset = 0, limit = 100, q = '', signal } = {}) => get(query('/v1/wiki/pages', { ...paging(offset, limit), q }), { signal }),
+    listPages: ({ offset = 0, limit = 100, q = '', state = 'active', signal } = {}) => {
+      if (!['active', 'deleted'].includes(state)) throw invalid();
+      return get(query('/v1/wiki/pages', { ...paging(offset, limit), q, state }), { signal });
+    },
     getPage: (pageId, options) => get(`/v1/wiki/pages/${id(pageId)}`, options),
     getPageVersion: (pageId, pageVersion, options) => get(`/v1/wiki/pages/${id(pageId)}/versions/${version(pageVersion)}`, options),
+    deletePage: (pageId, expectedVersion, lifecycleVersion, options) => write(query(`/v1/wiki/pages/${id(pageId)}`, { version: version(expectedVersion), lifecycle_version: version(lifecycleVersion, 0) }), 'DELETE', undefined, options),
+    restorePage: (pageId, expectedVersion, lifecycleVersion, options) => write(`/v1/wiki/pages/${id(pageId)}/restore`, 'POST', { version: version(expectedVersion), lifecycle_version: version(lifecycleVersion, 0) }, options),
+    async purgePage(pageId, expectedVersion, lifecycleVersion, options) {
+      const page = id(pageId);
+      const result = await write(query(`/v1/wiki/pages/${page}/purge`, { version: version(expectedVersion), lifecycle_version: version(lifecycleVersion, 0) }), 'DELETE', undefined, options);
+      if (result?.page_id !== page || result.state !== 'purged') throw inconsistent();
+      return Object.freeze({ page_id: page, state: 'purged' });
+    },
     listProposals: ({ offset = 0, limit = 100, status = 'pending', signal } = {}) => {
       if (!['pending', 'accepted', 'dismissed'].includes(status)) throw invalid();
       return get(query('/v1/wiki/proposals', { ...paging(offset, limit), status }), { signal });
@@ -119,11 +130,11 @@ export function createWikiWorkspaceApi({ api }) {
         || await digest(new TextEncoder().encode(citation.quote)) !== citation.text_sha256) throw inconsistent();
       return result;
     },
-    async allPages({ signal } = {}) {
+    async allPages({ signal, state = 'active' } = {}) {
       const items = [], seen = new Set(); let total;
       do {
         signal?.throwIfAborted();
-        const page = await workspace.listPages({ offset: items.length, limit: 100, signal });
+        const page = await workspace.listPages({ offset: items.length, limit: 100, signal, state });
         if (!page || !Array.isArray(page.items) || !Number.isSafeInteger(page.total) || page.total < 0
           || page.offset !== items.length || page.limit !== 100 || page.items.length > page.limit
           || (total !== undefined && total !== page.total) || items.length + page.items.length > page.total

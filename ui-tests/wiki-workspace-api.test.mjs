@@ -9,6 +9,41 @@ const pageContext = { page_id: 'page-one', version: 2, source_id: 'source-one' }
 const proposalContext = { proposal_id: 'proposal-one', source_id: 'source-one' };
 const settings = { version: 4, search_method: 'hybrid', ranking_mode: 'rerank', dense_weight: 0.5, top_k: 5, score_threshold_enabled: true, score_threshold: -0.2 };
 
+test('permanent knowledge deletion uses exact double CAS and validates the purged identity', async () => {
+  const calls = [];
+  let receipt = { page_id: 'page-one', state: 'purged' };
+  const client = createWikiWorkspaceApi({ api: async (path, options) => { calls.push([path, options]); return receipt; } });
+  assert.deepEqual(await client.purgePage('page-one', 4, 2), receipt);
+  assert.deepEqual(calls.map(([path, options]) => [path, options.method, options.body]), [['/v1/wiki/pages/page-one/purge?version=4&lifecycle_version=2', 'DELETE', undefined]]);
+  for (const invalid of [{ page_id: 'other', state: 'purged' }, { page_id: 'page-one', state: 'deleted' }, null]) {
+    receipt = invalid; await assert.rejects(client.purgePage('page-one', 4, 2), error => error.status === 502);
+  }
+  const count = calls.length;
+  await assert.rejects(client.purgePage('page-one', 0, 2), error => error.status === 422);
+  await assert.rejects(client.purgePage('../page', 4, 2), error => error.status === 422);
+  await assert.rejects(client.purgePage('page-one', 4, -1), error => error.status === 422);
+  assert.equal(calls.length, count);
+});
+
+test('knowledge lifecycle uses separate state lists and exact double CAS operations', async () => {
+  const calls = [];
+  const client = createWikiWorkspaceApi({ api: async (path, options) => {
+    calls.push([path, options]);
+    return { items: [], total: 0, offset: 0, limit: 100 };
+  } });
+  await client.allPages({ state: 'deleted' });
+  await client.deletePage('page-one', 3, 0);
+  await client.restorePage('page-one', 3, 1);
+  assert.equal(new URL(calls[0][0], 'http://local').searchParams.get('state'), 'deleted');
+  assert.deepEqual(calls.slice(1).map(([path, options]) => [path, options.method, options.body]), [
+    ['/v1/wiki/pages/page-one?version=3&lifecycle_version=0', 'DELETE', undefined],
+    ['/v1/wiki/pages/page-one/restore', 'POST', { version: 3, lifecycle_version: 1 }],
+  ]);
+  assert.throws(() => client.listPages({ state: 'all' }), error => error.status === 422);
+  assert.throws(() => client.deletePage('page-one', 3, -1), error => error.status === 422);
+  assert.throws(() => client.restorePage('page-one', 0, 1), error => error.status === 422);
+});
+
 test('Wiki workflow sends exact persisted actions and CAS versions once without rewriting returned data', async () => {
   const calls = [], result = { marker: 'server' };
   const client = createWikiWorkspaceApi({ api: async (path, options) => { calls.push([path, options]); return result; } });
@@ -57,7 +92,7 @@ test('catalog query encodes literal text separately from kind and pagination', a
   assert.throws(() => client.deleteDraft('draft-one', 0), error => error.status === 422);
 });
 
-test('upload retains File bytes and explicit media type while indexing remains a separate bodyless action', async () => {
+test('upload retains File bytes and explicit media type while maintenance indexing keeps its bodyless API', async () => {
   const calls = [], file = new File(['synthetic text'], '合成 材料.txt', { type: 'text/plain' });
   const client = createWikiWorkspaceApi({ api: async (path, options) => { calls.push([path, options]); return {}; } });
   await client.upload(file); await client.startIndexing('doc-one'); await client.getIngestion('parse-one'); await client.getIndexing('index-one');

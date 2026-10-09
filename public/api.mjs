@@ -12,33 +12,55 @@ export function imageUploadMode(config) {
   return capabilities.includes('visual_image_upload') ? 'visual' : capabilities.includes('image_text_upload') ? 'ocr' : null;
 }
 
+export const DOCUMENT_FORMATS = Object.freeze({
+  pdf: 'application/pdf', properties: 'text/x-java-properties', html: 'text/html', vtt: 'text/vtt', csv: 'text/csv',
+  msg: 'application/vnd.ms-outlook', markdown: 'text/markdown', eml: 'message/rfc822', ppt: 'application/vnd.ms-powerpoint',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword', txt: 'text/plain',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', mdx: 'text/markdown', xls: 'application/vnd.ms-excel',
+  odt: 'application/vnd.oasis.opendocument.text', md: 'text/markdown', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xml: 'application/xml', epub: 'application/epub+zip', htm: 'text/html',
+});
+export const DOCUMENT_MIME_TYPES = Object.freeze([...new Set(Object.values(DOCUMENT_FORMATS))]);
+export const DOCUMENT_ACCEPT = Object.keys(DOCUMENT_FORMATS).map(extension => `.${extension}`).join(',');
+export const documentExtension = filename => String(filename ?? '').split('.').at(-1).toLowerCase();
+export const documentDownloadOnly = mime => DOCUMENT_MIME_TYPES.includes(mime) && !['application/pdf', 'text/plain', 'text/markdown'].includes(mime);
+export const documentTextPreview = mime => DOCUMENT_MIME_TYPES.includes(mime) && (mime.startsWith('text/') || ['application/xml', 'message/rfc822'].includes(mime));
+export const safeOriginalBlob = blob => documentDownloadOnly(blob.type) ? new Blob([blob], { type: 'application/octet-stream' }) : blob;
+const documentFile = file => Object.hasOwn(DOCUMENT_FORMATS, documentExtension(file?.name));
+const imageFile = file => /\.(?:png|jpe?g)$/iu.test(file?.name ?? '');
+const audioFile = file => /\.(?:wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(file?.name ?? '');
+const videoFile = file => /\.(?:mp4|mov|webm|mkv)$/iu.test(file?.name ?? '');
+function checkFile(file, image = false) {
+  if (!(file instanceof Blob)) throw new ApiError(422, '请选择原始文件。');
+  if (typeof file.name !== 'string' || !file.name.trim() || file.name.length > 255 || /[/\\\u0000-\u001f\u007f]/u.test(file.name)) throw new ApiError(422, '文件名无效，不能包含路径或控制字符。');
+  try { encodeURIComponent(file.name); } catch { throw new ApiError(422, '文件名包含不合法字符。'); }
+  if (file.size < 1) throw new ApiError(422, '不能上传空文件。');
+  if (file.size > (image ? 10 : 20) * 1024 * 1024) throw new ApiError(422, image ? '图片大小不能超过10MiB。' : '文件大小不能超过20MiB。');
+}
+function checkFormat(file, supported) {
+  if (supported) return;
+  const known = documentFile(file) || imageFile(file) || audioFile(file) || videoFile(file);
+  throw new ApiError(422, known ? '文件与当前上传类型不匹配，请选择正确的资料类型。' : '不支持此文件格式，请选择受支持的原文件。');
+}
+
 const videoTypes = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' };
 const wikiBinarySource = /^\/v1\/wiki\/(?:pages\/[A-Za-z0-9_-]{1,128}\/versions\/[1-9][0-9]{0,15}|proposals\/[A-Za-z0-9_-]{1,128})\/sources\/[A-Za-z0-9_-]{1,128}\/(?:content|frame)$/u;
 export function validateReplacementUpload(file, documentType) {
-  const extensions = { document: /\.(?:pdf|txt|md)$/iu, image: /\.(?:png|jpe?g)$/iu,
-    audio: /\.(?:wav|mp3|flac|ogg|m4a|mp4|webm)$/iu, video: /\.(?:mp4|mov|webm|mkv)$/iu };
-  if (!(file instanceof Blob) || typeof file.name !== 'string' || !file.name.trim() || file.name.length > 255
-    || /[/\\\u0000-\u001f\u007f]/u.test(file.name) || !extensions[documentType]?.test(file.name)
-    || file.size < 1 || file.size > (documentType === 'image' ? 10 : 20) * 1024 * 1024) {
-    throw new ApiError(422, '请选择与当前资料类型相同的原文件；图片最多10MiB，文档、音频、视频最多20MiB，文件不能为空。');
-  }
-  try { encodeURIComponent(file.name); } catch { throw new ApiError(422, '文件名包含不合法字符。'); }
+  checkFile(file, documentType === 'image');
+  checkFormat(file, { document: documentFile, image: imageFile, audio: audioFile, video: videoFile }[documentType]?.(file));
   return file;
 }
 
 export function validateUpload(file, config, uploadKind = 'document') {
-  const image = typeof file?.name === 'string' && /\.(?:png|jpe?g)$/iu.test(file.name);
+  const image = imageFile(file);
+  checkFile(file, image);
   const media = ['audio', 'video', 'sound', 'video-av'].includes(uploadKind);
   const enabledMedia = config?.capabilities?.includes(`${uploadKind === 'video-av' ? 'video_av' : uploadKind}_upload`) && config?.capabilities?.includes('ingestions');
-  const supported = media ? enabledMedia && (!['video', 'video-av'].includes(uploadKind) ? /\.(?:wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(file?.name ?? '') : /\.(?:mp4|mov|webm|mkv)$/iu.test(file?.name ?? ''))
-    : uploadKind === 'document' && (image ? imageUploadMode(config) : /\.(?:pdf|txt|md)$/iu.test(file?.name ?? ''));
-  if (!(file instanceof Blob) || typeof file.name !== 'string' || !file.name.trim()
-    || file.name.length > 255 || /[/\\\u0000-\u001f\u007f]/u.test(file.name)
-    || !supported
-    || file.size < 1 || file.size > (image ? 10 : 20) * 1024 * 1024) {
-    throw new ApiError(422, '请选择当前上传类型支持的原文件：图片最多10MiB，文档/音频/视频最多20MiB；文件不能为空或包含路径，请明确选择音频或视频类型。');
-  }
-  try { encodeURIComponent(file.name); } catch { throw new ApiError(422, '文件名包含不合法字符。'); }
+  const supported = media ? (['video', 'video-av'].includes(uploadKind) ? videoFile(file) : audioFile(file))
+    : uploadKind === 'document' && (image || documentFile(file));
+  checkFormat(file, supported);
+  const enabledDocument = !Array.isArray(config?.capabilities) || ['ingestions', 'text_upload'].every(capability => config.capabilities.includes(capability));
+  if (media ? !enabledMedia : image ? !imageUploadMode(config) : !enabledDocument) throw new ApiError(422, '服务尚未启用此类型的上传功能。');
   return file;
 }
 
@@ -96,7 +118,7 @@ async function readBinary(response, path) {
   const audio = path.startsWith('/v1/audio-sources/') || path.startsWith('/v1/sound-sources/');
   const video = ['/v1/video-sources/', '/v1/video-av-sources/'].some(prefix => path.startsWith(prefix)) && path.endsWith('/content');
   const audioTypes = ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'];
-  const types = original ? ['application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg', ...audioTypes, ...Object.values(videoTypes)]
+  const types = original ? [...DOCUMENT_MIME_TYPES, 'image/png', 'image/jpeg', ...audioTypes, ...Object.values(videoTypes)]
     : audio ? audioTypes : video ? Object.values(videoTypes) : ['image/png', 'image/jpeg'];
   const limit = (original || audio || video ? 20 : 10) * 1024 * 1024;
   if (response.status !== 200 || !types.includes(type) || Number(response.headers.get('content-length')) > limit) {

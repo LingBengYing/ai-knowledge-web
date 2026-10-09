@@ -1,4 +1,4 @@
-import { ApiError } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, safeOriginalBlob } from './api.mjs';
 
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
@@ -8,7 +8,7 @@ const invalid = () => new ApiError(502, '摘要或来源的身份、版本、定
 const pending = task => ['queued', 'processing'].includes(task?.state);
 const kinds = ['text', 'image_ocr', 'image', 'audio_transcript', 'video_frame', 'video_transcript', 'video_ocr', 'video_subtitle'];
 const timed = kind => kind.startsWith('audio_') || kind.startsWith('video_');
-const mediaTypes = { document: ['application/pdf', 'text/plain', 'text/markdown'], image: ['image/png', 'image/jpeg'],
+const mediaTypes = { document: DOCUMENT_MIME_TYPES, image: ['image/png', 'image/jpeg'],
   audio: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'], video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska'] };
 const idle = () => ({ phase: 'idle', synopsis: null, task: null, error: null, sourcePhase: 'idle', source: null, sourceError: null });
 const identity = item => JSON.stringify([item?.document_id, item?.index_publication_id, item?.active_revision_id, item?.filename,
@@ -222,6 +222,6 @@ export class SynopsisSession {
     const bytes = await blob.arrayBuffer();
     if (expectedSha && await digest(bytes) !== expectedSha) throw invalid();
     if (!current()) return null;
-    const url = this.#urls.createObjectURL(blob); this.#blobs.add(url); return { url };
+    const url = this.#urls.createObjectURL(safeOriginalBlob(blob)); this.#blobs.add(url); return { url };
   }
 }

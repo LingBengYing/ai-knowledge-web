@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode } from '../public/api.mjs';
+import { createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode, DOCUMENT_ACCEPT, DOCUMENT_FORMATS, documentExtension, documentDownloadOnly } from '../public/api.mjs';
 import * as stateModule from '../public/workbench-state.mjs';
 import { showNotice } from '../public/notices.mjs';
 import * as answerModule from '../public/answers.mjs';
@@ -309,6 +309,20 @@ test('actual retrieval original navigation rereads the same version and validate
   fixture.get('retrieval-question').dispatch('input'); assert.equal(fixture.get('retrieval-original').hidden, true);
 });
 
+test('new document formats in classic retrieval show parsed text rather than physical pages', async () => {
+  const fixture = appFixture('ingestion', task('ingestion', 'parsed')), text = '合成解析文本';
+  fixture.app.enableModelSetup(); fixture.app.openRetrieval();
+  fixture.get('retrieval-question').value = '合成资料';
+  fixture.app.setApi(async () => ({ test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1,
+    effective_settings: retrievalSettings(), status: 'completed', reason: null, scope_count: 1, score_kind: 'rrf',
+    matches: [{ rank: 1, document_id: 'doc-one', revision_id: 'rev-one', filename: 'synthetic.docx', source_sha256: 'a'.repeat(64),
+      parser_revision: 'java-document-v1', page: 1, start: 0, end: [...text].length, text,
+      text_sha256: createHash('sha256').update(text).digest('hex'), retrieval_score: 1 / 61, rerank_score: 0.5 }] }));
+  fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
+  assert.match(fixture.get('retrieval-matches').textContent, /synthetic.docx.*解析文本/su);
+  assert.doesNotMatch(fixture.get('retrieval-matches').textContent, /第 1 页/u);
+});
+
 test('activation read refresh updates indexing eligibility while preserving question scope and the actual detail draft', async () => {
   const fixture = appFixture('ingestion', task('ingestion', 'parsed'), { can_index: false });
   fixture.app.enableModelSetup(); fixture.app.enableAnswers(); await prepareQuestion(fixture, ['doc-one']); fixture.get('answer-question').value = '保留完整问题';
@@ -435,7 +449,7 @@ const row = (kind, value, change = {}) => ({ document_id: value.document_id, dis
 
 function appFixture(kind, initial = task(kind), rowChange = {}) {
   const dom = controlledDocument();
-  const context = vm.createContext({ ...dom, ...stateModule, ...answerModule, ...mediaModule, ...queryModule, ...synopsisModule, ...tagModule, ...voiceModule, ...vectorModule, ...audioVectorModule, ...soundModule, ...videoAvModule, ...cleanupModule, ...modelConfigurationModule, ...modelRebuildModule, ...replacementModule, ...retrievalTestModule, ...retrievalSettingsModule, DocumentOriginalSession, PdfPreviewSession, createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode, showNotice,
+  const context = vm.createContext({ ...dom, ...stateModule, ...answerModule, ...mediaModule, ...queryModule, ...synopsisModule, ...tagModule, ...voiceModule, ...vectorModule, ...audioVectorModule, ...soundModule, ...videoAvModule, ...cleanupModule, ...modelConfigurationModule, ...modelRebuildModule, ...replacementModule, ...retrievalTestModule, ...retrievalSettingsModule, DocumentOriginalSession, PdfPreviewSession, createApi, ApiError, validateUpload, validateReplacementUpload, imageUploadMode, DOCUMENT_ACCEPT, DOCUMENT_FORMATS, documentExtension, documentDownloadOnly, showNotice,
     AbortController, URLSearchParams, window: { devicePixelRatio: 1 }, setTimeout: () => 1, clearTimeout() {}, confirm: () => false });
   vm.runInContext(`${source}\nglobalThis.app = { state, openDetail, watchTask, loadTask, taskAction, resetContext, loadData,
     showView, navigate, closeDetailPanel, changeFilter, documentQuery, renderControls, renderRows, openAnswers, openRetrieval, answerSession, originalSession, refreshModelCapabilities,

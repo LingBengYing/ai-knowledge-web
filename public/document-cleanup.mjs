@@ -13,6 +13,11 @@ export const canRequestCleanup = item => ID.test(item?.document_id ?? '');
 export function cleanupLabel(value) {
   return ({not_requested:'已撤下，尚未请求清理',pending:'已撤下，清理待完成',running:'已撤下，正在清理',blocked:'已撤下，清理受阻，尚未完成',failed:'已撤下，清理失败，尚未完成',completed:'受控清理已完成'})[value?.cleanup_status] ?? '结果未知，请刷新状态';
 }
+export function cleanupResourceLabel(resource) {
+  const kind = ({ database_payload: '数据库资料内容', database_file: '数据库存储', managed_backups: '受控备份', managed_temporaries: '受控临时文件', remote_inventory: '远端资源核对', remote_logical_rows: '远端逻辑记录', remote_write_terminal: '远端写入终止', remote_physical_storage: '远端物理存储', restore_barrier: '恢复保护记录' })[resource?.kind];
+  const status = ({ pending: '待处理', running: '处理中', completed: '已完成', not_applicable: '不适用', blocked: '受阻', failed: '失败' })[resource?.status];
+  return kind && status ? `${kind}：${status}` : '清理阶段待核对';
+}
 export function checkedCleanup(value, documentId = value?.document_id) {
   if (!keys(value,['document_id','cleanup_id','status','cleanup_status','requested_at','updated_at','completed_at','error_code','resources'])
       || !ID.test(documentId ?? '') || value.document_id !== documentId || !STATES.includes(value.cleanup_status)

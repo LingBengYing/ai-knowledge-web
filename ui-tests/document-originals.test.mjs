@@ -90,8 +90,8 @@ test('closing details cancels both original stages and ignores late completion',
   }
 });
 
-test('original binary reader rejects HTML, partial status, query paths and streams exceeding 20MiB', async () => {
-  for (const response of [new Response('x', { headers: { 'Content-Type': 'text/html' } }),
+test('original binary reader rejects unsupported SVG, partial status, query paths and streams exceeding 20MiB', async () => {
+  for (const response of [new Response('x', { headers: { 'Content-Type': 'image/svg+xml' } }),
     new Response('x', { status: 206, headers: { 'Content-Type': 'application/pdf' } }),
     new Response(new Uint8Array(20 * 1024 * 1024 + 1), { headers: { 'Content-Type': 'application/pdf' } })]) {
     const api = createApi({}, () => '', async () => response);

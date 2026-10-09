@@ -1,5 +1,7 @@
 # 0043 前端验证记录
 
+后续负责人已明确授权生产发布；生产external入口、免登录定制保留、最终制品与本轮串行/扫描结果另记 [deployment-preparation.md](deployment-preparation.md)。本页下列“未部署”描述的是先前本机实现阶段。
+
 ## 本次实现
 
 - 独立 `knowledge-agent.mjs` 封装配置/运行 JSON、固定安全事件类型、一次写入、只读轮询、取消与迟到响应隔离。统一答案直接复用 `answers.mjs` 的 `checkedKnowledgeAnswer`，仅将该既有函数导出，不改引用验证逻辑。

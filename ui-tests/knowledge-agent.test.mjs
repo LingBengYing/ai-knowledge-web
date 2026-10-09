@@ -9,6 +9,27 @@ const result = { answer_id: 'answer-one', status: 'abstained', answer: '资料�
 const run = (status = 'running', events = [{ sequence: 1, type: 'running', message: '任务已开始' }]) => ({ id: runId, status, events, result: status === 'completed' ? result : null, suggestions: [], error: status === 'failed' ? { code: 'agent_failed', message: '智能体任务未完成，请重新发起。' } : null });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('Agent safe failure codes have actionable distinct labels and never expose server text', async () => {
+  const codes = ['agent_unavailable', 'agent_timeout', 'agent_callback_failed', 'agent_callback_invalid',
+    'agent_model_invalid', 'agent_invalid_action', 'agent_invalid_tool_input', 'agent_tool_failed',
+    'agent_invalid_result', 'agent_step_limit', 'agent_execution_failed', 'scope_changed',
+    'configuration_changed', 'evidence_changed'];
+  const labels = [];
+  for (const code of codes) {
+    const checked = await checkedAgentRun({ ...run('failed'), error: { code, message: 'private-provider-secret' } }, runId);
+    assert.equal(checked.error.code, code);
+    assert.doesNotMatch(checked.error.message, /private-provider-secret|请重新发起/u);
+    labels.push(checked.error.message);
+  }
+  assert.equal(new Set(labels).size, labels.length);
+  const session = new KnowledgeAgentSession({ createAgentRun: async () => ({ ...run('failed'),
+    error: { code: 'agent_invalid_action', message: 'private-provider-secret' } }) });
+  await session.start('synthetic question');
+  assert.equal(session.value.phase, 'failed');
+  assert.doesNotMatch(session.value.run.error.message, /private-provider-secret/u);
+  session.close();
+});
+
 test('Agent exact JSON requests preserve UUID and question and reuse the ordinary same-origin client', async () => {
   const calls = [];
   const api = createKnowledgeAgentApi(createApi({ auth_mode: 'jwt' }, () => '', async (path, options) => {
