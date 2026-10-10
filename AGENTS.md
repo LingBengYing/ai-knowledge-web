@@ -1,5 +1,13 @@
 # AI Knowledge Web：智能体工作约定
 
+## 常驻规则：控制技术债（2026-10-10 负责人确认，优先于下方各阶段中“兼容保留/不删除旧功能”的表述）
+
+- **改动前先看全局影响**：动手前查清所改功能的全部调用方和被替代对象，前端、Java 后端、agent-service、部署入口都要看，不只看本阶段要改的文件。用 `rg` 搜接口路径、类名、模块名和配置键，并把影响范围写进本阶段的 intent 或 plan。
+- **替换即删除旧实现**：新实现上线并验证后，被替代的旧入口、旧接口、旧模块、旧配置开关和只测旧实现的测试，要在同一阶段删掉，最迟在紧接着的下一个阶段删掉。不再默认“兼容保留”。确实需要过渡期的，在 plan 里写明保留原因和删除时点，到期就删。
+- **不留无调用代码**：新增代码必须有真实调用方。阶段收尾时检查本次改动涉及的模块里有没有失去调用方的方法、类、路由、静态资源和配置，有就一并删除。
+- **删除要有依据**：删之前用搜索结果确认没有调用方（含其他仓库和生产入口）。删除后跑相关测试，对比改动前后的失败用例，不能新增失败。
+- 历史记录（docs/changes/*）保留不改；它描述的“保留旧功能”只代表当时的决定，不构成继续保留的理由。
+
 2026-10-10 删除旧经典管理页：负责人确认不含 DB-GPT 知识问答的旧页面基本无人使用，已删除 public/index.html、app.js、styles.css 及仅被它使用的 preview.mjs、notices.mjs、voice-question.mjs，三处服务入口不再提供 `/classic/`、`/index.html`、`/app.js`、`/styles.css`，并删除 `/v1/voice-questions` 转发和 `RAG_WEB_WIKI_ENTRY` 开关（根路径 `/` 始终为 wiki-workspace.html）。对应只测旧页面的 ui-tests 已删除。下方提到 app.js、`/classic/`、语音提问或本地文件预览的条目均为历史。
 
 2026-10-10 清理无用前端：已删除0041静态Wiki预览（wiki-preview.html/.mjs/-data.mjs、scripts/wiki-preview-server.mjs、`npm run dev:wiki`及其测试）和已撤下的独立产品帮助模块（product-help.mjs及两代理的`/v1/product-help/search`转发），并清理仅被它们使用的CSS。`wiki-preview.css`仍由真实工作台加载，不可删除；`/classic/`当时保留待负责人决定（已于同日删除，见上条）。下方提到`dev:wiki`/`#/product-help`的条目均为历史。
