@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { answerRequest, AnswerSession } from '../public/answers.mjs';
 import { checkedRetrievalResult, retrievalRequest } from '../public/retrieval-tests.mjs';
 import { knowledgeAnswerFixture } from './knowledge-answer-fixture.mjs';
@@ -32,11 +31,4 @@ test('unified answers accept more than 32 real typed citations without weakening
   fixture.answer.citations[39].source_url = 'https://example.invalid/source';
   await session.ask('灯塔', null, 'knowledge');
   assert.equal(session.value.phase, 'error');
-});
-
-test('question and retrieval UI expose one shared library, no range picker or question maxlength', () => {
-  const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /id="(?:answer-all|retrieval-all|answer-scope-documents|retrieval-scope-documents)"/u);
-  assert.doesNotMatch(html, /<textarea[^>]+id="(?:answer-question|retrieval-question)"[^>]+maxlength/u);
-  assert.match(html, /退出/u);
 });

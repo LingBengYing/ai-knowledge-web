@@ -49,13 +49,12 @@ Not connected here: multimodal upload/answer views and typed media-source playba
 
 | 主题 / Keywords | Source |
 | --- | --- |
-| UI layout, empty/error/read-only states | [index.html](../public/index.html)、[styles.css](../public/styles.css)、[app.js](../public/app.js) |
+| UI layout, empty/error/read-only states | [wiki-workspace.html](../public/wiki-workspace.html)、[wiki-workspace.css](../public/wiki-workspace.css)、[wiki-workspace.mjs](../public/wiki-workspace.mjs) |
 | Same-origin API, session cookie, safe errors | [api.mjs](../public/api.mjs)、[API_CONNECTION](API_CONNECTION.md) |
 | Identity epoch, stale reads, selection, mutation lock | [workbench-state.mjs](../public/workbench-state.mjs)、[UI tests](../ui-tests/) |
-| Raw File upload, parsing attempt, cancel/retry, terminal polling | [api.mjs](../public/api.mjs)、[app.js](../public/app.js)、[ingestion tests](../ui-tests/ingestion.test.mjs) |
-| Index task, publication status, capability and confirmation gates | [workbench-state.mjs](../public/workbench-state.mjs)、[app.js](../public/app.js)、[index tests](../ui-tests/indexing.test.mjs) |
-| Grounded text answer, full selected scope, abstention, source identity and epoch | [answers.mjs](../public/answers.mjs)、[app.js](../public/app.js)、[answer tests](../ui-tests/answers.test.mjs) |
-| Late failure notice and safe rendering | [notices.mjs](../public/notices.mjs)、[app.js](../public/app.js) |
+| Raw File upload, parsing attempt, cancel/retry, terminal polling | [api.mjs](../public/api.mjs)、[wiki-maintenance.mjs](../public/wiki-maintenance.mjs)、[ingestion tests](../ui-tests/ingestion.test.mjs) |
+| Index task, publication status, capability and confirmation gates | [workbench-state.mjs](../public/workbench-state.mjs)、[wiki-maintenance.mjs](../public/wiki-maintenance.mjs)、[index tests](../ui-tests/indexing.test.mjs) |
+| Grounded text answer, full selected scope, abstention, source identity and epoch | [answers.mjs](../public/answers.mjs)、[wiki-workspace.mjs](../public/wiki-workspace.mjs)、[answer tests](../ui-tests/answers.test.mjs) |
 | Local proxy, Host/Origin validation, bounded HTTP | [dev-server.mjs](../scripts/dev-server.mjs)、[HTTP tests](../tests/dev-server.test.mjs) |
 | Secret prevention, full Git history | [check-secrets.mjs](../scripts/check-secrets.mjs)、[SECURITY](../SECURITY.md) |
 

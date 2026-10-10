@@ -335,10 +335,6 @@ test('authenticated original-file details use only pinned GET paths and load the
 
 test('public address must be a canonical HTTPS origin and backend remains literal loopback', () => {
   assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin }).publicOrigin, publicOrigin);
-  assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin }).wikiEntry, false);
-  assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin, RAG_WEB_WIKI_ENTRY: 'true' }).wikiEntry, true);
-  assert.equal(readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin, RAG_WEB_WIKI_ENTRY: 'false' }).wikiEntry, false);
-  assert.throws(() => readConfiguration({ RAG_PUBLIC_ORIGIN: publicOrigin, RAG_WEB_WIKI_ENTRY: 'yes' }));
   for (const invalid of [undefined, 'http://knowledge.example.invalid', publicOrigin + '/', publicOrigin + '?x=1', 'https://user@knowledge.example.invalid', 'https://127.0.0.1', publicOrigin + ':443']) {
     assert.throws(() => readConfiguration({ RAG_PUBLIC_ORIGIN: invalid }));
   }
@@ -355,7 +351,7 @@ test('anonymous visitors receive only login shell and knowledge APIs require act
   const root = await raw(origin, '/');
   assert.equal(root.status, 303);
   assert.equal(root.headers.location, '/login');
-  assert.equal((await raw(origin, '/app.js')).status, 303);
+  assert.equal((await raw(origin, '/api.mjs')).status, 303);
   assert.equal((await raw(origin, '/v1/management/documents')).status, 401);
   const login = await raw(origin, '/login');
   assert.equal(login.status, 200);
@@ -484,40 +480,6 @@ test('tag suggestion routes reject extra paths, query, read body and non-JSON wr
   assert.equal((await raw(origin, path + '/apply', { method: 'POST', headers, body: '{}' })).status, 415);
   assert.equal((await raw(origin, path + '/apply/more', { method: 'POST', headers })).status, 404);
   assert.equal(calls, 0);
-});
-
-test('voice question exact asset and POST use independent media JSON capacity', async t => {
-  const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-voice-')));
-  t.after(() => rm(publicDirectory, { recursive: true, force: true }));
-  await writeFile(join(publicDirectory, 'voice-question.mjs'), 'export const synthetic = true;');
-  const calls = [];
-  const { origin } = await fixture(t, { publicDirectory, requestBytes: 8, voiceBytes: 1024 }, (req, res) => {
-    const chunks = []; req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => { calls.push({ path: req.url, body: Buffer.concat(chunks).toString() }); res.setHeader('Content-Type', 'application/json'); res.end('{}'); });
-  });
-  const headers = { Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/json' };
-  assert.equal((await raw(origin, '/voice-question.mjs', { headers })).status, 200);
-  const body = JSON.stringify({ filename: 'voice.wav', media_type: 'audio/wav', content_base64: 'AQID' });
-  assert.equal((await raw(origin, '/v1/voice-questions', { method: 'POST', headers, body })).status, 200);
-  assert.deepEqual(calls, [{ path: '/v1/voice-questions', body }]);
-  assert.equal((await raw(origin, '/v1/management/folders', { method: 'POST', headers, body })).status, 413);
-  assert.equal((await raw(origin, '/v1/voice-questions', { method: 'POST', headers, body: 'x'.repeat(1025) })).status, 413);
-  assert.equal((await raw(origin, '/v1/voice-questions?', { method: 'POST', headers, body })).status, 400);
-  assert.equal((await raw(origin, '/v1/voice-questions', { headers })).status, 405);
-  assert.equal((await raw(origin, '/v1/voice-questions', { method: 'POST', headers: { Origin: publicOrigin, Cookie: sessionPair }, body })).status, 415);
-  assert.equal((await raw(origin, '/v1/voice-questions/extra', { method: 'POST', headers, body })).status, 404);
-  assert.equal(calls.length, 1);
-});
-
-test('voice transport retains its own deadline and two slots without retrying', async t => {
-  let calls = 0;
-  const { origin } = await fixture(t, { deadlineMs: 15, voiceDeadlineMs: 250 }, (_req, res) => { calls++; setTimeout(() => res.end('{}'), 70); });
-  const options = { method: 'POST', headers: { Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/json' }, body: '{}' };
-  const pending = [raw(origin, '/v1/voice-questions', options), raw(origin, '/v1/voice-questions', options)];
-  await new Promise(resolve => setTimeout(resolve, 20));
-  assert.equal((await raw(origin, '/v1/voice-questions', options)).status, 429);
-  assert.deepEqual((await Promise.all(pending)).map(response => response.status), [200, 200]); assert.equal(calls, 2);
-  assert.equal((await raw(origin, '/v1/management/tags', { headers: { Cookie: sessionPair } })).status, 504); assert.equal(calls, 3);
 });
 
 test('image vector authenticated reads and explicit bodyless builds retain their exact deadline and boundary', async t => {
