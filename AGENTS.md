@@ -1,5 +1,7 @@
 # AI Knowledge Web：智能体工作约定
 
+2026-10-10 清理无用前端：已删除0041静态Wiki预览（wiki-preview.html/.mjs/-data.mjs、scripts/wiki-preview-server.mjs、`npm run dev:wiki`及其测试）和已撤下的独立产品帮助模块（product-help.mjs及两代理的`/v1/product-help/search`转发），并清理仅被它们使用的CSS。`wiki-preview.css`仍由真实工作台加载，不可删除；`/classic/`保留待负责人决定。下方提到`dev:wiki`/`#/product-help`的条目均为历史。
+
 2026-10-09 Git 同步授权：负责人要求推送，并明确其他智能体的问答改动“也一起提交”。本次包含0039–0043；真实工作台使用 `dev:workspace`，`dev:wiki`仅历史静态预览。先读0042/0043四工件，区分Wiki真实单TXT建设验证和Agent本机替身验证；完整586项未单轮全绿，不借旧576结果认证新问答。只提交推送、不部署或调用模型，密钥/数据/运行日志不提交；下方未推送与静态入口描述为历史。
 
 2026-10-09 当前0041：用户要求参考 llm_wiki，先前端确认再改后端。新增独立 `npm run dev:wiki` / 18090 合成数据预览，不替换原入口、不新增真实模型请求、不部署。新工件见 `docs/changes/0041-wiki-workspace-preview/`，本次 UI 验证与实际未验证范围见 verification。后端接入只记录候选合同，必须等待用户确认前端后再实施；不得将固定示例答案或本地草稿称为已接通 Wiki / 线上检索修复。下方保留既有业务版本历史。
