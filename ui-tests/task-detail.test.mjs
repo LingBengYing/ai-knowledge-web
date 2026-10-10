@@ -2496,3 +2496,45 @@ for (const kind of ['image', 'audio']) {
     assert.equal(calls.filter(call => call.options.method === 'POST').length, 0); saved();
   });
 }
+
+test('batch result feedback survives the page clamp after the last page empties', async () => {
+  const fixture = appFixture('ingestion', task('ingestion', 'parsed'));
+  const one = fixture.app.state.items[0];
+  let phase = 'two-pages';
+  fixture.app.setApi(async (path, options) => {
+    if (path === '/v1/management/document-actions') { phase = 'one-page'; return { items: [{ document_id: 'doc-one', ok: true }] }; }
+    if (path.startsWith('/v1/management/documents?')) return phase === 'two-pages' ? { items: [one], total: 2, total_pages: 2 } : { items: [one], total: 1, total_pages: 1 };
+    return { items: [] };
+  });
+  fixture.app.closeDetailPanel();
+  await fixture.app.loadData(); await settleAnswer();
+  fixture.get('next-page').dispatch('click'); await settleAnswer();
+  assert.match(fixture.get('page-label').textContent, /第 2 \/ 2 页/u);
+  fixture.app.state.select('doc-one', true); fixture.app.renderControls();
+  fixture.get('batch-tag').dispatch('click'); fixture.get('dialog-tags').value = '新标签';
+  fixture.get('dialog-form').dispatch('submit'); await settleAnswer(); await settleAnswer();
+  assert.equal(fixture.get('operation-feedback').hidden, false, 'batch result feedback was cleared by the page clamp');
+});
+
+test('retrieval detail lookup does not open the inspector after the user left the library', async () => {
+  const fixture = appFixture('ingestion', task('ingestion', 'parsed')), text = '合成片段';
+  fixture.app.enableModelSetup(); fixture.app.enableAnswers();
+  const one = { ...fixture.app.state.items[0], active_revision_id: 'rev-one', index_publication_id: 'pub-one', media_info: { mime_type: 'text/plain', sha256: 'c'.repeat(64), size_bytes: 10 } };
+  fixture.app.state.commitPage(fixture.app.state.beginRead('documents'), [one]);
+  fixture.app.closeDetailPanel();
+  fixture.app.openRetrieval();
+  fixture.get('retrieval-question').value = '完整问题';
+  let release;
+  fixture.app.setApi(async path => {
+    if (path === '/v1/retrieval-tests') return { test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, effective_settings: retrievalSettings(), status: 'completed', reason: null, scope_count: 1, score_kind: 'rrf', matches: [{ rank: 1, document_id: 'doc-one', revision_id: one.active_revision_id ?? 'rev-x', filename: one.filename, source_sha256: one.media_info.sha256, parser_revision: 'java-text-v1', page: 2, start: 0, end: [...text].length, text, text_sha256: createHash('sha256').update(text).digest('hex'), retrieval_score: 1 / 61, rerank_score: 0.5 }] };
+    if (path.startsWith('/v1/management/documents?')) return new Promise(resolve => { release = () => resolve({ items: [one], total: 1, total_pages: 1 }); });
+    if (path === '/v1/config') return { capabilities: fixture.app.configuration.capabilities };
+    return { items: [] };
+  });
+  fixture.get('retrieval-run').dispatch('click'); await settleAnswer();
+  const buttons = fixture.get('retrieval-matches').querySelectorAll('button');
+  buttons[1].dispatch('click'); await settleAnswer();
+  fixture.app.navigate('settings'); await settleAnswer();
+  release(); await settleAnswer(); await settleAnswer();
+  assert.equal(fixture.get('details').open && fixture.get('view-documents').hidden, false);
+});
