@@ -4,6 +4,8 @@
 
 ## 产品使用帮助（0036 / Java 0048）
 
+2026-10-10：独立产品帮助前端模块（product-help.mjs）及两代理的`/v1/product-help/search`转发已删除，普通知识问答已覆盖该用途；以下为历史合同。
+
 `product_help`能力对应精确`POST /v1/product-help/search`，无query。请求为question、可选完整document_ids、top_k（每类1–10、默认5）、rerank（默认true）。省略范围为全库，空数组不得改写。返回search_id/configuration_version/status/reason/scope_count/score_kind/matches；match包含category、evidence_kind、原document/revision/SHA、text/text_sha256、nullable页码/码点或start_ms/end_ms/time_precision，以及精确原件content_url。检索结果不是answer trace，不访问旧答案来源路径。
 
 两代理只为该精确POST复用已有retrieval期限/限额；原件继续既有metadata及按revision内容路由，完整身份/SHA核对后Blob阅读/播放，不转发任意URL或Range。前端无模型密钥，无自动重试，当前停测与真实模型验证边界见[0036记录](changes/0036-product-help/REVIEW.md)。

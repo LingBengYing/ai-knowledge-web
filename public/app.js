@@ -1117,7 +1117,6 @@ function initNavigation() {
 function ingestionEnabled() { return config?.capabilities?.includes('ingestions') && (['text_upload', 'audio_upload', 'video_upload', 'sound_upload', 'video_av_upload'].some(capability => config.capabilities.includes(capability)) || !!imageUploadMode(config)); }
 function anyAnswersEnabled() { return ['knowledge', 'text', 'visual', ...mediaModes].some(mode => answersEnabled(config, mode)); }
 function scopeSelectionEnabled() { return connected; }
-function evidenceModeEnabled(mode) { return answersEnabled(config, mode) || mode === 'text' && retrievalEnabled(config); }
 function indexingEnabled() { return config?.capabilities?.includes('text_index') && config.capabilities.includes('indexings'); }
 function hasReadyVectorReceipt(item) {
   return [imageVectorSession, audioVectorSession].some(session => session.matches(item)

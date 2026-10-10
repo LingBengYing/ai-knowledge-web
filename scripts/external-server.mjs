@@ -20,7 +20,6 @@ const ASSETS = new Map([
   ['/model-configuration.mjs', ['model-configuration.mjs', 'text/javascript; charset=utf-8']],
   ['/retrieval-tests.mjs', ['retrieval-tests.mjs', 'text/javascript; charset=utf-8']],
   ['/retrieval-settings.mjs', ['retrieval-settings.mjs', 'text/javascript; charset=utf-8']],
-  ['/product-help.mjs', ['product-help.mjs', 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/login', ['login.html', 'text/html; charset=utf-8']],
   ['/login.mjs', ['login.mjs', 'text/javascript; charset=utf-8']],
@@ -53,7 +52,6 @@ const ROUTES = [
   [/^\/v1\/model-configuration\/(?:test|activate)$/, ['POST'], 'model-configuration'],
   [/^\/v1\/retrieval-tests$/, ['POST'], 'retrieval'],
   [/^\/v1\/retrieval-settings$/, ['GET', 'PUT'], 'model-configuration'],
-  [/^\/v1\/product-help\/search$/, ['POST'], 'retrieval'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/cleanup$/, ['GET', 'POST'], 'cleanup'],
   [/^\/v1\/management\/document-cleanups$/, ['GET', 'POST'], 'cleanup-list'],
   [/^\/v1\/video-av-documents$/, ['POST'], 'video-av-upload'],
@@ -416,7 +414,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);
     const videoAvIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/.test(req.url);
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
-    const retrieval = req.method === 'POST' && ['/v1/retrieval-tests', '/v1/product-help/search'].includes(req.url);
+    const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
     const timer = setTimeout(() => controller.abort(), modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : voice ? voiceDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
     let reservedUpload = false;
     let reservedReplacementIndex = false;

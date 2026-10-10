@@ -19,7 +19,6 @@ const ASSETS = new Map([
   ['/model-configuration.mjs', ['model-configuration.mjs', 'text/javascript; charset=utf-8']],
   ['/retrieval-tests.mjs', ['retrieval-tests.mjs', 'text/javascript; charset=utf-8']],
   ['/retrieval-settings.mjs', ['retrieval-settings.mjs', 'text/javascript; charset=utf-8']],
-  ['/product-help.mjs', ['product-help.mjs', 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
@@ -50,7 +49,6 @@ const ROUTES = [
   [/^\/v1\/model-configuration\/(?:test|activate)$/, ['POST'], 'model-configuration'],
   [/^\/v1\/retrieval-tests$/, ['POST'], 'retrieval'],
   [/^\/v1\/retrieval-settings$/, ['GET', 'PUT'], 'model-configuration'],
-  [/^\/v1\/product-help\/search$/, ['POST'], 'retrieval'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/cleanup$/, ['GET', 'POST'], 'cleanup'],
   [/^\/v1\/management\/document-cleanups$/, ['GET', 'POST'], 'cleanup-list'],
   [/^\/v1\/video-av-documents$/, ['POST'], 'video-av-upload'],
@@ -359,7 +357,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
     const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);
     const videoAvIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/.test(req.url);
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
-    const retrieval = req.method === 'POST' && ['/v1/retrieval-tests', '/v1/product-help/search'].includes(req.url);
+    const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
     const timer = setTimeout(() => controller.abort(), modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : voice ? voiceDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
     let reservedUpload = false;
     let reservedReplacementIndex = false;
@@ -374,7 +372,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
       if (asset) {
         if (WIKI_ASSETS.some(([assetPath]) => assetPath === path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if ((path === '/pdf-preview.mjs' || path.startsWith('/vendor/pdfjs/')) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
-        if (['/model-rebuild.mjs', '/document-replacements.mjs', '/model-configuration.mjs', '/retrieval-tests.mjs', '/retrieval-settings.mjs', '/product-help.mjs', '/query-attachments.mjs', '/voice-question.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+        if (['/model-rebuild.mjs', '/document-replacements.mjs', '/model-configuration.mjs', '/retrieval-tests.mjs', '/retrieval-settings.mjs', '/query-attachments.mjs', '/voice-question.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if (!['GET', 'HEAD'].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         await serveAsset(res, asset, publicDirectory, req.method === 'HEAD');
       } else {
