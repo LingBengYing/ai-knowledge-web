@@ -425,7 +425,10 @@ function renderRetrievalOriginal() {
 async function openRetrievalDetail(match) {
   if (!retrievalSession.value.result?.matches.includes(match) || !navigate('documents')) return;
   $('filters').reset(); $('search').value = match.filename; folderId = ''; page = 1;
-  resetContext(); await loadData();
+  resetContext();
+  const epoch = state.epoch;
+  await loadData();
+  if (epoch !== state.epoch || currentView !== 'documents') return;
   const item = state.items.find(row => row.document_id === match.document_id);
   if (!item || !matchCurrentOriginal(match, item)) { notice('list-error', '当前列表没有相同版本的资料，请重新查找并核对；没有打开其他同名文件。'); return; }
   openDetail(match.document_id);
@@ -1519,7 +1522,7 @@ function clearFeedback() {
   $('feedback-items').replaceChildren();
 }
 
-function resetContext({ identity = false } = {}) {
+function resetContext({ identity = false, keepFeedback = false } = {}) {
   if (identity) { answerEntry++; answerCapabilityRefresh = null; answerCapabilityError = null; }
   voiceQuestionSession.reset();
   stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); tagSuggestionSession.close(); imageVectorSession.close(); audioVectorSession.close(); soundIndexSession.close(); videoAvIndexSession.close(); replacementSession.close();
@@ -1543,7 +1546,7 @@ function resetContext({ identity = false } = {}) {
   total = 0;
   totalPages = 0;
   closeDialog();
-  clearFeedback();
+  if (!keepFeedback) clearFeedback();
   notice('list-error');
   notice('global-error');
   if (identity) {
@@ -1614,9 +1617,10 @@ function loadDocuments({ preserveDetail = false } = {}) {
     if (!Array.isArray(result?.items) || !Number.isInteger(result.total) || !Number.isInteger(result.total_pages)) throw new Error('invalid page');
     total = result.total;
     totalPages = result.total_pages;
-    if (totalPages > 0 && page > totalPages) {
-      page = totalPages;
-      resetContext();
+    if (page > Math.max(totalPages, 1)) {
+      page = Math.max(totalPages, 1);
+      // Keep the result report of the write that emptied the last page.
+      resetContext({ keepFeedback: true });
       loadData();
       return;
     }
@@ -2406,7 +2410,9 @@ $('dialog-form').addEventListener('submit', event => {
       if (['sound', 'video-av'].includes(uploadKind)) {
         feedback(uploadKind === 'video-av' ? '原视频资料已保存' : '原声音资料已保存', [{ ok: true, detail: uploadKind === 'video-av' ? '可在详情显式建立原视频音画索引。保存原文件不会调用转录或音画模型。' : '可在资料详情显式建立声音索引。保存原文件不会调用转录或声音模型。' }]);
         navigate('documents');
+        const epoch = state.epoch;
         await loadData();
+        if (epoch !== state.epoch || currentView !== 'documents') return;
         openDetail(result.document_id);
         return;
       }
@@ -2519,7 +2525,7 @@ $('dialog-form').addEventListener('submit', event => {
       const items = intent.batch ? result.items : [{document_id: result.document_id, status: 'accepted', cleanup: result}];
       const accepted = items.filter(item => item.status === 'accepted').map(item => item.document_id);
       if (accepted.includes(state.detail?.document_id)) { stopDetailMedia(); originalSession.close(); stopSynopsisMedia(); synopsisSession.close(); state.closeDetail(); detailBaseline = null; renderDetails(); }
-      if (accepted.length) answerSession.reset(); resetRetrieval();
+      if (accepted.length) { answerSession.reset(); resetRetrieval(); }
       state.selectPage(false);
       feedback('清理请求结果', items.map(item => ({ok: item.status === 'accepted', detail: `${item.document_id}：${item.status === 'accepted' ? cleanupLabel(item.cleanup) : item.status === 'busy' ? '资料仍在处理，本次未撤下' : '资料不存在或当前不可操作'}`})));
       await loadData(); renderCleanupRecords();
