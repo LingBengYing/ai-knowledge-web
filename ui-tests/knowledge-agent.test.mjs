@@ -30,6 +30,34 @@ test('Agent safe failure codes have actionable distinct labels and never expose 
   session.close();
 });
 
+test('Agent model protocol and provider failures retain distinct fixed messages without retry', async () => {
+  const expected = new Map([
+    ['agent_model_tool_required', /工具调用/u],
+    ['agent_model_invalid', /格式/u],
+    ['agent_model_timeout', /超时/u],
+    ['agent_model_unavailable', /模型服务/u],
+  ]);
+  const messages = new Set();
+  for (const [code, label] of expected) {
+    const record = await checkedAgentRun({ ...run('failed'), error: { code, message: 'private-provider-secret' } }, runId);
+    assert.equal(record.error.code, code);
+    assert.match(record.error.message, label);
+    assert.doesNotMatch(record.error.message, /private-provider-secret/u);
+    messages.add(record.error.message);
+    let attempts = 0;
+    const session = new KnowledgeAgentSession({ createAgentRun: async () => { attempts++; return record; } });
+    await session.start('synthetic question');
+    await session.refresh();
+    assert.equal(session.value.phase, 'failed');
+    assert.equal(session.value.run.error.code, code);
+    assert.equal(attempts, 1);
+    session.close();
+  }
+  assert.equal(messages.size, expected.size);
+  const unknown = await checkedAgentRun({ ...run('failed'), error: { code: 'agent_callback_failed', message: 'private-provider-secret' } }, runId);
+  assert.doesNotMatch(unknown.error.message, /访问模型或资料接口失败|网络故障|private-provider-secret/u);
+});
+
 test('Agent exact JSON requests preserve UUID and question and reuse the ordinary same-origin client', async () => {
   const calls = [];
   const api = createKnowledgeAgentApi(createApi({ auth_mode: 'jwt' }, () => '', async (path, options) => {
