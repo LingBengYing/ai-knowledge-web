@@ -16,7 +16,7 @@
 
 0016新增`audio_vector_retrieval`能力及精确GET/POST `/v1/documents/{id}/audio-vector`，均无query/body。响应精确十字段status/document_id/publication_id/source_revision_id/source_sha256/profile_fingerprint/model_revision/dimensions/vector_generation_id/manifest_sha256；missing最后两项为null，available必须完整绑定，维度2..3072。当前editor显式POST，reader只GET；停止后明确GET核对，任何写操作不自动重试。AUDIO附件完整scope缺receipt显示`audio_vector_required`，query附件预算与typed原音频来源不变。
 
-0014新增能力voice_questions与精确POST /v1/voice-questions（无query），请求仅filename/media_type/content_base64单音频；响应必须精确八字段transcript/transcript_sha256/source_sha256/decoder_revision/model_revision/compiler_revision/duration_ms/policy_revision。核对full SHA和java-voice-question-v1后显示完整≤65536 UTF8字节预览；确认沿旧4096字节问题约束，随后仍发原问答端点与完整document_ids。独立28MiB/180秒/2在途，默认关闭且需当前证据模式answers/sources，不要求query_attachments。
+（2026-10-10：语音提问前端模块随旧经典页删除，两代理不再转发 `/v1/voice-questions`；以下为历史合同。）0014新增能力voice_questions与精确POST /v1/voice-questions（无query），请求仅filename/media_type/content_base64单音频；响应必须精确八字段transcript/transcript_sha256/source_sha256/decoder_revision/model_revision/compiler_revision/duration_ms/policy_revision。核对full SHA和java-voice-question-v1后显示完整≤65536 UTF8字节预览；确认沿旧4096字节问题约束，随后仍发原问答端点与完整document_ids。独立28MiB/180秒/2在途，默认关闭且需当前证据模式answers/sources，不要求query_attachments。
 
 0013新增GET /v1/documents/{id}/tag-suggestions及POST同路径/apply；能力tag_suggestions与file_synopsis/synopsis_sources共同有效且摘要available才显示建议流程。响应绑定当前摘要身份，POST只发suggestion_fingerprint和ordinals，成功返回既有资料行；409/404后显式刷新，不自动重发。普通JSON体积和期限保持。
 
@@ -122,4 +122,4 @@ JWT：由可信签发方提供现有合法 JWT；页面 POST `/v1/session`，Jav
 
 ## 0005 预览边界
 
-本地文件预览没有新增业务API，只增加preview.mjs静态资源与本地blob媒体CSP。库内记录不能仅凭filename生成媒体src；通用库内预览和Java typed媒体来源尚未接入本前端。历史[后端需求](changes/0005-media-preview/backend-integration.md)与当前文本sources是不同合同，不能把本地File预览或文本摘录回读当作远程媒体预览。
+（2026-10-10：preview.mjs随旧经典页删除，以下为历史。）本地文件预览没有新增业务API，只增加preview.mjs静态资源与本地blob媒体CSP。库内记录不能仅凭filename生成媒体src；通用库内预览和Java typed媒体来源尚未接入本前端。历史[后端需求](changes/0005-media-preview/backend-integration.md)与当前文本sources是不同合同，不能把本地File预览或文本摘录回读当作远程媒体预览。

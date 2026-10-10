@@ -331,16 +331,17 @@ test('the development server rejects port 80 before binding or forwarding', asyn
   await assert.rejects(startDevServer({ port: 80 }), error => error.code === 'invalid_port');
 });
 
-test('serves only six allowlisted files, with security headers and no directory/source access', async t => {
+test('serves only allowlisted files, with security headers and no directory/source access', async t => {
   const { origin } = await fixture(t);
-  for (const path of ['/', '/index.html', '/app.js', '/api.mjs', '/notices.mjs', '/workbench-state.mjs', '/styles.css']) {
+  for (const path of ['/', '/wiki-workspace.html', '/api.mjs', '/workbench-state.mjs', '/wiki-workspace.css']) {
     const response = await raw(origin, path);
     assert.equal(response.status, 200, path);
     assert.equal(response.headers['x-content-type-options'], 'nosniff');
     assert.match(response.headers['content-security-policy'], /default-src 'self'/);
     assert.match(response.headers['cache-control'], /no-store/);
   }
-  for (const path of ['/../README.md', '/%2e%2e/README.md', '/.env', '/scripts/dev-server.mjs', '/public/', '/app.js/more', '//example.invalid/v1/config']) {
+  for (const path of ['/../README.md', '/%2e%2e/README.md', '/.env', '/scripts/dev-server.mjs', '/public/', '/api.mjs/more', '//example.invalid/v1/config',
+    '/index.html', '/app.js', '/styles.css', '/classic/', '/preview.mjs', '/notices.mjs', '/voice-question.mjs', '/v1/voice-questions']) {
     assert.equal((await raw(origin, path)).status, 404, path);
   }
   assert.equal((await raw(origin, '/', { method: 'POST', headers: { Origin: origin } })).status, 405);
@@ -349,7 +350,7 @@ test('serves only six allowlisted files, with security headers and no directory/
 test('static symlinks cannot escape even through an allowlisted filename', async t => {
   const publicDirectory = await mkdtemp(join(tmpdir(), 'ai-knowledge-web-assets-'));
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));
-  await symlink(new URL('../README.md', import.meta.url), join(publicDirectory, 'index.html'));
+  await symlink(new URL('../README.md', import.meta.url), join(publicDirectory, 'wiki-workspace.html'));
   const { origin } = await fixture(t, undefined, { publicDirectory });
   const response = await raw(origin, '/');
   assert.equal(response.status, 404);
@@ -632,16 +633,16 @@ test('index writes retain ordinary deadline and never retry after an upstream fa
   assert.equal(calls, 2);
 });
 
-test('preview static module and local blob media are allowed without enabling remote media or API routes', async t => {
+test('PDF preview static module and local blob media are allowed without enabling remote media or API routes', async t => {
   const { origin } = await fixture(t);
-  const response = await raw(origin, '/preview.mjs');
+  const response = await raw(origin, '/pdf-preview.mjs');
   assert.equal(response.status, 200);
   assert.match(response.headers['content-security-policy'], /img-src 'self' data: blob:;/);
   assert.match(response.headers['content-security-policy'], /media-src 'self' blob:;/);
   assert.match(response.headers['content-security-policy'], /object-src blob:;/);
   assert.match(response.headers['content-security-policy'], /connect-src 'self';/);
   assert.equal((await raw(origin, '/v1/documents/demo/content')).status, 404);
-  assert.equal((await raw(origin, '/preview.mjs/more')).status, 404);
+  assert.equal((await raw(origin, '/pdf-preview.mjs/more')).status, 404);
 });
 
 test('answers module is an exact static asset, not a directory or arbitrary script allowance', async t => {
@@ -864,42 +865,6 @@ test('tag suggestion routes reject extra paths, query, read body and non-JSON wr
   assert.equal((await raw(origin, path + '/apply', { method: 'POST', headers, body: '{}' })).status, 415);
   assert.equal((await raw(origin, path + '/apply/more', { method: 'POST', headers })).status, 404);
   assert.equal(calls, 0);
-});
-
-test('voice question exact asset and POST use independent media JSON capacity', async t => {
-  const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-voice-')));
-  t.after(() => rm(publicDirectory, { recursive: true, force: true }));
-  await writeFile(join(publicDirectory, 'voice-question.mjs'), 'export const synthetic = true;');
-  const seen = [];
-  const { origin } = await fixture(t, (req, res) => {
-    const chunks = []; req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => { seen.push({ path: req.url, body: Buffer.concat(chunks).toString() }); res.setHeader('Content-Type', 'application/json'); res.end('{}'); });
-  }, { publicDirectory, requestBytes: 8, voiceBytes: 1024 });
-  const headers = { Origin: origin, Cookie: sessionPair, 'Content-Type': 'application/json' };
-  assert.equal((await raw(origin, '/voice-question.mjs', { headers })).status, 200);
-  const body = JSON.stringify({ filename: 'voice.wav', media_type: 'audio/wav', content_base64: 'AQID' });
-  assert.equal((await raw(origin, '/v1/voice-questions', { method: 'POST', headers, body })).status, 200);
-  assert.deepEqual(seen, [{ path: '/v1/voice-questions', body }]);
-  assert.equal((await raw(origin, '/v1/management/folders', { method: 'POST', headers, body })).status, 413);
-  assert.equal((await raw(origin, '/v1/voice-questions', { method: 'POST', headers, body: 'x'.repeat(1025) })).status, 413);
-  assert.equal((await raw(origin, '/v1/voice-questions?', { method: 'POST', headers, body })).status, 400);
-  assert.equal((await raw(origin, '/v1/voice-questions', { headers })).status, 405);
-  assert.equal((await raw(origin, '/v1/voice-questions', { method: 'POST', headers: { Origin: origin }, body })).status, 415);
-  assert.equal((await raw(origin, '/v1/voice-questions/extra', { method: 'POST', headers, body })).status, 404);
-  assert.equal((await raw(origin, '/voice-question.mjs?', { headers })).status, 400);
-  assert.equal(seen.length, 1);
-});
-
-test('voice transport retains its own deadline and two slots without retrying', async t => {
-  let calls = 0;
-  const { origin } = await fixture(t, (_req, res) => { calls++; setTimeout(() => res.end('{}'), 70); }, { deadlineMs: 15, voiceDeadlineMs: 250 });
-  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
-  const pending = [raw(origin, '/v1/voice-questions', options), raw(origin, '/v1/voice-questions', options)];
-  await new Promise(resolve => setTimeout(resolve, 20));
-  assert.equal((await raw(origin, '/v1/voice-questions', options)).status, 429);
-  assert.deepEqual((await Promise.all(pending)).map(response => response.status), [200, 200]);
-  assert.equal(calls, 2);
-  assert.equal((await raw(origin, '/v1/management/tags')).status, 504); assert.equal(calls, 3);
 });
 
 test('image vector exact reads and bodyless builds use independent build deadline and retain browser boundaries', async t => {

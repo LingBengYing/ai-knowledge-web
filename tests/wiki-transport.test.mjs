@@ -250,7 +250,7 @@ test('only draft POST and PUT admit the exact 512 KiB draft body on both transpo
   }
 });
 
-test('Wiki root entry and classic alias serve distinct exact assets without exposing preview data', async t => {
+test('Wiki is the only root entry, the removed classic page is never served and preview data stays hidden', async t => {
   const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'wiki-transport-assets-')));
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));
   const files = { 'wiki-workspace.html': '<main>Live Wiki</main>', 'index.html': '<main>Classic management</main>',
@@ -258,37 +258,32 @@ test('Wiki root entry and classic alias serve distinct exact assets without expo
     'wiki-retrieval.mjs': 'export const retrieval = true;', 'wiki-maintenance.mjs': 'export const maintenance = true;',
     'wiki-workspace.css': 'body { color: green; }', 'wiki-preview.css': 'body { margin: 0; }' };
   await Promise.all(Object.entries(files).map(([name, content]) => writeFile(join(publicDirectory, name), content)));
-  const { origin } = await fixture(t, undefined, { publicDirectory, wikiEntry: true });
+  const { origin } = await fixture(t, undefined, { publicDirectory });
   assert.equal((await raw(origin, '/')).body, files['wiki-workspace.html']);
-  assert.equal((await raw(origin, '/classic/')).body, files['index.html']);
-  assert.equal((await raw(origin, '/index.html')).body, files['index.html']);
+  for (const path of ['/classic/', '/index.html', '/app.js', '/styles.css']) assert.equal((await raw(origin, path)).status, 404, path);
   for (const path of ['/wiki/', '/wiki-workspace.html', '/wiki-workspace.mjs', '/wiki-workspace-api.mjs', '/wiki-retrieval.mjs', '/wiki-maintenance.mjs', '/wiki-workspace.css', '/wiki-preview.css']) {
     const response = await raw(origin, path); assert.equal(response.status, 200, path); assert.match(response.headers['cache-control'], /no-store/u);
     assert.equal((await raw(origin, path, { method: 'HEAD' })).status, 200, path);
     assert.equal((await raw(origin, path, { method: 'POST', headers: { Origin: origin } })).status, 405, path);
   }
   for (const path of ['/wiki-preview-data.mjs', '/wiki-workspace.mjs/extra', '/%77iki-workspace.mjs']) assert.equal((await raw(origin, path)).status, 404, path);
-  const ordinary = await fixture(t, undefined, { publicDirectory });
-  assert.equal((await raw(ordinary.origin, '/')).body, files['index.html'], 'non-Wiki developer entry is unchanged');
-  const external = await fixture(t, undefined, { publicDirectory, wikiEntry: true }, true);
+  const external = await fixture(t, undefined, { publicDirectory }, true);
   const headers = { Host: new URL(publicOrigin).host, Cookie: sessionPair };
-  assert.equal((await raw(external.origin, '/', { headers })).body, files['wiki-workspace.html'], 'production entry can select the live Wiki root');
-  assert.equal((await raw(external.origin, '/classic/', { headers })).body, files['index.html']);
+  assert.equal((await raw(external.origin, '/', { headers })).body, files['wiki-workspace.html'], 'production entry serves the live Wiki root');
+  for (const path of ['/classic/', '/index.html', '/app.js', '/styles.css']) assert.equal((await raw(external.origin, path, { headers })).status, 404, path);
   for (const name of ['wiki-retrieval.mjs', 'wiki-maintenance.mjs']) {
     assert.equal((await raw(external.origin, `/${name}`, { headers })).body, files[name]);
     assert.equal((await raw(external.origin, `/${name}/extra`, { headers })).status, 404);
     assert.equal((await raw(external.origin, `/${name}?x=1`, { headers })).status, 400);
   }
-  assert.equal((await raw(external.origin, '/', { headers: { Host: headers.Host } })).status, 303, 'the root selection preserves standard session enforcement');
-  const ordinaryExternal = await fixture(t, undefined, { publicDirectory }, true);
-  assert.equal((await raw(ordinaryExternal.origin, '/', { headers })).body, files['index.html'], 'default production entry remains unchanged');
+  assert.equal((await raw(external.origin, '/', { headers: { Host: headers.Host } })).status, 303, 'the Wiki root preserves standard session enforcement');
 });
 
 test('Wiki named static assets reject query strings on the exact allowlist', async t => {
   const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'wiki-transport-query-assets-')));
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));
   await writeFile(join(publicDirectory, 'wiki-workspace.mjs'), 'export const live = true;');
-  const { origin } = await fixture(t, undefined, { publicDirectory, wikiEntry: true });
+  const { origin } = await fixture(t, undefined, { publicDirectory });
   assert.equal((await raw(origin, '/wiki-workspace.mjs?')).status, 400);
   assert.equal((await raw(origin, '/wiki-workspace.mjs?target=http://other.invalid')).status, 400);
 });

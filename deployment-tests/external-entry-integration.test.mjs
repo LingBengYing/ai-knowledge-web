@@ -67,7 +67,7 @@ test('external entry connects real isolated Java JAR: anonymous login, JWT excha
   assert.ok(cookie?.includes('Secure') && cookie.includes('HttpOnly') && cookie.includes('SameSite=Strict'));
   const headers = { Cookie: cookie.split(';', 1)[0] };
   assert.equal((await request(origin, '/', { headers })).status, 200);
-  assert.equal((await request(origin, '/app.js', { headers })).status, 200);
+  assert.equal((await request(origin, '/wiki-workspace.mjs', { headers })).status, 200);
   assert.equal((await request(origin, '/v1/config', { headers })).status, 200);
   assert.equal((await request(origin, '/v1/management/documents', { headers })).status, 200);
   const foreign = await request(origin, '/v1/session', { method: 'POST', headers: { Origin: 'https://other.example.invalid', 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });

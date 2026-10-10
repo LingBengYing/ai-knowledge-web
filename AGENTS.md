@@ -1,6 +1,8 @@
 # AI Knowledge Web：智能体工作约定
 
-2026-10-10 清理无用前端：已删除0041静态Wiki预览（wiki-preview.html/.mjs/-data.mjs、scripts/wiki-preview-server.mjs、`npm run dev:wiki`及其测试）和已撤下的独立产品帮助模块（product-help.mjs及两代理的`/v1/product-help/search`转发），并清理仅被它们使用的CSS。`wiki-preview.css`仍由真实工作台加载，不可删除；`/classic/`保留待负责人决定。下方提到`dev:wiki`/`#/product-help`的条目均为历史。
+2026-10-10 删除旧经典管理页：负责人确认不含 DB-GPT 知识问答的旧页面基本无人使用，已删除 public/index.html、app.js、styles.css 及仅被它使用的 preview.mjs、notices.mjs、voice-question.mjs，三处服务入口不再提供 `/classic/`、`/index.html`、`/app.js`、`/styles.css`，并删除 `/v1/voice-questions` 转发和 `RAG_WEB_WIKI_ENTRY` 开关（根路径 `/` 始终为 wiki-workspace.html）。对应只测旧页面的 ui-tests 已删除。下方提到 app.js、`/classic/`、语音提问或本地文件预览的条目均为历史。
+
+2026-10-10 清理无用前端：已删除0041静态Wiki预览（wiki-preview.html/.mjs/-data.mjs、scripts/wiki-preview-server.mjs、`npm run dev:wiki`及其测试）和已撤下的独立产品帮助模块（product-help.mjs及两代理的`/v1/product-help/search`转发），并清理仅被它们使用的CSS。`wiki-preview.css`仍由真实工作台加载，不可删除；`/classic/`当时保留待负责人决定（已于同日删除，见上条）。下方提到`dev:wiki`/`#/product-help`的条目均为历史。
 
 2026-10-09 Git 同步授权：负责人要求推送，并明确其他智能体的问答改动“也一起提交”。本次包含0039–0043；真实工作台使用 `dev:workspace`，`dev:wiki`仅历史静态预览。先读0042/0043四工件，区分Wiki真实单TXT建设验证和Agent本机替身验证；完整586项未单轮全绿，不借旧576结果认证新问答。只提交推送、不部署或调用模型，密钥/数据/运行日志不提交；下方未推送与静态入口描述为历史。
 

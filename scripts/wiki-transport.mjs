@@ -9,7 +9,6 @@ export const WIKI_ASSETS = [
   ['/knowledge-agent.mjs', ['knowledge-agent.mjs', 'text/javascript; charset=utf-8']],
   ['/wiki-workspace.css', ['wiki-workspace.css', 'text/css; charset=utf-8']],
   ['/wiki-preview.css', ['wiki-preview.css', 'text/css; charset=utf-8']],
-  ['/classic/', ['index.html', 'text/html; charset=utf-8']],
 ];
 
 export const WIKI_ROUTES = [

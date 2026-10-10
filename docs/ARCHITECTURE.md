@@ -1,5 +1,7 @@
 # Architecture
 
+2026-10-10当前入口：唯一页面为 `wiki-workspace.html` + `wiki-workspace.mjs`（按需加载 wiki-retrieval.mjs / wiki-maintenance.mjs，问答经 knowledge-agent.mjs）。dev-server、wiki-workspace-server 与 external-server 的根路径 `/` 都返回该页面；旧经典页（index.html、app.js、styles.css、preview.mjs、notices.mjs、voice-question.mjs）及 `/classic/` 已删除。下文提到 app.js 的段落为历史。
+
 0039共享工作区：AnswerSession和RetrievalSession只构造问题/检索参数，不再保存或发送文档范围；app的资料选择仅服务正常批量维护。前端不以reader/can_edit隐藏动作，仍核对会话、服务capability、当前资料/任务/版本状态。Java0053负责组织边界、一次原文综合与真实来源。统一知识引用代理接受任意正整数编号，仍精确匹配相对路由；来源身份/版本/SHA及取消清理保持。以下旧范围/角色描述为历史。
 
 0016新增`audio-vectors.mjs`隐藏十字段验证、独立GET/POST、身份/资料/权限epoch、忙碌与停止后的结果未知状态。app以当前indexed audio及实际audio能力装配独立详情panel，刷新保留整理form/草稿，图片与音频panel分别匹配资料类型。两个代理仅增加精确模块资产和audio-vector GET/POST，POST180秒、GET普通期限，原信任和上传预算保持。问答仍由旧附件/AnswerSession发送完整scope和打开服务器库内来源。
@@ -23,9 +25,9 @@
 
 ```text
 Browser http://127.0.0.1:18085
-  public/app.js → api.mjs → same-origin /v1/*
+  public/wiki-workspace.mjs → api.mjs → same-origin /v1/*
        │
-  workbench-state.mjs + answers.mjs + notices.mjs
+  workbench-state.mjs + answers.mjs + knowledge-agent.mjs
        ↓
 Node local Dev Transport Module
   exact Host/Origin/fetch-site check → route/method/header allowlist
@@ -50,7 +52,7 @@ Java Authentication / Management / Text Ingestion / Text Indexing / Answer Modul
 
 只转发 Accept、identity 编码、生成的 request ID、JSON或精确上传binary Content-Type、显式开发身份头和单个 `rag_session` Cookie。任何 Authorization 头直接400拒绝，不得静默丢弃后退回Cookie；其他Cookie、其他身份/转发头不会传递。浏览器JWT通过会话POST body交换；这不是通用Bearer API网关，Bearer CLI应直接调用Java接口。
 
-静态allowlist包含index.html、app.js、api.mjs、answers.mjs、preview.mjs、notices.mjs、workbench-state.mjs、styles.css八个文件；拒绝 symlink、非普通文件、超1MiB文件与符号链接根目录。目录 listing、README、配置、脚本、数据库不公开；不提供 SPA 任意路径 fallback。
+静态allowlist为脚本中精确列出的工作台页面、模块、CSS与PDF资源（根路径 `/` 即 wiki-workspace.html）；拒绝 symlink、非普通文件、超1MiB文件与符号链接根目录。目录 listing、README、配置、脚本、数据库不公开；不提供 SPA 任意路径 fallback。
 
 JSON请求体128KiB、普通请求从接收请求到读完上游响应总计10秒。精确文本上传POST允许20MiB/30秒，最多两个上传exchange在途（超出429）；精确POST `/v1/answers`独立180秒，GET文本来源仍为10秒。header仍10秒，所有后端响应仍4MiB。测试只能向小方向配置限值。该deadline不包含向慢浏览器排空响应的时间。问答和来源拒绝query、编码ID、自由URL与额外动作；来源GET无body。请求/响应先完整限长再转发/提交，无流式大文件、SSE、WebSocket；不跟随3xx、不重试。只转发响应Content-Type、WWW-Authenticate和限定会话Cookie；不转发Location、CORS、其他Cookie或内部头。安全错误不含内部异常、原文、凭据。
 
