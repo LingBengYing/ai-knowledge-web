@@ -153,6 +153,12 @@ function singleHeader(req, name, status = 400) {
   return values[0];
 }
 
+// Links from chat apps, mail or other sites open pages as cross-site navigations; APIs stay same-origin only.
+function pageNavigation(req) {
+  return ['GET', 'HEAD'].includes(req.method) && !req.url.startsWith('/v1/')
+    && singleHeader(req, 'sec-fetch-mode', 403) === 'navigate' && singleHeader(req, 'sec-fetch-dest', 403) === 'document';
+}
+
 function validateBrowserBoundary(req, publicOrigin) {
   const address = publicAddress(publicOrigin);
   if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) {
@@ -166,7 +172,7 @@ function validateBrowserBoundary(req, publicOrigin) {
   const origin = singleHeader(req, 'origin', 403);
   if (origin !== undefined && origin !== publicOrigin) throw new TransportError(403, 'origin_denied');
   const site = singleHeader(req, 'sec-fetch-site', 403);
-  if (site !== undefined && !['same-origin', 'none'].includes(site)) throw new TransportError(403, 'origin_denied');
+  if (site !== undefined && !['same-origin', 'none'].includes(site) && !pageNavigation(req)) throw new TransportError(403, 'origin_denied');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !origin) throw new TransportError(403, 'origin_required');
   return origin;
 }
