@@ -83,7 +83,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   let original, pdf, workflow, objectUrls = [], pendingConfirmation = null;
   let modelSession, rebuildSession, renderedModelVersion, modelLocalError = '';
   let activeQuestion = null, pendingQuestion = null, pendingPurge = false;
-  let renderedChatContainer, renderedChatMarkup;
+  let renderedChatContainer, renderedChatMarkup, renderedToolsContainer, renderedToolsMarkup;
   Object.assign(state, { conversations: [], conversation: null, conversationMore: false, conversationRenaming: false, conversationCreating: false });
   const isCurrent = value => value === epoch;
   const notify = message => { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000); };
@@ -252,7 +252,20 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       renderedChatContainer = container; renderedChatMarkup = markup;
     }
     $('question-submit').disabled = state.conversationCreating || state.turns.some(turn => turn.pending);
-    if ($('conversation-tools') && !state.conversationRenaming) $('conversation-tools').innerHTML = conversationTools();
+    if ($('conversation-tools') && !state.conversationRenaming) renderConversationTools();
+  }
+  function renderConversationTools() {
+    const container = $('conversation-tools'), markup = conversationTools();
+    if (container === renderedToolsContainer && markup === renderedToolsMarkup) return;
+    container.innerHTML = markup; renderedToolsContainer = container; renderedToolsMarkup = markup;
+  }
+  function conversationTitle(question) {
+    let title = '';
+    for (const character of question.replace(/[\s\u0000-\u001f\u007f-\u009f]+/gu, ' ').trim()) {
+      if (title.length + character.length > 200) break;
+      title += character;
+    }
+    return title || undefined;
   }
   function conversationTools() {
     const current = state.conversation;
@@ -588,8 +601,11 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     try {
       const [detail, list] = await Promise.all([wiki.getConversation(id), wiki.listConversations()]);
       if (!isCurrent(captured) || state.conversation?.id !== id) return;
-      state.conversation = detail.conversation; state.conversations = list.items; state.conversationMore = list.items.length === list.limit;
-      if (!state.conversationRenaming) $('conversation-tools').innerHTML = conversationTools();
+      state.conversation = detail.conversation;
+      const refreshed = new Set(list.items.map(item => item.id)), loaded = state.conversations.length;
+      state.conversations = [...list.items, ...state.conversations.filter(item => !refreshed.has(item.id))];
+      if (loaded <= list.limit) state.conversationMore = list.items.length === list.limit;
+      if (!state.conversationRenaming) renderConversationTools();
       $('conversation-list').innerHTML = conversationList();
     } catch (error) { if (isCurrent(captured)) notify(`对话列表未刷新：${errorMessage(error)}`); }
   }
@@ -609,7 +625,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (state.agentConfig.enabled && !state.conversation) {
       const captured = epoch; state.conversationCreating = true; state.question = cleaned; render();
       try {
-        const conversation = await wiki.createConversation({ title: cleaned.replace(/\s+/gu, ' ').slice(0, 200) });
+        const conversation = await wiki.createConversation({ title: conversationTitle(cleaned) });
         if (!isCurrent(captured)) return;
         state.conversation = conversation; state.conversations = [conversation, ...state.conversations.filter(item => item.id !== conversation.id)];
         state.route = { view: 'ask', id: conversation.id };
@@ -735,8 +751,8 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (action === 'stop-agent') { await agentAction(state.turns[Number(target.dataset.turn)], 'cancel'); return; }
     if (action === 'refresh-agent') { await agentAction(state.turns[Number(target.dataset.turn)], 'refresh'); return; }
     if (action === 'new-chat') { abandonQuestion(); state.turns = []; state.question = ''; state.conversation = null; state.conversationRenaming = false; navigate('#/ask'); }
-    if (action === 'rename-conversation') { state.conversationRenaming = true; $('conversation-tools').innerHTML = conversationTools(); $('conversation-title').focus(); }
-    if (action === 'cancel-conversation-rename') { state.conversationRenaming = false; $('conversation-tools').innerHTML = conversationTools(); }
+    if (action === 'rename-conversation') { state.conversationRenaming = true; renderConversationTools(); $('conversation-title').focus(); }
+    if (action === 'cancel-conversation-rename') { state.conversationRenaming = false; renderConversationTools(); }
     if (action === 'delete-conversation' && state.conversation) {
       const id = state.conversation.id;
       if (state.turns.some(turn => turn.pending)) { notify('请先停止当前任务再删除对话。'); return; }
