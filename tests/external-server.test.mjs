@@ -675,3 +675,16 @@ test('open agent event streams do not use up the ordinary request capacity', asy
   assert.equal(await get('/v1/knowledge-agent/runs/run-32/events'), 429);
   assert.equal(await get('/v1/knowledge-conversations'), 200);
 });
+
+test('pages opened from links on other sites load, while cross-site API reads stay denied', async t => {
+  const { origin } = await fixture(t);
+  const navigation = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
+  assert.equal((await raw(origin, '/', { headers: { ...navigation, Cookie: sessionPair } })).status, 200);
+  assert.equal((await raw(origin, '/', { headers: { ...navigation, 'Sec-Fetch-Site': 'same-site', Cookie: sessionPair } })).status, 200);
+  const signedOut = await raw(origin, '/', { headers: navigation });
+  assert.equal(signedOut.status, 303); assert.equal(signedOut.headers.location, '/login');
+  assert.equal((await raw(origin, '/login', { headers: navigation })).status, 200);
+  assert.equal((await raw(origin, '/v1/documents/doc-one/original', { headers: { ...navigation, Cookie: sessionPair } })).status, 403);
+  assert.equal((await raw(origin, '/', { headers: { ...navigation, 'Sec-Fetch-Mode': 'no-cors', Cookie: sessionPair } })).status, 403);
+  assert.equal((await raw(origin, '/', { headers: { ...navigation, 'Sec-Fetch-Dest': 'iframe', Cookie: sessionPair } })).status, 403);
+});
