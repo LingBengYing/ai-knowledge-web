@@ -1,12 +1,18 @@
 # API Connection
 
+## 0053 SSE 实时问答
+
+POST创建任务一次后，fetch读取 `GET /v1/knowledge-agent/runs/{id}/events`。SSE `snapshot`/`terminal` 的 `data={revision,run}`，独立revision递增，run新增未确认的累计preview。服务端每个模型增量更新快照，前端不模拟打字、不按轮询等待完整响应。思考只显示实际reasoning_content；最终result与引用通过后替换preview。失败/取消清空临时回答。
+
+两个入口代理对精确events路径逐块转发、背压与断连释放，设置no-cache、X-Accel-Buffering:no；普通JSON/上传期限与限额不变。SSE断开不重POST问题，刷新/手动恢复只附着同一任务。最终对话记录继续原持久化合同。详见[0053](changes/0053-agent-sse-streaming/spec.md)。
+
 ## 0051 持久对话
 
 GET/POST `/v1/knowledge-conversations` 用于分页列表/创建，列表只接受limit、offset。
 GET/PATCH/DELETE `/v1/knowledge-conversations/{id}` 用于完整历史/改名/删除。
 POST Agent run可带conversation_id，仍有独立request_id防重；刷新历史不调用模型。
 删除bodyless且需页面确认；活动任务409，先停止再删除。配置engine为knowledge-native-agent。
-公开结果仅含问题、答案、任务状态/引用与压缩统计，不包含内部摘要或模型私有思考。
+公开结果包含问题、答案、任务状态/引用与压缩统计，不包含内部压缩摘要。0052起单独展示上游实际返回的reasoning_content；它不作证据，也不进入后续对话/压缩背景。
 
 0039新合同：浏览器问答/召回请求不发送document_ids，旧客户端参数视为废弃。问题不再限制4096字节；召回scope_count不限128，统一知识引用knowledge-sources编号不限32。登录/同源、精确来源路径及版本/SHA保持；普通128KiB JSON请求、4MiB响应、媒体字节与期限等物理保护未取消。角色权限仅保留兼容响应字段，不作为本UI动作门禁。以下旧选中范围/reader行为已由后端0053与[0039规格](changes/0039-shared-workspace/spec.md)替代。
 

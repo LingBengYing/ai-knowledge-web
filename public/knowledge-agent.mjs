@@ -98,7 +98,7 @@ const progressPhases = Object.freeze({
   cancelled: ['查阅已取消', '服务器已确认本次任务取消。', '已取消'],
 });
 
-/** A view of observed operations only; polling does not create a business stage. */
+/** A view of observed operations only; stream transport does not create a business stage. */
 export function agentProgressView({ phase, run } = {}) {
   const active = ['submitting', 'running', 'reading'].includes(phase);
   const observed = Array.isArray(run?.events) ? run.events.filter(event => event
@@ -143,6 +143,7 @@ export async function checkedAgentRun(value, expectedId) {
   });
   if (value.status === 'completed' ? !value.result || value.error !== null : value.result !== null) throw invalid();
   if (value.status === 'failed' ? !value.error || !Object.hasOwn(failureMessages, value.error.code) || !validText(value.error.message) : value.error !== null) throw invalid();
+  if (value.preview !== undefined && value.preview !== null && typeof value.preview !== 'string') throw invalid();
   const suggestions = value.suggestions.map(item => {
     if (!item || !validText(item.title) || !validText(item.reason) || !Array.isArray(item.document_ids)
       || !item.document_ids.length || item.document_ids.some(id => typeof id !== 'string' || !identifier.test(id))
@@ -150,7 +151,8 @@ export async function checkedAgentRun(value, expectedId) {
     return Object.freeze({ title: item.title, reason: item.reason, document_ids: Object.freeze([...item.document_ids]) });
   });
   return Object.freeze({ id: value.id, status: value.status, events: Object.freeze(safeEvents), result: value.result === null ? null : await checkedKnowledgeAnswer(value.result),
-    suggestions: Object.freeze(suggestions), error: value.error === null ? null : checkedFailure(value.error) });
+    suggestions: Object.freeze(suggestions), error: value.error === null ? null : checkedFailure(value.error),
+    preview: value.status === 'running' ? value.preview ?? '' : '' });
 }
 
 export function createKnowledgeAgentApi(api) {
@@ -166,35 +168,62 @@ export function createKnowledgeAgentApi(api) {
       return checkedAgentRun(await api('/v1/knowledge-agent/runs', { method: 'POST', body, signal }));
     },
     getAgentRun: async (id, { signal } = {}) => checkedAgentRun(await api(`/v1/knowledge-agent/runs/${checkedId(id)}`, { signal }), id),
+    streamAgentRun: async (id, { signal, onSnapshot } = {}) => {
+      checkedId(id);
+      if (typeof onSnapshot !== 'function') throw inputError();
+      let previousRevision = -1;
+      return api(`/v1/knowledge-agent/runs/${id}/events`, { signal, onEvent: async frame => {
+        if (!['snapshot', 'terminal'].includes(frame.event) || !/^(?:0|[1-9][0-9]*)$/u.test(frame.id)) throw invalid();
+        let value;
+        try { value = JSON.parse(frame.data); } catch { throw invalid(); }
+        if (!Number.isSafeInteger(value?.revision) || value.revision < 0 || String(value.revision) !== frame.id) throw invalid();
+        const run = await checkedAgentRun(value.run, id);
+        if ((frame.event === 'snapshot') !== (run.status === 'running')) throw invalid();
+        if (value.revision > previousRevision) {
+          previousRevision = value.revision;
+          await onSnapshot(run, value.revision);
+        }
+        return frame.event === 'terminal';
+      } });
+    },
     cancelAgentRun: async (id, { signal } = {}) => checkedAgentRun(await api(`/v1/knowledge-agent/runs/${checkedId(id)}/cancel`, { method: 'POST', body: {}, signal }), id),
   });
 }
 
-/** One explicit write per action, read-only polling, and a new ticket for cancel/close. */
+/** One explicit write per action, one read-only SSE attachment, no implicit reconnect. */
 export class KnowledgeAgentSession {
-  #api; #onChange; #pollDelay; #requestId; #epoch = 0; #timer; #controller;
+  #api; #onChange; #requestId; #epoch = 0; #controller;
   value = Object.freeze({ phase: 'idle', run: null, error: null });
-  constructor(api, { onChange = () => {}, pollDelay = 1200, requestId = () => crypto.randomUUID() } = {}) {
-    this.#api = api; this.#onChange = onChange; this.#pollDelay = pollDelay; this.#requestId = requestId;
+  constructor(api, { onChange = () => {}, requestId = () => crypto.randomUUID() } = {}) {
+    this.#api = api; this.#onChange = onChange; this.#requestId = requestId;
   }
   #publish(phase, run = this.value.run, error = null) {
     if (run?.error) run = Object.freeze({ ...run, error: checkedFailure(run.error) });
     this.value = Object.freeze({ phase, run, error }); this.#onChange(this.value);
   }
-  #begin() { clearTimeout(this.#timer); this.#controller?.abort(); this.#controller = new AbortController(); return ++this.#epoch; }
+  #begin() { this.#controller?.abort(); this.#controller = new AbortController(); return ++this.#epoch; }
   #accept(run) {
     const previous = this.value.run;
     if (previous && (previous.id !== run.id || previous.events.length > run.events.length
       || previous.events.some((event, index) => event.sequence !== run.events[index]?.sequence || event.type !== run.events[index]?.type))) throw invalid();
     this.#publish(run.status, run);
-    if (run.status === 'running') this.#timer = setTimeout(() => this.refresh(), this.#pollDelay);
+  }
+  async #watch(ticket) {
+    if (ticket !== this.#epoch || this.value.run?.status !== 'running') return;
+    try {
+      await this.#api.streamAgentRun(this.value.run.id, { signal: this.#controller.signal,
+        onSnapshot: run => { if (ticket === this.#epoch) this.#accept(run); } });
+      if (ticket === this.#epoch && this.value.run?.status === 'running') throw invalid();
+    } catch (error) {
+      if (ticket === this.#epoch && this.value.run?.status === 'running') this.#publish('unknown', this.value.run, failure(error));
+    }
   }
   async start(question, { conversationId } = {}) {
     if (['submitting', 'running', 'reading', 'cancelling'].includes(this.value.phase)) return this.value;
     const ticket = this.#begin(); this.#publish('submitting', null);
     try {
       const run = await this.#api.createAgentRun({ ...answerRequest(question), request_id: this.#requestId(), ...(conversationId ? { conversation_id: conversationId } : {}) }, { signal: this.#controller.signal });
-      if (ticket === this.#epoch) this.#accept(run);
+      if (ticket === this.#epoch) { this.#accept(run); void this.#watch(ticket); }
     } catch (error) { if (ticket === this.#epoch) this.#publish('unknown', null, failure(error)); }
     return this.value;
   }
@@ -202,7 +231,7 @@ export class KnowledgeAgentSession {
     const id = this.value.run?.id;
     if (!id || ['submitting', 'reading', 'cancelling', 'completed', 'failed', 'cancelled'].includes(this.value.phase)) return this.value;
     const ticket = this.#begin(); this.#publish('reading');
-    try { const run = await this.#api.getAgentRun(id, { signal: this.#controller.signal }); if (ticket === this.#epoch) this.#accept(run); }
+    try { const run = await this.#api.getAgentRun(id, { signal: this.#controller.signal }); if (ticket === this.#epoch) { this.#accept(run); void this.#watch(ticket); } }
     catch (error) { if (ticket === this.#epoch) this.#publish('unknown', this.value.run, failure(error)); }
     return this.value;
   }
@@ -214,9 +243,9 @@ export class KnowledgeAgentSession {
     const id = this.value.run?.id;
     if (!id || !['running', 'reading', 'unknown'].includes(this.value.phase)) return this.value;
     const ticket = this.#begin(); this.#publish('cancelling');
-    try { const run = await this.#api.cancelAgentRun(id, { signal: this.#controller.signal }); if (ticket === this.#epoch) this.#accept(run); }
+    try { const run = await this.#api.cancelAgentRun(id, { signal: this.#controller.signal }); if (ticket === this.#epoch) { this.#accept(run); void this.#watch(ticket); } }
     catch (error) { if (ticket === this.#epoch) this.#publish('unknown', this.value.run, failure(error)); }
     return this.value;
   }
-  close() { this.#epoch++; clearTimeout(this.#timer); this.#controller?.abort(); }
+  close() { this.#epoch++; this.#controller?.abort(); }
 }

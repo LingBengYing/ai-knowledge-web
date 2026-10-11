@@ -85,6 +85,7 @@ function fixture(hash = '#/home', overrides = {}, config) {
     listProposals: list([proposal]), listDrafts: list([draft]), getPage: async () => knowledge, getPageVersion: async () => knowledge,
     getProposal: async () => proposal, getDraft: async () => draft, getSettings: async () => settings,
     getAgentConfig: async () => ({ enabled: false, engine: 'knowledge-native-agent', max_steps: 8 }),
+    streamAgentRun: (_id, { signal }) => new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })),
     listConversations: async ({ offset = 0, limit = 30 } = {}) => ({ items: [], offset, limit }),
     createConversation: async command => ({ ...conversation, ...command }),
     getConversation: async id => ({ conversation: { ...conversation, id }, turns: [] }),
@@ -543,6 +544,52 @@ test('Agent shows received tool metadata and provider reasoning as separate esca
   assert.match(html, /文档文字 · 文本分段 3/u); assert.match(html, /evidence_changed/u);
   assert.doesNotMatch(html, /<script>|<img src=x>|<b>合成资料|href="https:|untrusted stage content/u);
   assert.doesNotMatch(html, /data-chat-detail="event:2:reasoning"|data-chat-detail="event:1:reasoning" open/u);
+});
+
+test('SSE renders reasoning and answer prefixes during generation without premature citations or save action', async t => {
+  let update, creates = 0;
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }),
+    createAgentRun: async () => { creates++; return { ...agentRun(), events: [] }; },
+    streamAgentRun: (_id, { signal, onSnapshot }) => { update = onSnapshot; return new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); },
+  }); t.after(() => f.workspace.close());
+  await f.workspace.start(); await f.submit('question-form', [['question', '合成流式问题']]);
+  const running = { ...agentRun(), preview: '', events: [{ sequence: 1, type: 'planning', message: 'ignored', details: {
+    status: 'running', tool_name: 'model', reasoning: '第一段<思考>',
+  } }] };
+  update(running);
+  let html = f.nodes.get('chat-turns').innerHTML;
+  assert.match(html, /data-chat-detail="event:1:reasoning" open/u);
+  assert.match(html, /模型思考 · 生成中/u); assert.match(html, /第一段&lt;思考&gt;/u);
+  assert.equal(f.workspace.state.turns[0].pending, true); assert.equal(f.workspace.state.turns[0].result, null);
+  update({ ...running, preview: '答案<前半句>' }); html = f.nodes.get('chat-turns').innerHTML;
+  assert.match(html, /class="answer-preview"/u); assert.match(html, /答案&lt;前半句&gt;/u);
+  assert.doesNotMatch(html, /data-action="save-answer"|answer-reference-list/u);
+  update({ ...running, preview: '答案<前半句>继续输出' });
+  assert.match(f.nodes.get('chat-turns').innerHTML, /继续输出/u);
+  update({ ...agentRun('completed'), events: running.events.map(event => ({ ...event, details: { ...event.details, status: 'completed' } })), preview: '' });
+  html = f.nodes.get('chat-turns').innerHTML;
+  assert.doesNotMatch(html, /answer-preview|答案&lt;前半句&gt;/u);
+  assert.match(html, /缺少完整资料|data-action="save-answer"/u);
+  assert.equal(creates, 1); assert.equal(f.workspace.state.turns[0].pending, false);
+});
+
+test('SSE updates respect manually collapsed reasoning and failed stream output is not a final answer', async t => {
+  let update;
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => ({ ...agentRun(), events: [] }),
+    streamAgentRun: (_id, { signal, onSnapshot }) => { update = onSnapshot; return new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); },
+  }); t.after(() => f.workspace.close()); await f.workspace.start(); await f.submit('question-form', [['question', 'q']]);
+  const running = { ...agentRun(), preview: '未完成前缀', events: [{ sequence: 1, type: 'planning', message: 'ignored', details: { status: 'running', tool_name: 'model', reasoning: '首段' } }] };
+  update(running);
+  const article = { dataset: { chatTurn: '0' } };
+  const detail = { className: 'agent-event-detail agent-reasoning', dataset: { chatDetail: 'event:1:reasoning' }, open: false, closest: () => article };
+  const container = f.nodes.get('chat-turns'); let html = container.innerHTML;
+  container.querySelectorAll = selector => selector === 'details' ? [detail] : [];
+  Object.defineProperty(container, 'innerHTML', { get: () => html, set: value => { html = value; detail.open = true; } });
+  update({ ...running, events: running.events.map(event => ({ ...event, details: { ...event.details, reasoning: '首段与后续' } })) });
+  assert.equal(detail.open, false); assert.match(html, /首段与后续/u);
+  update({ ...agentRun('failed'), events: running.events, error: { code: 'agent_model_unavailable', message: 'ignored' }, preview: '' });
+  assert.doesNotMatch(html, /未完成前缀|answer-preview|data-action="save-answer"/u);
+  assert.match(html, /请求未完成/u);
 });
 
 test('missing model reasoning never fabricates a thought area and old events remain plain labels', async t => {

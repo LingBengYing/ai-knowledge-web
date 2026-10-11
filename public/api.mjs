@@ -66,14 +66,18 @@ export function validateUpload(file, config, uploadKind = 'document') {
 
 /** Cookies remain browser-owned; this client never stores a token. */
 export function createApi(config, principal, fetcher = globalThis.fetch) {
-  return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document', replacement } = {}) {
+  return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document', replacement, onEvent } = {}) {
     if (!path.startsWith('/v1/')) throw new Error('仅允许同源 API 请求。');
+    if (onEvent !== undefined && (typeof onEvent !== 'function' || method !== 'GET' || body !== undefined
+      || file !== undefined || binary || !/^\/v1\/knowledge-agent\/runs\/[A-Za-z0-9_-]{1,128}\/events$/u.test(path))) {
+      throw new ApiError(422, '流式输出只能从当前知识助手任务读取。');
+    }
     if (binary && (method !== 'GET' || body !== undefined || file !== undefined
       || (!/^\/v1\/(?:(?:sources|visual-sources|audio-sources|video-sources|sound-sources|video-av-sources)\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content|video-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/frame|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/(?:content|frame)|documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content)$/u.test(path)
         && !wikiBinarySource.test(path)))) {
       throw new ApiError(422, '原素材只能从服务器指定的来源接口读取。');
     }
-    const headers = { Accept: binary ? '*/*' : 'application/json' };
+    const headers = { Accept: onEvent ? 'text/event-stream' : binary ? '*/*' : 'application/json' };
     if (config.auth_mode === 'development_headers') {
       headers['X-Workspace-Id'] = config.workspace_id;
       headers['X-Principal-Id'] = principal();
@@ -100,6 +104,7 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
       ...(file !== undefined ? { body: file } : body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     if (binary && response.ok) return readBinary(response, path);
+    if (onEvent && response.ok) return readEventStream(response, onEvent, signal);
     const result = response.status === 204 ? null : await response.json().catch(() => null);
     if (!response.ok) {
       const detail = typeof result?.detail === 'string' && result.detail.length <= 500
@@ -108,6 +113,58 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
     }
     return result;
   };
+}
+
+/** Decode server frames as bytes arrive. Never reconnect or retry a question implicitly. */
+async function readEventStream(response, onEvent, signal) {
+  const invalidStream = () => new ApiError(502, '流式连接已中断，请刷新当前任务核对；没有重新发送问题。');
+  if (response.status !== 200 || !/^text\/event-stream(?:\s*;\s*charset=utf-8)?$/iu.test(response.headers.get('content-type') ?? '')) {
+    await response.body?.cancel(); throw invalidStream();
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw invalidStream();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const maximumFrame = 4 * 1024 * 1024;
+  let buffered = '', event = '', id = '', data = [], frameSize = 0, terminal = false;
+  async function line(value) {
+    if (!value) {
+      if (data.length) {
+        if (signal?.aborted) throw signal.reason ?? invalidStream();
+        const content = data.join('\n');
+        if (new TextEncoder().encode(content).length > maximumFrame) throw invalidStream();
+        terminal = await onEvent({ event: event || 'message', id, data: content }) === true;
+      }
+      event = ''; id = ''; data = []; frameSize = 0;
+      return;
+    }
+    frameSize += value.length;
+    if (frameSize > maximumFrame) throw invalidStream();
+    if (value.startsWith(':')) return;
+    const delimiter = value.indexOf(':'), field = delimiter < 0 ? value : value.slice(0, delimiter);
+    let content = delimiter < 0 ? '' : value.slice(delimiter + 1);
+    if (content.startsWith(' ')) content = content.slice(1);
+    if (field === 'data') data.push(content);
+    else if (field === 'event') event = content;
+    else if (field === 'id') { if (content.includes('\0')) throw invalidStream(); id = content; }
+  }
+  try {
+    while (!terminal) {
+      const { done, value } = await reader.read();
+      if (signal?.aborted) throw signal.reason ?? invalidStream();
+      buffered += decoder.decode(value, { stream: !done });
+      let newline;
+      while (!terminal && (newline = buffered.search(/[\r\n]/u)) >= 0) {
+        // A CR at a chunk boundary may be the first byte of a CRLF delimiter.
+        if (buffered[newline] === '\r' && newline === buffered.length - 1 && !done) break;
+        const size = buffered[newline] === '\r' && buffered[newline + 1] === '\n' ? 2 : 1;
+        const current = buffered.slice(0, newline); buffered = buffered.slice(newline + size);
+        await line(current);
+      }
+      if (buffered.length + frameSize > maximumFrame) throw invalidStream();
+      if (done && !terminal) throw invalidStream();
+    }
+  } catch (error) { throw error instanceof ApiError || signal?.aborted ? error : invalidStream(); }
+  finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
 async function readBinary(response, path) {

@@ -181,7 +181,11 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     return `${heading('DRAFTS', '草稿箱', '服务器保存、团队共享的未核验草稿；与已采纳的知识页分开。', '<a class="button primary" href="#/drafts/new">新建草稿</a>')}<div class="result-count">${state.drafts.length} 份草稿</div><div class="topic-grid">${state.drafts.map(item => `<a class="topic-card draft-card" href="#/drafts/${e(item.id)}"><span class="badge amber">未核验 · v${item.version}</span><h3>${e(item.title)}</h3><p>${e(item.body.slice(0, 140))}</p><div class="topic-footer">${e(formatTimestamp(item.updated_at))}</div></a>`).join('')}</div>${!state.drafts.length ? empty('草稿箱还是空的', '可以新建草稿，也可以将一次回答保存为待核验草稿。') : ''}`;
   }
   function answerBody(turn, index) {
-    if (!turn.result) return '';
+    if (!turn.result) {
+      const preview = turn.agentRun?.status === 'running' ? turn.agentRun.preview : '';
+      if (!preview) return '';
+      return `<section class="answer-preview" aria-label="正在生成的回答"><span class="badge amber">${turn.pending ? '生成中' : '尚未完成'}</span><p class="preserve-lines answer-paragraph" aria-live="polite" aria-atomic="false">${e(preview)}</p></section>`;
+    }
     return `<p class="preserve-lines answer-paragraph">${e(turn.result.answer)}</p>${turn.result.reason ? notice(`原因：${turn.result.reason}`) : ''}<div class="answer-reference-list">${turn.result.citations.map(citation => `<a href="#/answer-source/${turn.result.answer_id}/${citation.citation_id}">[${citation.citation_id}] ${e(citation.filename)} · ${e(formatLocator(citation))}</a>`).join('')}</div><details class="retrieval-steps"><summary>回答记录</summary><p>回答编号：${e(turn.result.answer_id)}</p><p>${turn.result.citations.length} 条引用；状态：${e(turn.result.status)}</p></details><div class="answer-footer">${button('save-answer', '存为草稿', false, `data-turn="${index}" ${state.busy ? 'disabled' : ''}`)}</div>`;
   }
   function agentEvent(event) {
@@ -199,7 +203,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     }).join('')}</ul>` : '';
     const planned = details.tool_names?.length ? `<p>计划调用：${details.tool_names.map(name => `<code>${e(name)}</code>`).join('、')}</p>` : '';
     const tool = `<details class="agent-event-detail" data-chat-detail="event:${event.sequence}:tool"><summary><span>${e(event.label)}</span><span class="agent-event-status${details.status === 'failed' ? ' is-failed' : ''}">${e(status)}</span>${elapsed ? `<span class="agent-event-elapsed">${e(elapsed)}</span>` : ''}</summary><div class="agent-event-body"><p class="agent-tool-name">工具：<code>${e(details.tool_name)}</code></p>${details.query != null ? `<p class="agent-query preserve-lines">${e(details.query)}</p>` : ''}${counts ? `<p class="agent-tool-count">${e(counts)}</p>` : ''}${planned}${sources}${details.safe_code ? `<p class="agent-tool-error">原因：<code>${e(details.safe_code)}</code></p>` : ''}</div></details>`;
-    const reasoning = details.reasoning?.trim() ? `<details class="agent-event-detail agent-reasoning" data-chat-detail="event:${event.sequence}:reasoning"><summary>模型思考</summary><div class="agent-event-body"><p class="agent-reasoning-label">来自模型的输出，未经核验，不作为回答证据。</p><div class="agent-reasoning-text preserve-lines">${e(details.reasoning)}</div>${details.reasoning_truncated ? '<p class="agent-reasoning-label">显示内容已截取。</p>' : ''}</div></details>` : '';
+    const reasoning = details.reasoning?.trim() ? `<details class="agent-event-detail agent-reasoning" data-chat-detail="event:${event.sequence}:reasoning"${event.current ? ' open' : ''}><summary>模型思考${event.current ? ' · 生成中' : ''}</summary><div class="agent-event-body"><p class="agent-reasoning-label">来自模型的输出，未经核验，不作为回答证据。</p><div class="agent-reasoning-text preserve-lines">${e(details.reasoning)}</div>${details.reasoning_truncated ? '<p class="agent-reasoning-label">显示内容已截取。</p>' : ''}</div></details>` : '';
     return `<li${event.current ? ' aria-current="step"' : ''}>${tool}${reasoning}</li>`;
   }
   function agentProgress(turn, index) {

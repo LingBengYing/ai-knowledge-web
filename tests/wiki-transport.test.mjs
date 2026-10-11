@@ -330,7 +330,7 @@ test('standard external Wiki routes preserve session and exact public-origin bou
   }
 });
 
-test('Agent transports allow only four exact routes with existing session, origin and ordinary JSON limits', async t => {
+test('Agent ordinary transports retain exact JSON routes session origin and limits', async t => {
   for (const external of [false, true]) {
     const seen = [];
     const { origin } = await fixture(t, (req, res) => {
@@ -361,4 +361,74 @@ test('Agent start and cancel keep ordinary request deadlines and never automatic
   const headers = { Origin: origin, 'Content-Type': 'application/json' };
   for (const path of ['/v1/knowledge-agent/runs', '/v1/knowledge-agent/runs/run-one/cancel']) assert.equal((await raw(origin, path, { method: 'POST', headers, body: '{}' })).status, 504);
   assert.deepEqual(seen, ['/v1/knowledge-agent/runs', '/v1/knowledge-agent/runs/run-one/cancel']);
+});
+
+test('Agent SSE flushes first frame before upstream completion on both actual HTTP transports', async t => {
+  for (const external of [false, true]) {
+    const prefix = 'id: 1\nevent: snapshot\ndata: {"text":"首段思考"}\n\n';
+    const tail = 'id: 2\nevent: terminal\ndata: {"text":"完整答案"}\n\n';
+    let release, ended = false;
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => {
+      seen.push([req.method, req.url, req.headers.accept, req.headers.cookie]); req.resume();
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'X-Internal-Secret': 'REPLACE_ME' });
+      res.write(prefix);
+      release = () => { ended = true; res.end(tail); };
+    }, { responseBytes: 16 }, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin, Cookie: sessionPair };
+    const path = '/v1/knowledge-agent/runs/run-one/events';
+    let first;
+    const firstChunk = new Promise(resolve => { first = resolve; });
+    const complete = new Promise((resolve, reject) => {
+      const request = http.get(origin + path, { headers }, res => {
+        assert.equal(res.statusCode, 200); assert.equal(res.headers['x-accel-buffering'], 'no');
+        assert.match(res.headers['cache-control'], /no-cache/u); assert.equal(res.headers['x-internal-secret'], undefined);
+        const chunks = []; res.on('data', chunk => {
+          chunks.push(chunk); const received = Buffer.concat(chunks).toString();
+          if (received.length >= prefix.length) first(received);
+        });
+        res.on('end', () => resolve(Buffer.concat(chunks).toString())); res.on('error', reject);
+      }); request.on('error', reject);
+    });
+    assert.equal(await firstChunk, prefix); assert.equal(ended, false, 'browser received prefix while upstream is still blocked');
+    release(); assert.equal(await complete, prefix + tail);
+    assert.deepEqual(seen, [['GET', path, 'text/event-stream', sessionPair]]);
+  }
+});
+
+test('Agent SSE disconnect closes upstream and never retries on either HTTP transport', async t => {
+  for (const external of [false, true]) {
+    let closed, requests = 0;
+    const upstreamClosed = new Promise(resolve => { closed = resolve; });
+    const { origin } = await fixture(t, (req, res) => {
+      requests++; req.resume(); res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(': heartbeat\n\n'); res.once('close', closed);
+    }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Cookie: sessionPair } : {};
+    await new Promise((resolve, reject) => {
+      const request = http.get(`${origin}/v1/knowledge-agent/runs/run-one/events`, { headers }, res => {
+        res.once('data', () => { request.destroy(); resolve(); });
+      }); request.once('error', reject);
+    });
+    await upstreamClosed; assert.equal(requests, 1);
+  }
+});
+
+test('Agent SSE rejects expanded routes queries wrong types and identity changes', async t => {
+  for (const external of [false, true]) {
+    let requests = 0, status = 200, type = 'application/json';
+    const { origin } = await fixture(t, (req, res) => {
+      requests++; req.resume(); res.writeHead(status, { 'Content-Type': type }); res.end('{}');
+    }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    const path = '/v1/knowledge-agent/runs/run-one/events';
+    assert.equal((await raw(origin, path, { headers })).status, 502);
+    status = 401; assert.equal((await raw(origin, path, { headers })).status, 401);
+    for (const query of ['?', '?token=x', '?after=1']) assert.equal((await raw(origin, path + query, { headers })).status, 400);
+    assert.equal((await raw(origin, path + '/more', { headers })).status, 404);
+    assert.equal((await raw(origin, path, { method: 'POST', headers })).status, 405);
+    assert.equal((await raw(origin, path, { headers: { ...headers, Origin: 'https://wrong.invalid' } })).status, 403);
+    assert.equal((await raw(origin, path, { headers: { ...headers, Authorization: 'Bearer synthetic' } })).status, 400);
+    assert.equal(requests, 2);
+  }
 });

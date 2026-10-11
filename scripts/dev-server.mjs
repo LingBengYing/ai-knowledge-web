@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
 import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed } from './wiki-transport.mjs';
+import { isAgentEventStream, validAgentEventStream, forwardAgentEventStream } from './agent-event-stream.mjs';
 
 const DEFAULT_PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const ASSETS = new Map([
@@ -245,6 +246,7 @@ function validateVideoAvFilename(encoded) {
 
 async function proxy(req, res, backend, headers, limits, signal, kind) {
   if (kind?.startsWith('wiki-') && !wikiQueryAllowed(req.url, req.method)) throw new TransportError(400, 'query_denied');
+  if (kind === 'wiki-agent-events') headers.Accept = 'text/event-stream';
   if ((kind === 'wiki-draft' && req.method === 'PUT') || (req.url === '/v1/wiki/drafts' && req.method === 'POST')) limits.requestBytes = 512 * 1024;
   if (kind === 'cleanup-list') {
     if (req.method === 'POST' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
@@ -283,6 +285,11 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
     response.destroy();
     throw new TransportError(502, 'backend_redirect_denied');
   }
+  if (kind === 'wiki-agent-events' && response.statusCode === 200) {
+    if (!validAgentEventStream(response)) { response.destroy(); throw new TransportError(502, 'invalid_event_stream'); }
+    await forwardAgentEventStream(response, res, signal);
+    return;
+  }
   let payload;
   try { payload = await collect(response, limits.responseBytes, signal, new TransportError(502, 'backend_response_too_large')); }
   catch (error) { response.destroy(); throw error; }
@@ -320,12 +327,12 @@ async function serveAsset(res, asset, publicDirectory, head) {
 
 export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084', port = 18085,
   publicDirectory = DEFAULT_PUBLIC, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
-  deadlineMs = 10_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000,
+  deadlineMs = 10_000, agentStreamDeadlineMs = 600_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000,
   attachmentBytes = 28 * 1024 * 1024, imageVectorDeadlineMs = 180_000, audioVectorDeadlineMs = 180_000,
   modelTestDeadlineMs = 70_000, retrievalDeadlineMs = 180_000, answerDeadlineMs = 180_000, imageUploadBytes = 10 * 1024 * 1024, contentBytes = 10 * 1024 * 1024, mediaBytes = 20 * 1024 * 1024 } = {}) {
   const backend = backendAddress(backendOrigin);
   if (!Number.isInteger(port) || port < 0 || port === 80 || port > 65535) throw new TransportError(500, 'invalid_port');
-  for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000],
+  for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000], [agentStreamDeadlineMs, 600_000],
     [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000], [answerDeadlineMs, 180_000], [modelTestDeadlineMs, 70_000], [retrievalDeadlineMs, 180_000], [attachmentBytes, 28 * 1024 * 1024], [imageVectorDeadlineMs, 180_000], [audioVectorDeadlineMs, 180_000],
     [imageUploadBytes, 10 * 1024 * 1024], [contentBytes, 10 * 1024 * 1024], [mediaBytes, 20 * 1024 * 1024]]) {
     if (!Number.isInteger(value) || value < 1 || value > max) throw new TransportError(500, 'invalid_limit');
@@ -349,7 +356,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
     const videoAvIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/.test(req.url);
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
     const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
-    const timer = setTimeout(() => controller.abort(), modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
+    const timer = setTimeout(() => controller.abort(), isAgentEventStream(req.method, req.url) ? agentStreamDeadlineMs : modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
     let reservedUpload = false;
     let reservedReplacementIndex = false;
     let reservedAttachment = false;

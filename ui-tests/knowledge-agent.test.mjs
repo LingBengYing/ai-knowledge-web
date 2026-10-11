@@ -8,6 +8,7 @@ const requestId = 'c1028b3b-7dd8-4620-a619-d0aaadccfe7b';
 const result = { answer_id: 'answer-one', status: 'abstained', answer: '资料不足。', reason: 'no_evidence', citations: [] };
 const run = (status = 'running', events = [{ sequence: 1, type: 'running', message: '任务已开始' }]) => ({ id: runId, status, events, result: status === 'completed' ? result : null, suggestions: [], error: status === 'failed' ? { code: 'agent_failed', message: '智能体任务未完成，请重新发起。' } : null });
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const idleStream = (_id, { signal }) => new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
 
 test('Agent safe failure codes have actionable distinct labels and never expose server text', async () => {
   const codes = ['agent_unavailable', 'agent_timeout', 'agent_callback_failed', 'agent_callback_invalid',
@@ -88,9 +89,9 @@ test('Agent validates result citations and safe event types, strips thought fiel
   assert.throws(() => checkedAgentConfig({ enabled: 'yes', engine: 'knowledge-native-agent', max_steps: 8 }), error => error.status === 502);
 });
 
-test('Agent lifecycle creates once, polls only reads and stops on completion without silent fallback', async () => {
+test('Agent lifecycle creates once, attaches SSE and manually refreshes reads without silent fallback', async () => {
   const calls = [], changes = [];
-  const api = { createAgentRun: async command => { calls.push(['create', command]); return run(); }, getAgentRun: async id => { calls.push(['get', id]); return run('completed'); } };
+  const api = { streamAgentRun: idleStream, createAgentRun: async command => { calls.push(['create', command]); return run(); }, getAgentRun: async id => { calls.push(['get', id]); return run('completed'); } };
   const session = new KnowledgeAgentSession(api, { onChange: value => changes.push(value.phase), pollDelay: 100000, requestId: () => requestId });
   const first = session.start('question'); await session.start('duplicate'); await first;
   assert.equal(session.value.phase, 'running'); await session.refresh();
@@ -101,9 +102,9 @@ test('Agent lifecycle creates once, polls only reads and stops on completion wit
   assert.doesNotMatch(failure.value.error.message, /private/u); failure.close();
 });
 
-test('Agent cancellation supersedes an in-flight poll and is confirmed only by server state', async () => {
+test('Agent cancellation supersedes an in-flight status read and is confirmed only by server state', async () => {
   let finishRead, finishCancel, cancels = 0;
-  const api = { createAgentRun: async () => run(), getAgentRun: () => new Promise(resolve => { finishRead = resolve; }), cancelAgentRun: () => { cancels++; return new Promise(resolve => { finishCancel = resolve; }); } };
+  const api = { streamAgentRun: idleStream, createAgentRun: async () => run(), getAgentRun: () => new Promise(resolve => { finishRead = resolve; }), cancelAgentRun: () => { cancels++; return new Promise(resolve => { finishCancel = resolve; }); } };
   const session = new KnowledgeAgentSession(api, { pollDelay: 100000 }); await session.start('q');
   const pending = session.refresh(); const stopping = session.cancel(); await session.cancel();
   assert.equal(session.value.phase, 'cancelling'); assert.equal(cancels, 1);
@@ -160,7 +161,7 @@ test('Agent details validate public sources, optional fields and Unicode display
 
 test('Agent same-sequence completion updates details without adding another search', async t => {
   let current = run('running', [{ sequence: 1, type: 'searching', message: 'stage', details: { status: 'running', tool_name: 'knowledge_search', query: '合成查询' } }]);
-  const session = new KnowledgeAgentSession({ createAgentRun: async () => checkedAgentRun(current), getAgentRun: async () => checkedAgentRun(current) }, { pollDelay: 100000 });
+  const session = new KnowledgeAgentSession({ streamAgentRun: idleStream, createAgentRun: async () => checkedAgentRun(current), getAgentRun: async () => checkedAgentRun(current) });
   t.after(() => session.close());
   await session.start('合成问题');
   current = { ...current, events: current.events.map(event => ({ ...event, details: { ...event.details, status: 'completed', result_count: 2, elapsed_ms: 91 } })) };

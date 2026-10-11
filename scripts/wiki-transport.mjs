@@ -18,6 +18,7 @@ export const WIKI_ROUTES = [
   [/^\/v1\/knowledge-agent\/config$/, ['GET'], 'wiki-agent'],
   [/^\/v1\/knowledge-agent\/runs$/, ['POST'], 'wiki-agent'],
   [/^\/v1\/knowledge-agent\/runs\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'wiki-agent'],
+  [/^\/v1\/knowledge-agent\/runs\/[A-Za-z0-9_-]{1,128}\/events$/, ['GET'], 'wiki-agent-events'],
   [/^\/v1\/knowledge-agent\/runs\/[A-Za-z0-9_-]{1,128}\/cancel$/, ['POST'], 'wiki-agent'],
   [/^\/v1\/wiki\/(?:catalog|pages)$/, ['GET'], 'wiki-list'],
   [/^\/v1\/wiki\/drafts$/, ['GET', 'POST'], 'wiki-list'],
