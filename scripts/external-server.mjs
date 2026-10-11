@@ -109,8 +109,10 @@ const SAFE_HEADERS = {
 };
 
 class TransportError extends Error {
-  constructor(status, code) { super(code); this.status = status; this.code = code; }
+  constructor(status, code, detail) { super(code); this.status = status; this.code = code; this.detail = detail; }
 }
+
+const MAINTENANCE_DETAIL = '资料库正在清理已删除的资料，请稍后重试。';
 
 function backendAddress(value) {
   if (typeof value !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(value)) {
@@ -315,7 +317,7 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
   try { payload = await collect(response, limits.responseBytes, signal, new TransportError(502, 'backend_response_too_large')); }
   catch (error) { response.destroy(); throw error; }
   const output = {};
-  for (const name of ['content-type', 'www-authenticate']) if (response.headers[name]) output[name] = response.headers[name];
+  for (const name of ['content-type', 'www-authenticate', 'retry-after']) if (response.headers[name]) output[name] = response.headers[name];
   const originalContent = req.method === 'GET' && /^\/v1\/(?:documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]|wiki\/(?:pages\/[A-Za-z0-9_-]{1,128}\/versions\/[1-9][0-9]*|proposals\/[A-Za-z0-9_-]{1,128})\/sources\/[A-Za-z0-9_-]{1,128})\/content$/u.test(req.url);
   if (originalContent && [200, 206].includes(response.statusCode)) {
     if (response.headers['content-disposition'] === 'attachment') output['content-disposition'] = 'attachment';
@@ -358,6 +360,9 @@ async function backendJson(backend, path, headers = {}, signal) {
   try { payload = await collect(response, 16 * 1024, signal, new TransportError(502, 'invalid_backend_response')); }
   catch (error) { response.destroy(); throw error; }
   if (response.statusCode === 401) return { status: 401 };
+  if (response.statusCode === 503 && /^application\/problem\+json(?:;|$)/i.test(response.headers['content-type'] ?? '')) {
+    throw new TransportError(503, 'library_maintenance', MAINTENANCE_DETAIL);
+  }
   if (response.statusCode !== 200 || !/^application\/json(?:;|$)/i.test(response.headers['content-type'] ?? '')) {
     throw new TransportError(502, 'invalid_backend_response');
   }
@@ -479,9 +484,9 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       const known = error instanceof TransportError;
       if (!res.headersSent && !res.destroyed) {
         const status = known ? error.status : 500;
-        res.writeHead(status, { 'Content-Type': 'application/problem+json; charset=utf-8' });
+        res.writeHead(status, { 'Content-Type': 'application/problem+json; charset=utf-8', ...(status === 503 ? { 'Retry-After': '5' } : {}) });
         res.end(JSON.stringify({ type: 'about:blank', title: known ? error.code : 'request_failed', status,
-          detail: status >= 500 ? '知识库服务暂不可用。' : '请求未满足访问条件。', request_id: requestId }));
+          detail: (known && error.detail) || (status >= 500 ? '知识库服务暂不可用。' : '请求未满足访问条件。'), request_id: requestId }));
       }
       req.resume();
     } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedAttachment) activeAttachments -= 1; if (reservedRequest) activeRequests -= 1; if (reservedStream) activeStreams -= 1; }

@@ -128,3 +128,25 @@ test('configuration errors expose only safe optional code and field without chan
   await assert.rejects(request('/v1/model-configuration', { method: 'PUT', body: {} }), error => error.status === 422 && error.message === 'safe input' && error.errorCode === 'configuration_invalid' && error.field === 'embedding.dimensions');
   const unsafe = new ApiError(422, 'safe', { errorCode: 'private /path', field: 'submitted-secret' }); assert.equal(unsafe.errorCode, undefined); assert.equal(unsafe.field, undefined);
 });
+
+test('reads wait out library maintenance but writes and plain outages fail at once', async () => {
+  const maintenance = () => new Response('{"detail":"资料库正在清理已删除的资料，请稍后重试。"}',
+    { status: 503, headers: { 'Content-Type': 'application/problem+json', 'Retry-After': '1' } });
+  let calls = 0;
+  const reads = createApi({}, () => '', async () => (++calls === 1 ? maintenance() : new Response('{"items":[]}', { headers: { 'Content-Type': 'application/json' } })));
+  assert.deepEqual(await reads('/v1/documents'), { items: [] });
+  assert.equal(calls, 2);
+  calls = 0;
+  const writes = createApi({}, () => '', async () => { calls += 1; return maintenance(); });
+  await assert.rejects(writes('/v1/documents/doc-one', { method: 'DELETE' }), e => e.status === 503 && e.message === '资料库正在清理已删除的资料，请稍后重试。');
+  assert.equal(calls, 1);
+  calls = 0;
+  const outage = createApi({}, () => '', async () => { calls += 1; return new Response('{}', { status: 503 }); });
+  await assert.rejects(outage('/v1/documents'), e => e.status === 503);
+  assert.equal(calls, 1);
+  const aborted = new AbortController();
+  const waiting = createApi({}, () => '', async () => maintenance());
+  const pending = waiting('/v1/documents', { signal: aborted.signal });
+  aborted.abort(new Error('left page'));
+  await assert.rejects(pending, /left page/u);
+});
