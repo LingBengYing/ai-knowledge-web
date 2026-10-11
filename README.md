@@ -1,5 +1,9 @@
 # AI Knowledge Web · 知识库工作台
 
+## 最新生产版本（2026-10-11，0051/0052）：持久对话与执行详情
+
+配套后端0070/0071原生工具执行器，知识问答新增服务端对话列表、新建/继续、重命名、确认删除，以及上下文压缩状态。每个对话有独立 `#/ask/{id}` 地址；刷新恢复完整问题与回答，进行中任务只读恢复，不重发。压缩不删除原始历史、不把摘要当原文证据。已配套发布并保留免登录，真实模型3轮思考、检索/阅读详情及页面刷新通过；详见[对话合同](docs/changes/0051-native-agent-conversations/spec.md)和[生产验收](docs/changes/0052-agent-execution-details/deployment-verification.md)。思考按每轮响应完成后显示，非token流式；单样例通过不等于全库质量验收。后面的 DB-GPT 记录是历史版本。
+
 ## 基础文档格式（0045）
 
 文档上传/替换现接受 PDF、PROPERTIES、HTML、VTT、CSV、MSG、MARKDOWN、EML、PPT、DOCX、DOC、TXT、PPTX、MDX、XLS、ODT、MD、XLSX、XML、EPUB、HTM，需配套Java0059实际解析。原件保留MIME/SHA校验，主动格式只下载或纯文本显示。见 [验证与边界](docs/changes/0045-document-formats/REVIEW.md)。

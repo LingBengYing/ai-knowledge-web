@@ -6,6 +6,8 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
 const statuses = ['running', 'completed', 'failed', 'cancelled'];
 const events = Object.freeze({ running: '任务已开始', planning: '整理任务', searching: '检索知识库', reading: '阅读原始资料', completed: '任务已完成', failed: '任务未完成', cancelled: '任务已取消' });
 const failureMessages = Object.freeze({
+  agent_interrupted: '服务重启中断了这条任务，原有对话已保留。',
+  agent_context_compaction_failed: '历史上下文整理未完成，原始对话已保留，本次未继续调用问答模型。',
   agent_unavailable: '知识助手服务暂时无法连接，请检查服务状态。',
   agent_failed: '任务异常结束，请提供任务编号以便排查。',
   agent_invalid_response: '知识助手返回的结果格式或来源校验未通过，请提供任务编号排查。',
@@ -38,6 +40,46 @@ const checkedFailure = value => {
   if (!value || !Object.hasOwn(failureMessages, value.code)) throw invalid();
   return Object.freeze({ code: value.code, message: failureMessages[value.code] });
 };
+const toolNames = ['knowledge_search', 'knowledge_read', 'terminate'];
+const sourceKinds = ['document_text', 'video_transcript', 'video_subtitle', 'video_frame_ocr'];
+const revisionIdentity = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const documentIdentity = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/u;
+const optionalText = (value, maximum) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' || [...value].length > maximum) throw invalid();
+  return value;
+};
+const optionalNumber = (value, { integer = true, minimum = 0 } = {}) => {
+  if (value === null || value === undefined) return null;
+  if (!(integer ? Number.isSafeInteger(value) : Number.isFinite(value)) || value < minimum) throw invalid();
+  return value;
+};
+function checkedEventDetails(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'object' || Array.isArray(value) || !statuses.includes(value.status)
+    || !['model', 'knowledge_search', 'knowledge_read'].includes(value.tool_name)) throw invalid();
+  const rawSources = value.sources ?? [], rawTools = value.tool_names ?? [];
+  if (!Array.isArray(rawSources) || rawSources.length > 32 || !Array.isArray(rawTools)
+    || rawTools.length > 16 || rawTools.some(name => !toolNames.includes(name))) throw invalid();
+  const sources = rawSources.map(source => {
+    if (!source || typeof source.source_id !== 'string' || !identifier.test(source.source_id)
+      || typeof source.document_id !== 'string' || !documentIdentity.test(source.document_id)
+      || typeof source.revision_id !== 'string' || !revisionIdentity.test(source.revision_id)
+      || !validText(source.title) || !sourceKinds.includes(source.kind)) throw invalid();
+    const start = optionalNumber(source.start_ms, { integer: false }), end = optionalNumber(source.end_ms, { integer: false });
+    if ((start === null) !== (end === null) || start !== null && end < start) throw invalid();
+    return Object.freeze({ source_id: source.source_id, document_id: source.document_id, revision_id: source.revision_id,
+      title: source.title, kind: source.kind, page: optionalNumber(source.page, { minimum: 1 }), start_ms: start, end_ms: end });
+  });
+  const safeCode = value.safe_code ?? null;
+  if (safeCode !== null && !Object.hasOwn(failureMessages, safeCode)) throw invalid();
+  if (value.reasoning_truncated !== undefined && value.reasoning_truncated !== null && typeof value.reasoning_truncated !== 'boolean') throw invalid();
+  return Object.freeze({ status: value.status, tool_name: value.tool_name,
+    query: optionalText(value.query, 4000), elapsed_ms: optionalNumber(value.elapsed_ms),
+    result_count: optionalNumber(value.result_count), document_count: optionalNumber(value.document_count),
+    sources: Object.freeze(sources), safe_code: safeCode, reasoning: optionalText(value.reasoning, 16000),
+    reasoning_truncated: value.reasoning_truncated ?? false, tool_names: Object.freeze([...rawTools]) });
+}
 
 const progressEvents = Object.freeze({ ...events, planning: '分析查阅任务' });
 const progressStages = Object.freeze({
@@ -62,12 +104,18 @@ export function agentProgressView({ phase, run } = {}) {
   const observed = Array.isArray(run?.events) ? run.events.filter(event => event
     && Object.hasOwn(progressEvents, event.type) && Number.isSafeInteger(event.sequence) && event.sequence > 0) : [];
   const entries = observed.map((event, index) => Object.freeze({
-    sequence: event.sequence, type: event.type, label: progressEvents[event.type],
-    current: active && index === observed.length - 1 && !statuses.slice(1).includes(event.type),
+    sequence: event.sequence, type: event.type, label: progressEvents[event.type], ...(event.details ? { details: event.details } : {}),
+    current: active && index === observed.length - 1 && !statuses.slice(1).includes(event.type)
+      && (!event.details || event.details.status === 'running'),
   }));
   let [title, detail, status] = progressPhases[phase] ?? [
     ...(progressStages[observed.at(-1)?.type] ?? ['正在等待查阅进度', '尚未收到新的查阅阶段。']), '处理中',
   ];
+  const last = observed.at(-1);
+  if (active && last?.details && last.details.status !== 'running') {
+    title = `${progressEvents[last.type]}${{ completed: '已完成', failed: '未完成', cancelled: '已取消' }[last.details.status]}`;
+    detail = last.details.status === 'completed' ? '操作结果已返回，等待下一步进度。' : '操作已停止，等待任务状态确认。';
+  }
   if (phase === 'completed' && run?.result?.status === 'abstained') {
     const insufficientEvidence = ['no_evidence', 'incomplete_evidence'].includes(run.result.reason);
     title = insufficientEvidence ? '查阅结束，证据不足' : '未形成有据回答';
@@ -81,17 +129,17 @@ export function agentProgressView({ phase, run } = {}) {
 }
 
 export function checkedAgentConfig(value) {
-  if (!value || typeof value.enabled !== 'boolean' || value.engine !== 'db-gpt' || value.max_steps !== 8) throw invalid();
+  if (!value || typeof value.enabled !== 'boolean' || value.engine !== 'knowledge-native-agent' || value.max_steps !== 8) throw invalid();
   return Object.freeze({ enabled: value.enabled, engine: value.engine, max_steps: value.max_steps });
 }
 
-/** Only service-owned operation types become progress labels; model thoughts are never displayed. */
+/** Service-owned fields only; optional upstream reasoning is display data, never an evidence source. */
 export async function checkedAgentRun(value, expectedId) {
   if (!value || typeof value.id !== 'string' || !uuid.test(value.id) || expectedId && value.id !== expectedId
     || !statuses.includes(value.status) || !Array.isArray(value.events) || !Array.isArray(value.suggestions)) throw invalid();
   const safeEvents = value.events.map((event, index) => {
     if (!event || event.sequence !== index + 1 || !Object.hasOwn(events, event.type) || !validText(event.message)) throw invalid();
-    return Object.freeze({ sequence: event.sequence, type: event.type, message: events[event.type] });
+    return Object.freeze({ sequence: event.sequence, type: event.type, message: events[event.type], details: checkedEventDetails(event.details) });
   });
   if (value.status === 'completed' ? !value.result || value.error !== null : value.result !== null) throw invalid();
   if (value.status === 'failed' ? !value.error || !Object.hasOwn(failureMessages, value.error.code) || !validText(value.error.message) : value.error !== null) throw invalid();
@@ -111,6 +159,10 @@ export function createKnowledgeAgentApi(api) {
     createAgentRun: async (command, { signal } = {}) => {
       if (!uuid.test(command?.request_id ?? '')) throw inputError();
       const body = { ...answerRequest(command.question), request_id: command.request_id };
+      if (command.conversation_id !== undefined) {
+        if (!uuid.test(command.conversation_id)) throw inputError();
+        body.conversation_id = command.conversation_id;
+      }
       return checkedAgentRun(await api('/v1/knowledge-agent/runs', { method: 'POST', body, signal }));
     },
     getAgentRun: async (id, { signal } = {}) => checkedAgentRun(await api(`/v1/knowledge-agent/runs/${checkedId(id)}`, { signal }), id),
@@ -137,11 +189,11 @@ export class KnowledgeAgentSession {
     this.#publish(run.status, run);
     if (run.status === 'running') this.#timer = setTimeout(() => this.refresh(), this.#pollDelay);
   }
-  async start(question) {
+  async start(question, { conversationId } = {}) {
     if (['submitting', 'running', 'reading', 'cancelling'].includes(this.value.phase)) return this.value;
     const ticket = this.#begin(); this.#publish('submitting', null);
     try {
-      const run = await this.#api.createAgentRun({ ...answerRequest(question), request_id: this.#requestId() }, { signal: this.#controller.signal });
+      const run = await this.#api.createAgentRun({ ...answerRequest(question), request_id: this.#requestId(), ...(conversationId ? { conversation_id: conversationId } : {}) }, { signal: this.#controller.signal });
       if (ticket === this.#epoch) this.#accept(run);
     } catch (error) { if (ticket === this.#epoch) this.#publish('unknown', null, failure(error)); }
     return this.value;

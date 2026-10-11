@@ -39,6 +39,8 @@ test('server epoch milliseconds render in local date time; invalid values are un
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const agentRunId = '64ccaf3b-6801-4d68-8df6-c40ec575b318';
+const conversationId = '253d79e9-103c-4898-b698-967fc106fc57';
+const conversation = { id: conversationId, title: '合成对话', created_at: 1, updated_at: 2, turn_count: 0, active_run_id: null, compression: { status: 'idle', covered_turn_count: 0, summary_characters: 0 } };
 const agentResult = { answer_id: 'agent-answer', status: 'abstained', answer: '缺少完整资料。', reason: 'no_evidence', citations: [] };
 const agentRun = (status = 'running') => ({ id: agentRunId, status, events: [{ sequence: 1, type: 'searching', message: '检索知识库' }], result: status === 'completed' ? agentResult : null, suggestions: status === 'completed' ? [{ title: '<b>补齐资料</b>', reason: '需要更新原文', document_ids: ['doc'] }] : [], error: null });
 const source = { id: 's1', document_id: 'doc', publication_id: 'pub', source_revision_id: 'r1', source_sha256: 'a'.repeat(64), evidence_id: 'e1', evidence_sha256: 'b'.repeat(64), kind: 'text' };
@@ -66,7 +68,7 @@ test('workspace navigation and original maintenance stay native with exact docum
 
 test('failed Agent shows safe cause and task number in its progress record', async () => {
   const run = { ...agentRun('failed'), error: { code: 'agent_timeout', message: 'private provider text' } };
-  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'db-gpt', max_steps: 8 }), createAgentRun: async () => run });
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'knowledge-native-agent', max_steps: 8 }), createAgentRun: async () => run });
   await f.workspace.start(); await f.submit('question-form', [['question', '合成问题']]); await tick();
   const html = f.nodes.get('chat-turns').innerHTML;
   assert.match(html, new RegExp(agentRunId, 'u')); assert.match(html, /agent_timeout/u);
@@ -82,7 +84,12 @@ function fixture(hash = '#/home', overrides = {}, config) {
     allPages: async () => [knowledge], listCatalog: list([{ document_id: 'doc', filename: 'source.txt', kind: 'document', state: 'indexed', answerable: true }, { document_id: 'waiting', filename: 'pending.txt', kind: 'document', state: 'parsed', answerable: false }]),
     listProposals: list([proposal]), listDrafts: list([draft]), getPage: async () => knowledge, getPageVersion: async () => knowledge,
     getProposal: async () => proposal, getDraft: async () => draft, getSettings: async () => settings,
-    getAgentConfig: async () => ({ enabled: false, engine: 'db-gpt', max_steps: 8 }),
+    getAgentConfig: async () => ({ enabled: false, engine: 'knowledge-native-agent', max_steps: 8 }),
+    listConversations: async ({ offset = 0, limit = 30 } = {}) => ({ items: [], offset, limit }),
+    createConversation: async command => ({ ...conversation, ...command }),
+    getConversation: async id => ({ conversation: { ...conversation, id }, turns: [] }),
+    renameConversation: async (id, title) => ({ ...conversation, id, title }),
+    deleteConversation: async () => undefined,
     createDraft: async command => { calls.push(['createDraft', command]); return { ...command, id: 'new-draft', version: 1 }; },
     updateDraft: async (id, command) => { calls.push(['updateDraft', id, command]); return { ...command, id, version: command.version + 1 }; },
     deleteDraft: async (id, version) => { calls.push(['deleteDraft', id, version]); },
@@ -106,6 +113,91 @@ function fixture(hash = '#/home', overrides = {}, config) {
     click: (action, other = {}) => events.click({ target: { closest: () => ({ dataset: { action, ...other } }) }, preventDefault() {} }),
   };
 }
+
+test('saved conversation reload restores original turns and compaction status without a model write', async () => {
+  let creates = 0;
+  const f = fixture(`#/ask/${conversationId}`, {
+    getAgentConfig: async () => ({ enabled: true }),
+    listConversations: async () => ({ items: [conversation], offset: 0, limit: 30 }),
+    getConversation: async () => ({ conversation: { ...conversation, turn_count: 1, compression: { status: 'compressed', covered_turn_count: 1, summary_characters: 100 } }, turns: [{ question: '完整旧问题', status: 'completed', result: agentRun('completed') }] }),
+    createAgentRun: async () => { creates++; return agentRun('completed'); },
+  });
+  await f.workspace.start();
+  assert.match(f.html(), /完整旧问题|缺少完整资料/u); assert.match(f.html(), /已压缩 1 轮上下文/u);
+  assert.match(f.html(), /重命名/u); assert.equal(creates, 0);
+  await f.submit('question-form', [['question', '后续追问']]);
+  assert.equal(creates, 1); assert.equal(f.workspace.state.turns.length, 2); f.workspace.close();
+});
+
+test('pending conversation reload resumes GET only and new chat does not delete server history', async () => {
+  let reads = 0, creates = 0, deletes = 0;
+  const f = fixture(`#/ask/${conversationId}`, {
+    getAgentConfig: async () => ({ enabled: true }),
+    getConversation: async () => ({ conversation: { ...conversation, active_run_id: agentRunId, turn_count: 1 }, turns: [{ question: '处理中', run_id: agentRunId, status: 'running', result: null }] }),
+    getAgentRun: async () => { reads++; return agentRun('completed'); },
+    createAgentRun: async () => { creates++; return agentRun(); },
+    deleteConversation: async () => { deletes++; },
+  });
+  await f.workspace.start(); await tick(); assert.equal(reads, 1); assert.equal(creates, 0);
+  assert.equal(f.workspace.state.turns[0].result.answer_id, 'agent-answer');
+  await f.click('new-chat'); assert.equal(deletes, 0); assert.equal(f.win.location.hash, '#/ask'); f.workspace.close();
+});
+
+test('conversation rename and delete require exact selected identity and deletion confirmation', async () => {
+  const writes = [];
+  const f = fixture(`#/ask/${conversationId}`, {
+    getAgentConfig: async () => ({ enabled: true }),
+    renameConversation: async (id, title) => { writes.push(['rename', id, title]); return { ...conversation, title }; },
+    deleteConversation: async id => { writes.push(['delete', id]); },
+  });
+  await f.workspace.start(); await f.click('rename-conversation');
+  await f.submit('conversation-title-form', [['title', '更清楚的主题']]);
+  assert.equal(f.workspace.state.conversation.title, '更清楚的主题');
+  const deleting = f.click('delete-conversation'); await tick(); assert.equal(writes.length, 1);
+  await f.click('confirm-operation'); await deleting;
+  assert.deepEqual(writes, [['rename', conversationId, '更清楚的主题'], ['delete', conversationId]]); f.workspace.close();
+});
+
+test('late conversation creation cannot submit into a different page or duplicate a question', async () => {
+  let finish, creates = 0, runs = 0;
+  const f = fixture('#/ask', {
+    getAgentConfig: async () => ({ enabled: true }),
+    createConversation: () => { creates++; return new Promise(resolve => { finish = resolve; }); },
+    createAgentRun: async () => { runs++; return agentRun(); },
+  });
+  await f.workspace.start(); const first = f.submit('question-form', [['question', '第一问']]);
+  await f.submit('question-form', [['question', '重复']]); await f.go('#/settings');
+  finish(conversation); await first; assert.equal(creates, 1); assert.equal(runs, 0); assert.match(f.html(), /空间设置/u); f.workspace.close();
+});
+
+test('unknown submission blocks repeat writes and exposes read-only conversation reconciliation', async () => {
+  let writes = 0;
+  const f = fixture(`#/ask/${conversationId}`, { getAgentConfig: async () => ({ enabled: true }),
+    createAgentRun: async () => { writes++; throw new Error('connection lost after accept'); } });
+  await f.workspace.start(); await f.submit('question-form', [['question', '只发一次']]);
+  assert.equal(f.workspace.state.turns[0].pending, true);
+  assert.match(f.nodes.get('chat-turns').innerHTML, /data-action="refresh-conversation"/u);
+  await f.submit('question-form', [['question', '只发一次']]); assert.equal(writes, 1);
+  await f.click('refresh-conversation'); await tick();
+  assert.equal(f.workspace.state.turns.length, 0); assert.equal(writes, 1); f.workspace.close();
+});
+
+test('leaving a pending conversation create resets only its own send lock', async () => {
+  let finish;
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createConversation: () => new Promise(resolve => { finish = resolve; }) });
+  await f.workspace.start(); const pending = f.submit('question-form', [['question', '新对话']]);
+  await f.go(`#/ask/${conversationId}`);
+  assert.equal(f.workspace.state.conversationCreating, false);
+  assert.doesNotMatch(f.html(), /id="question-submit"[^>]*disabled/u);
+  finish(conversation); await pending; assert.equal(f.workspace.state.conversation.id, conversationId); f.workspace.close();
+});
+
+test('citation return keeps selected conversation address', async () => {
+  const f = fixture(`#/ask/${conversationId}`, { getAgentConfig: async () => ({ enabled: true }) });
+  await f.workspace.start(); f.workspace.state.route = { view: 'answer-source', id: 'answer', ordinal: 1 };
+  f.win.location.hash = '#/answer-source/answer/1';
+  await f.click('back-reader'); assert.equal(f.win.location.hash, `#/ask/${conversationId}`); f.workspace.close();
+});
 
 test('source list keeps processing state in rows without repeating the task menu', async () => {
   const f = fixture('#/sources', { listDocuments: async () => ({ page: 1, page_size: 100, total: 2, items: [
@@ -366,7 +458,7 @@ test('disabled Agent preserves one ordinary knowledge answer while enabled Agent
   const old = fixture('#/ask', { request: async path => { assert.equal(path, '/v1/knowledge-answers'); classic++; return agentResult; } });
   await old.workspace.start(); old.submit('question-form', [['question', '旧问答']]); await tick();
   assert.equal(classic, 1); assert.equal(old.workspace.state.turns[0].result.answer_id, 'agent-answer'); old.workspace.close();
-  const enabled = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'db-gpt', max_steps: 8 }),
+  const enabled = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'knowledge-native-agent', max_steps: 8 }),
     createAgentRun: async () => { creates++; throw new Error('private model trace'); }, request: async () => { classic++; return agentResult; } });
   await enabled.workspace.start(); enabled.submit('question-form', [['question', '新任务']]); await tick();
   assert.equal(creates, 1); assert.equal(classic, 1); assert.doesNotMatch(enabled.nodes.get('chat-turns').innerHTML, /private model trace/u);
@@ -375,7 +467,7 @@ test('disabled Agent preserves one ordinary knowledge answer while enabled Agent
 
 test('Agent question displays real progress, protects duplicate writes and separates maintenance suggestions', async () => {
   let finish; const calls = [];
-  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'db-gpt', max_steps: 8 }),
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'knowledge-native-agent', max_steps: 8 }),
     createAgentRun: command => { calls.push(['create', command]); return new Promise(resolve => { finish = resolve; }); },
     getAgentRun: async id => { calls.push(['get', id]); return agentRun('completed'); } });
   await f.workspace.start(); f.submit('question-form', [['question', '整理相关资料']]); f.submit('question-form', [['question', '重复']]); await tick();
@@ -398,7 +490,7 @@ test('Agent question displays real progress, protects duplicate writes and separ
 
 test('Agent stop and leaving isolate late responses from the visible question', async () => {
   let finishRead, finishCancel;
-  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'db-gpt', max_steps: 8 }), createAgentRun: async () => agentRun(),
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'knowledge-native-agent', max_steps: 8 }), createAgentRun: async () => agentRun(),
     getAgentRun: () => new Promise(resolve => { finishRead = resolve; }), cancelAgentRun: () => new Promise(resolve => { finishCancel = resolve; }) });
   await f.workspace.start(); f.submit('question-form', [['question', '可停止任务']]); await tick();
   const reading = f.click('refresh-agent', { turn: '0' }); await tick();
@@ -408,7 +500,7 @@ test('Agent stop and leaving isolate late responses from the visible question', 
   finishCancel(agentRun('cancelled')); await cancel; assert.match(f.nodes.get('chat-turns').innerHTML, /已取消/u);
   f.workspace.close();
   let finish;
-  const late = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'db-gpt', max_steps: 8 }), createAgentRun: () => new Promise(resolve => { finish = resolve; }) });
+  const late = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true, engine: 'knowledge-native-agent', max_steps: 8 }), createAgentRun: () => new Promise(resolve => { finish = resolve; }) });
   await late.workspace.start(); late.submit('question-form', [['question', '离页任务']]); await tick(); await late.go('#/settings');
   finish(agentRun('completed')); await tick();
   assert.equal(late.workspace.state.turns[0].result, null); assert.equal(late.workspace.state.turns[0].pending, false);
@@ -427,6 +519,79 @@ test('live Agent presents only received stages in an expanded activity timeline'
   assert.match(html, /aria-current="step"/u);
   assert.doesNotMatch(html, /untrusted hidden reasoning|已命中|已读完|\d+%/u);
   f.workspace.close();
+});
+
+test('Agent shows received tool metadata and provider reasoning as separate escaped disclosures', async t => {
+  const run = { ...agentRun(), events: [
+    { sequence: 1, type: 'planning', message: 'untrusted stage content', details: { status: 'completed', tool_name: 'model', elapsed_ms: 1234,
+      reasoning: '<script>合成模型返回内容</script>\n[外链](https://example.invalid)', reasoning_truncated: true, tool_names: ['knowledge_search', 'knowledge_search'] } },
+    { sequence: 2, type: 'searching', message: 'ignored', details: { status: 'completed', tool_name: 'knowledge_search', query: '<img src=x>合成检索词',
+      elapsed_ms: 75, result_count: 2, document_count: 1, sources: [{ source_id: 'source-1', document_id: 'doc', revision_id: 'rev',
+        title: '<b>合成资料</b>', kind: 'document_text', page: 3 }] } },
+    { sequence: 3, type: 'reading', message: 'ignored', details: { status: 'failed', tool_name: 'knowledge_read', elapsed_ms: 18, safe_code: 'evidence_changed', sources: [] } },
+  ] };
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => run });
+  t.after(() => f.workspace.close()); await f.workspace.start(); await f.submit('question-form', [['question', '合成过程详情']]);
+  const html = f.nodes.get('chat-turns').innerHTML;
+  assert.match(html, /data-chat-detail="event:1:reasoning"><summary>模型思考/u);
+  assert.match(html, /来自模型的输出，未经核验，不作为回答证据/u);
+  assert.match(html, /&lt;script&gt;合成模型返回内容&lt;\/script&gt;/u);
+  assert.match(html, /显示内容已截取/u); assert.match(html, /计划调用：<code>knowledge_search<\/code>、<code>knowledge_search<\/code>/u);
+  assert.match(html, /data-chat-detail="event:2:tool"/u); assert.match(html, /&lt;img src=x&gt;合成检索词/u);
+  assert.match(html, /2 个片段 · 1 份资料/u); assert.match(html, /75 毫秒/u);
+  assert.match(html, /href="#\/sources\/doc"[^>]*>&lt;b&gt;合成资料&lt;\/b&gt;/u);
+  assert.match(html, /文档文字 · 文本分段 3/u); assert.match(html, /evidence_changed/u);
+  assert.doesNotMatch(html, /<script>|<img src=x>|<b>合成资料|href="https:|untrusted stage content/u);
+  assert.doesNotMatch(html, /data-chat-detail="event:2:reasoning"|data-chat-detail="event:1:reasoning" open/u);
+});
+
+test('missing model reasoning never fabricates a thought area and old events remain plain labels', async t => {
+  const run = { ...agentRun(), events: [
+    { sequence: 1, type: 'planning', message: 'this is not model reasoning', details: { status: 'completed', tool_name: 'model', tool_names: ['knowledge_read'] } },
+    { sequence: 2, type: 'searching', message: 'legacy' },
+  ] };
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => run });
+  t.after(() => f.workspace.close()); await f.workspace.start(); await f.submit('question-form', [['question', '合成旧记录']]);
+  const html = f.nodes.get('chat-turns').innerHTML;
+  assert.doesNotMatch(html, /模型思考|this is not model reasoning|data-chat-detail="event:2:tool"/u);
+  assert.match(html, /检索知识库/u); assert.match(html, /计划调用/u);
+});
+
+test('tool source locations distinguish PDF physical pages from parsed text sections', async t => {
+  for (const [title, expected] of [['合成说明.txt', '文本分段 2'], ['合成说明.PDF', '第 2 页'], ['合成说明.pdf.txt', '文本分段 2']]) {
+    const run = { ...agentRun(), events: [{ sequence: 1, type: 'reading', message: 'stage', details: {
+      status: 'completed', tool_name: 'knowledge_read', result_count: 1, document_count: 1,
+      sources: [{ source_id: 'source-1', document_id: 'doc', revision_id: 'rev', title, kind: 'document_text', page: 2 }],
+    } }] };
+    const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => run });
+    t.after(() => f.workspace.close()); await f.workspace.start(); await f.submit('question-form', [['question', '合成位置验证']]);
+    const html = f.nodes.get('chat-turns').innerHTML;
+    assert.ok(html.includes(`文档文字 · ${expected}`), title);
+    assert.ok(!html.includes(expected === '第 2 页' ? '文本分段 2' : '第 2 页'), title);
+    f.workspace.close();
+  }
+});
+
+test('same-sequence detail updates preserve independent expanded states and focused reasoning summary', async t => {
+  let current = { ...agentRun(), events: [
+    { sequence: 1, type: 'planning', message: 'stage', details: { status: 'completed', tool_name: 'model', reasoning: '合成返回内容' } },
+    { sequence: 2, type: 'searching', message: 'stage', details: { status: 'running', tool_name: 'knowledge_search', query: '合成查询' } },
+  ] };
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => current, getAgentRun: async () => current });
+  t.after(() => f.workspace.close()); await f.workspace.start(); await f.submit('question-form', [['question', '合成刷新']]);
+  const article = { dataset: { chatTurn: '0' } };
+  const detail = (key, open) => ({ className: 'agent-event-detail', dataset: { chatDetail: key }, open, closest: () => article });
+  const tool = detail('event:1:tool', false), reasoning = detail('event:1:reasoning', true), search = detail('event:2:tool', true);
+  const summary = parent => ({ tagName: 'SUMMARY', parentElement: parent, dataset: {}, getAttribute: () => null, closest: () => article, focus() { f.doc.activeElement = this; } });
+  const controls = [summary(tool), summary(reasoning), summary(search)]; f.doc.activeElement = controls[1];
+  const container = f.nodes.get('chat-turns'); let html = container.innerHTML;
+  container.querySelectorAll = selector => selector === 'details' ? [tool, reasoning, search] : controls;
+  Object.defineProperty(container, 'innerHTML', { get: () => html, set: value => { html = value; tool.open = reasoning.open = search.open = false; f.doc.activeElement = null; } });
+  current = { ...current, events: current.events.map(event => event.sequence === 2 ? { ...event, details: { ...event.details, status: 'completed', result_count: 0, document_count: 0 } } : event) };
+  await f.click('refresh-agent', { turn: '0' });
+  assert.equal(tool.open, false); assert.equal(reasoning.open, true); assert.equal(search.open, true);
+  assert.equal(f.doc.activeElement, controls[1]); assert.equal(f.workspace.state.turns[0].agentRun.events.length, 2);
+  assert.match(html, /0 个片段 · 0 份资料/u); assert.doesNotMatch(html, /aria-current="step"/u);
 });
 
 test('unchanged polling does not repaint Agent progress or pretend to read original documents', async t => {

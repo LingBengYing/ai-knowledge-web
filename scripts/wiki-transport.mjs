@@ -7,11 +7,14 @@ export const WIKI_ASSETS = [
   ['/wiki-retrieval.mjs', ['wiki-retrieval.mjs', 'text/javascript; charset=utf-8']],
   ['/wiki-maintenance.mjs', ['wiki-maintenance.mjs', 'text/javascript; charset=utf-8']],
   ['/knowledge-agent.mjs', ['knowledge-agent.mjs', 'text/javascript; charset=utf-8']],
+  ['/knowledge-conversations.mjs', ['knowledge-conversations.mjs', 'text/javascript; charset=utf-8']],
   ['/wiki-workspace.css', ['wiki-workspace.css', 'text/css; charset=utf-8']],
   ['/wiki-preview.css', ['wiki-preview.css', 'text/css; charset=utf-8']],
 ];
 
 export const WIKI_ROUTES = [
+  [/^\/v1\/knowledge-conversations$/, ['GET', 'POST'], 'wiki-conversation'],
+  [/^\/v1\/knowledge-conversations\/[A-Za-z0-9_-]{1,128}$/, ['GET', 'PATCH', 'DELETE'], 'wiki-conversation'],
   [/^\/v1\/knowledge-agent\/config$/, ['GET'], 'wiki-agent'],
   [/^\/v1\/knowledge-agent\/runs$/, ['POST'], 'wiki-agent'],
   [/^\/v1\/knowledge-agent\/runs\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'wiki-agent'],
@@ -41,6 +44,7 @@ export function wikiQueryAllowed(target, method) {
   if (!target.includes('?')) return true;
   let allowed = [];
   if (method === 'GET') {
+    if (/^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(url.pathname)) allowed = ['offset', 'limit'];
     if (url.pathname === '/v1/wiki/catalog') allowed = ['offset', 'limit', 'q', 'kind'];
     if (url.pathname === '/v1/wiki/pages') allowed = ['offset', 'limit', 'q', 'state'];
     if (url.pathname === '/v1/wiki/proposals') allowed = ['offset', 'limit', 'status'];

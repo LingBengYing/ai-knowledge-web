@@ -1,6 +1,7 @@
 import { ApiError, DOCUMENT_MIME_TYPES } from './api.mjs';
 import { checkedRetrievalSettings } from './retrieval-settings.mjs';
 import { createKnowledgeAgentApi } from './knowledge-agent.mjs';
+import { createKnowledgeConversationsApi } from './knowledge-conversations.mjs';
 
 const validId = /^[A-Za-z0-9_-]{1,128}$/u;
 const sha256 = /^[a-f0-9]{64}$/u;
@@ -49,6 +50,7 @@ export function createWikiWorkspaceApi({ api }) {
   const write = (path, method, body, { signal } = {}) => api(path, { method, ...(body === undefined ? {} : { body }), signal });
   const workspace = {
     ...createKnowledgeAgentApi(api),
+    ...createKnowledgeConversationsApi(api),
     request: api,
     config: options => get('/v1/config', options),
     modelConfiguration: options => get('/v1/model-configuration', options),

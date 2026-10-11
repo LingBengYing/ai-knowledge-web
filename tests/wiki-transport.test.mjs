@@ -14,6 +14,28 @@ const sessionPair = 'rag_session=REPLACE_ME';
 const body = JSON.stringify({ title: '合成知识', body: '原样保留', version: 2 });
 const close = server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
 
+test('conversation management forwards CRUD and pagination on both transports without unknown fields', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => { seen.push([req.url, req.method, Buffer.concat(chunks).toString()]); res.end('{}'); }); }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/json' } : { Origin: origin, 'Content-Type': 'application/json' };
+    const path = '/v1/knowledge-conversations/253d79e9-103c-4898-b698-967fc106fc57';
+    for (const [target, method, body] of [
+      ['/v1/knowledge-conversations?limit=30&offset=0', 'GET'], ['/v1/knowledge-conversations', 'POST', '{}'],
+      [path, 'GET'], [path, 'PATCH', '{"title":"synthetic conversation"}'], [path, 'DELETE'],
+    ]) assert.equal((await raw(origin, target, { method, headers, body })).status, 200, `${target} ${method}`);
+    assert.equal(seen.length, 5); assert.equal(seen[4][2], '');
+    assert.equal((await raw(origin, '/v1/knowledge-conversations?token=wrong', { headers })).status, 400);
+    assert.equal((await raw(origin, `${path}?offset=10&limit=20`, { headers })).status, 200);
+    assert.equal((await raw(origin, `${path}?summary=true`, { headers })).status, 400);
+    assert.equal((await raw(origin, path, { method: 'PUT', headers, body: '{}' })).status, 405);
+    assert.equal((await raw(origin, path, { method: 'DELETE', headers: { ...headers, 'Content-Length': '2' }, body: '{}' })).status, 400);
+    assert.equal((await raw(origin, path, { method: 'PATCH', headers: { ...headers, Origin: 'https://wrong.invalid' }, body: '{}' })).status, 403);
+    assert.equal(seen.length, 6);
+    assert.equal((await raw(origin, '/knowledge-conversations.mjs', { headers })).status, 200);
+  }
+});
+
 test('all requested document formats preserve original upload and replacement bytes on both transports', async t => {
   const extensions = 'pdf properties html vtt csv msg markdown eml ppt docx doc txt pptx mdx xls odt md xlsx xml epub htm'.split(' ');
   for (const external of [false, true]) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApi } from '../public/api.mjs';
-import { createKnowledgeAgentApi, checkedAgentConfig, checkedAgentRun, KnowledgeAgentSession } from '../public/knowledge-agent.mjs';
+import { createKnowledgeAgentApi, checkedAgentConfig, checkedAgentRun, agentProgressView, KnowledgeAgentSession } from '../public/knowledge-agent.mjs';
 
 const runId = '64ccaf3b-6801-4d68-8df6-c40ec575b318';
 const requestId = 'c1028b3b-7dd8-4620-a619-d0aaadccfe7b';
@@ -62,9 +62,9 @@ test('Agent exact JSON requests preserve UUID and question and reuse the ordinar
   const calls = [];
   const api = createKnowledgeAgentApi(createApi({ auth_mode: 'jwt' }, () => '', async (path, options) => {
     calls.push([path, options]);
-    return new Response(JSON.stringify(path.endsWith('/config') ? { enabled: true, engine: 'db-gpt', max_steps: 8 } : run()), { status: options.method === 'POST' ? 202 : 200, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify(path.endsWith('/config') ? { enabled: true, engine: 'knowledge-native-agent', max_steps: 8 } : run()), { status: options.method === 'POST' ? 202 : 200, headers: { 'Content-Type': 'application/json' } });
   }));
-  assert.deepEqual(await api.getAgentConfig(), { enabled: true, engine: 'db-gpt', max_steps: 8 });
+  assert.deepEqual(await api.getAgentConfig(), { enabled: true, engine: 'knowledge-native-agent', max_steps: 8 });
   await api.createAgentRun({ question: '原始问题\n第二行', request_id: requestId });
   await api.getAgentRun(runId); await api.cancelAgentRun(runId);
   assert.deepEqual(calls.map(([path, options]) => [path, options.method, options.body && JSON.parse(options.body)]), [
@@ -85,7 +85,7 @@ test('Agent validates result citations and safe event types, strips thought fiel
     { ...run('completed'), suggestions: [{ title: 'x', reason: 'y', document_ids: ['../private'] }] }, { ...run('failed'), error: { code: 'secret_raw_error', message: 'secret' } } ]) {
     await assert.rejects(checkedAgentRun(invalid, runId), error => error.status === 502);
   }
-  assert.throws(() => checkedAgentConfig({ enabled: 'yes', engine: 'db-gpt', max_steps: 8 }), error => error.status === 502);
+  assert.throws(() => checkedAgentConfig({ enabled: 'yes', engine: 'knowledge-native-agent', max_steps: 8 }), error => error.status === 502);
 });
 
 test('Agent lifecycle creates once, polls only reads and stops on completion without silent fallback', async () => {
@@ -116,4 +116,58 @@ test('closing Agent waiting prevents a late create response from publishing into
   const session = new KnowledgeAgentSession({ createAgentRun: () => new Promise(resolve => { finish = resolve; }) }, { onChange: value => changes.push(value.phase) });
   const pending = session.start('q'); session.close(); finish(run('completed')); await pending; await tick();
   assert.deepEqual(changes, ['submitting']);
+});
+
+test('Agent execution details project only declared fields and preserve the actual provider reasoning', async () => {
+  const details = { status: 'completed', tool_name: 'model', elapsed_ms: 1420,
+    reasoning: '合成模型返回：先查找资料，再核对来源。<script>不可执行</script>', reasoning_truncated: false,
+    tool_names: ['knowledge_search', 'knowledge_search'], body: 'private raw response', content: 'not reasoning' };
+  const checked = await checkedAgentRun(run('running', [{ sequence: 1, type: 'planning', message: 'server stage', details }]), runId);
+  assert.equal(checked.events[0].details.reasoning, details.reasoning);
+  assert.equal(checked.events[0].details.body, undefined);
+  assert.equal(checked.events[0].details.content, undefined);
+  assert.deepEqual(checked.events[0].details.tool_names, ['knowledge_search', 'knowledge_search']);
+  assert.deepEqual(checked.events[0].details.sources, []);
+  assert.equal(checked.events[0].details.query, null);
+  assert.deepEqual(agentProgressView({ phase: 'running', run: checked }).entries[0].details, checked.events[0].details);
+  for (const absent of [undefined, null]) {
+    const legacy = await checkedAgentRun(run('running', [{ sequence: 1, type: 'planning', message: 'stage', details: absent }]), runId);
+    assert.equal(legacy.events[0].details, null);
+  }
+});
+
+test('Agent details validate public sources, optional fields and Unicode display bounds', async () => {
+  const source = { source_id: 'source_1', document_id: 'document_1', revision_id: 'revision_1', title: '合成资料', kind: 'document_text', page: 2, raw_text: 'not public' };
+  const details = { status: 'completed', tool_name: 'knowledge_search', query: '合成检索词', result_count: 1, document_count: 1, sources: [source] };
+  const record = value => run('running', [{ sequence: 1, type: 'searching', message: 'stage', details: value }]);
+  const checked = await checkedAgentRun(record(details), runId);
+  assert.equal(checked.events[0].details.sources[0].raw_text, undefined);
+  assert.equal(checked.events[0].details.sources[0].start_ms, null);
+  assert.equal(checked.events[0].details.reasoning_truncated, false);
+  const legacyIdentity = await checkedAgentRun(record({ ...details, sources: [{ ...source, document_id: 'document:1', revision_id: 'revision:1.2' }] }), runId);
+  assert.equal(legacyIdentity.events[0].details.sources[0].revision_id, 'revision:1.2');
+  const long = await checkedAgentRun(record({ status: 'completed', tool_name: 'model', reasoning: '𠮷'.repeat(16000) }), runId);
+  assert.equal([...long.events[0].details.reasoning].length, 16000);
+  for (const bad of [
+    { ...details, status: 'success' }, { ...details, tool_name: 'shell' }, { ...details, query: 42 },
+    { ...details, elapsed_ms: -1 }, { ...details, result_count: 1.5 }, { ...details, sources: Array(33).fill(source) },
+    { ...details, sources: [{ ...source, document_id: '../private' }] },
+    { ...details, sources: [{ ...source, page: 0 }] }, { ...details, sources: [{ ...source, start_ms: 9, end_ms: 4 }] },
+    { ...details, safe_code: 'private-provider-error' }, { ...details, reasoning: {} },
+    { ...details, reasoning: 'a'.repeat(16001) }, { ...details, tool_names: ['exec'] }, { ...details, tool_names: Array(17).fill('knowledge_search') }, { ...details, reasoning_truncated: 'yes' },
+  ]) await assert.rejects(checkedAgentRun(record(bad), runId), error => error.status === 502);
+});
+
+test('Agent same-sequence completion updates details without adding another search', async t => {
+  let current = run('running', [{ sequence: 1, type: 'searching', message: 'stage', details: { status: 'running', tool_name: 'knowledge_search', query: '合成查询' } }]);
+  const session = new KnowledgeAgentSession({ createAgentRun: async () => checkedAgentRun(current), getAgentRun: async () => checkedAgentRun(current) }, { pollDelay: 100000 });
+  t.after(() => session.close());
+  await session.start('合成问题');
+  current = { ...current, events: current.events.map(event => ({ ...event, details: { ...event.details, status: 'completed', result_count: 2, elapsed_ms: 91 } })) };
+  await session.refresh();
+  assert.equal(session.value.run.events.length, 1);
+  assert.equal(session.value.run.events[0].details.result_count, 2);
+  assert.match(agentProgressView(session.value).summary, /检索发起 1 次/u);
+  assert.equal(agentProgressView(session.value).entries[0].current, false);
+  session.close();
 });

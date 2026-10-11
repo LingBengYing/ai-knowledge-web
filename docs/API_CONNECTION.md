@@ -1,5 +1,13 @@
 # API Connection
 
+## 0051 持久对话
+
+GET/POST `/v1/knowledge-conversations` 用于分页列表/创建，列表只接受limit、offset。
+GET/PATCH/DELETE `/v1/knowledge-conversations/{id}` 用于完整历史/改名/删除。
+POST Agent run可带conversation_id，仍有独立request_id防重；刷新历史不调用模型。
+删除bodyless且需页面确认；活动任务409，先停止再删除。配置engine为knowledge-native-agent。
+公开结果仅含问题、答案、任务状态/引用与压缩统计，不包含内部摘要或模型私有思考。
+
 0039新合同：浏览器问答/召回请求不发送document_ids，旧客户端参数视为废弃。问题不再限制4096字节；召回scope_count不限128，统一知识引用knowledge-sources编号不限32。登录/同源、精确来源路径及版本/SHA保持；普通128KiB JSON请求、4MiB响应、媒体字节与期限等物理保护未取消。角色权限仅保留兼容响应字段，不作为本UI动作门禁。以下旧选中范围/reader行为已由后端0053与[0039规格](changes/0039-shared-workspace/spec.md)替代。
 
 ## 产品使用帮助（0036 / Java 0048）

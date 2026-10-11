@@ -84,6 +84,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   let modelSession, rebuildSession, renderedModelVersion, modelLocalError = '';
   let activeQuestion = null, pendingQuestion = null, pendingPurge = false;
   let renderedChatContainer, renderedChatMarkup;
+  Object.assign(state, { conversations: [], conversation: null, conversationMore: false, conversationRenaming: false, conversationCreating: false });
   const isCurrent = value => value === epoch;
   const notify = message => { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000); };
   const errorMessage = error => error?.status === 401 ? '当前会话不可用，请在模型与管理入口连接后重试。' : error?.message ?? '请求未完成，请刷新读取后核对。';
@@ -183,14 +184,32 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (!turn.result) return '';
     return `<p class="preserve-lines answer-paragraph">${e(turn.result.answer)}</p>${turn.result.reason ? notice(`原因：${turn.result.reason}`) : ''}<div class="answer-reference-list">${turn.result.citations.map(citation => `<a href="#/answer-source/${turn.result.answer_id}/${citation.citation_id}">[${citation.citation_id}] ${e(citation.filename)} · ${e(formatLocator(citation))}</a>`).join('')}</div><details class="retrieval-steps"><summary>回答记录</summary><p>回答编号：${e(turn.result.answer_id)}</p><p>${turn.result.citations.length} 条引用；状态：${e(turn.result.status)}</p></details><div class="answer-footer">${button('save-answer', '存为草稿', false, `data-turn="${index}" ${state.busy ? 'disabled' : ''}`)}</div>`;
   }
+  function agentEvent(event) {
+    const details = event.details;
+    if (!details) return `<li${event.current ? ' aria-current="step"' : ''}>${e(event.label)}</li>`;
+    const status = { running: '进行中', completed: '已完成', failed: '未完成', cancelled: '已取消' }[details.status];
+    const elapsed = details.elapsed_ms == null ? '' : details.elapsed_ms < 1000 ? `${details.elapsed_ms} 毫秒` : `${Number((details.elapsed_ms / 1000).toFixed(2))} 秒`;
+    const counts = [details.result_count == null ? null : `${details.result_count} 个片段`, details.document_count == null ? null : `${details.document_count} 份资料`].filter(Boolean).join(' · ');
+    const sourceKind = { document_text: '文档文字', video_transcript: '视频转录', video_subtitle: '视频字幕', video_frame_ocr: '视频画面文字' };
+    const sources = details.sources?.length ? `<ul class="agent-tool-sources">${details.sources.map(source => {
+      const locator = source.page != null ? /\.pdf$/iu.test(source.title) ? `第 ${source.page} 页` : `文本分段 ${source.page}`
+        : source.start_ms != null && source.end_ms != null ? `${source.start_ms / 1000}–${source.end_ms / 1000} 秒` : '';
+      const title = ident.test(source.document_id) ? `<a href="#/sources/${e(source.document_id)}">${e(source.title)}</a>` : `<span class="agent-source-title">${e(source.title)}</span>`;
+      return `<li>${title}<span>${e([sourceKind[source.kind], locator].filter(Boolean).join(' · '))}</span><code>${e(source.source_id)}</code></li>`;
+    }).join('')}</ul>` : '';
+    const planned = details.tool_names?.length ? `<p>计划调用：${details.tool_names.map(name => `<code>${e(name)}</code>`).join('、')}</p>` : '';
+    const tool = `<details class="agent-event-detail" data-chat-detail="event:${event.sequence}:tool"><summary><span>${e(event.label)}</span><span class="agent-event-status${details.status === 'failed' ? ' is-failed' : ''}">${e(status)}</span>${elapsed ? `<span class="agent-event-elapsed">${e(elapsed)}</span>` : ''}</summary><div class="agent-event-body"><p class="agent-tool-name">工具：<code>${e(details.tool_name)}</code></p>${details.query != null ? `<p class="agent-query preserve-lines">${e(details.query)}</p>` : ''}${counts ? `<p class="agent-tool-count">${e(counts)}</p>` : ''}${planned}${sources}${details.safe_code ? `<p class="agent-tool-error">原因：<code>${e(details.safe_code)}</code></p>` : ''}</div></details>`;
+    const reasoning = details.reasoning?.trim() ? `<details class="agent-event-detail agent-reasoning" data-chat-detail="event:${event.sequence}:reasoning"><summary>模型思考</summary><div class="agent-event-body"><p class="agent-reasoning-label">来自模型的输出，未经核验，不作为回答证据。</p><div class="agent-reasoning-text preserve-lines">${e(details.reasoning)}</div>${details.reasoning_truncated ? '<p class="agent-reasoning-label">显示内容已截取。</p>' : ''}</div></details>` : '';
+    return `<li${event.current ? ' aria-current="step"' : ''}>${tool}${reasoning}</li>`;
+  }
   function agentProgress(turn, index) {
     if (!turn.agentPhase) return '';
     const run = turn.agentRun;
     const view = agentProgressView({ phase: turn.agentPhase, run });
     const terminal = ['completed', 'failed', 'cancelled'].includes(turn.agentPhase);
     const canAct = run?.status === 'running' && !terminal;
-    const record = `<div class="agent-run-record">${run?.id ? `<p>任务编号：<code>${e(run.id)}</code></p>` : ''}${run?.error?.code ? `<p>失败原因：<code>${e(run.error.code)}</code></p>` : ''}</div>`;
-    const timeline = view.entries.length ? `<ol class="agent-timeline">${view.entries.map(event => `<li${event.current ? ' aria-current="step"' : ''}>${e(event.label)}</li>`).join('')}</ol>` : '';
+    const record = `<div class="agent-run-record">${run?.id ? `<p>任务编号：<code>${e(run.id)}</code></p>` : ''}${run?.error?.code ? `<p>失败原因：<code>${e(run.error.code)}</code></p>` : ''}${turn.agentPhase === 'unknown' && !run && state.conversation ? button('refresh-conversation', '核对已提交的问题') : ''}</div>`;
+    const timeline = view.entries.length ? `<ol class="agent-timeline">${view.entries.map(agentEvent).join('')}</ol>` : '';
     if (terminal) return `<details class="agent-progress agent-progress-complete"><summary>查阅过程 · ${e(view.status)}</summary><p class="agent-outcome">${e(view.title)}</p><p class="agent-summary">${e(view.summary)}</p>${timeline}${record}</details>`;
     return `<section class="agent-progress agent-progress-live${view.active ? ' is-active' : ''}" aria-label="操作进度" data-current-stage="${e(view.entries.at(-1)?.type ?? 'waiting')}"><div class="agent-live-heading"><span class="agent-indicator" aria-hidden="true">${icon(view.entries.at(-1)?.type === 'searching' ? 'search' : 'book')}</span><div><div class="agent-status" role="status" aria-live="polite" aria-atomic="true">${e(view.title)}</div><p class="agent-description">${e(view.detail)}</p></div></div><details class="agent-progress-trace" open><summary>查阅过程</summary>${timeline}${record}</details>${canAct ? `<div class="agent-actions">${button('stop-agent', '停止', false, `data-turn="${index}" ${turn.agentPhase === 'cancelling' ? 'disabled' : ''}`)}${button('refresh-agent', '刷新状态', false, `data-turn="${index}" ${turn.agentPhase === 'cancelling' ? 'disabled' : ''}`)}</div>` : ''}</section>`;
   }
@@ -201,13 +220,14 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function chatTurns() {
     return state.turns.length ? state.turns.map((turn, index) => `<article class="conversation-item" data-chat-turn="${index}"><div class="chat-user"><span class="user-avatar small">你</span><p>${e(turn.question)}</p></div><div class="answer-block"><div class="answer-label">${icon('book')}<strong>知序</strong><span class="badge ${turn.result?.status === 'answered' ? 'green' : 'amber'}">${turn.pending ? '请求处理中' : turn.error ? '请求未完成' : turn.result?.status === 'answered' ? '资料综合回答' : turn.result ? '证据不足 / 拒答' : turn.agentPhase === 'cancelled' ? '已取消' : '等待核对'}</span></div>${agentProgress(turn, index)}${turn.error ? notice(turn.error, true) : turn.pending && !turn.agentPhase ? notice('正在生成回答…') : ''}${answerBody(turn, index)}${suggestions(turn)}</div></article>`).join('') : empty('有什么想了解的？');
   }
-  const chatRecordKey = element => `${element.closest?.('[data-chat-turn]')?.dataset.chatTurn}:${element.className}`;
+  const chatRecordKey = element => JSON.stringify([element.closest?.('[data-chat-turn]')?.dataset.chatTurn, element.dataset?.chatDetail ?? element.className]);
   const chatFocusKey = element => {
     if (!element) return null;
-    const parentClass = element.tagName === 'SUMMARY' ? element.parentElement.className : null;
+    const parent = element.tagName === 'SUMMARY' ? element.parentElement : null;
+    const parentClass = parent?.className;
     const processSummary = parentClass === 'agent-progress-trace' || parentClass === 'agent-progress agent-progress-complete';
     return JSON.stringify([element.closest?.('[data-chat-turn]')?.dataset.chatTurn,
-      element.tagName, element.dataset?.action, element.getAttribute?.('href'), processSummary ? 'agent-process' : parentClass]);
+      element.tagName, element.dataset?.action, element.getAttribute?.('href'), processSummary ? 'agent-process' : parent?.dataset?.chatDetail ?? parentClass]);
   };
   function updateChat() {
     if (state.route.view !== 'ask' || state.loading || state.error) return;
@@ -227,10 +247,20 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       }
       renderedChatContainer = container; renderedChatMarkup = markup;
     }
-    $('question-submit').disabled = state.turns.some(turn => turn.pending);
+    $('question-submit').disabled = state.conversationCreating || state.turns.some(turn => turn.pending);
+    if ($('conversation-tools') && !state.conversationRenaming) $('conversation-tools').innerHTML = conversationTools();
+  }
+  function conversationTools() {
+    const current = state.conversation;
+    if (!current) return '';
+    const compression = ({ compressing: '正在压缩上下文', compressed: `已压缩 ${current.compression.covered_turn_count} 轮上下文`, failed: '上下文压缩未完成' })[current.compression.status];
+    return `${state.conversationRenaming ? `<form id="conversation-title-form" class="conversation-title-form"><label class="sr-only" for="conversation-title">对话名称</label><input id="conversation-title" name="title" value="${e(current.title)}" maxlength="200" required><button class="button small primary" ${state.busy ? 'disabled' : ''}>保存</button>${button('cancel-conversation-rename', '取消')}</form>` : `<h2>${e(current.title)}</h2><div class="actions">${button('rename-conversation', '重命名')}${button('delete-conversation', '删除', false, state.busy || state.turns.some(turn => turn.pending) ? 'disabled' : '')}</div>`}${compression ? `<span class="badge ${current.compression.status === 'failed' ? 'amber' : 'green'}" title="仅缩减模型上下文，完整对话仍然保留">${e(compression)}</span>` : ''}`;
+  }
+  function conversationList() {
+    return `<nav aria-label="对话列表">${state.conversations.map(item => `<a class="conversation-link ${state.conversation?.id === item.id ? 'active' : ''}" href="#/ask/${e(item.id)}" ${state.conversation?.id === item.id ? 'aria-current="page"' : ''}><strong>${e(item.title)}</strong><span>${e(formatTimestamp(item.updated_at))}${item.active_run_id ? ' · 处理中' : ''}</span></a>`).join('') || '<p class="muted">暂无对话</p>'}</nav>${state.conversationMore ? button('more-conversations', '加载更多', false, state.busy ? 'disabled' : '') : ''}`;
   }
   function ask() {
-    return `${heading('ASK YOUR KNOWLEDGE', '知识问答', '', button('new-chat', '清空本页会话'))}<div class="chat-layout"><div class="main-column"><div class="chat-thread" id="chat-turns">${chatTurns()}</div><form class="composer" id="question-form"><label class="sr-only" for="question">你的问题</label><textarea id="question" name="question" rows="3" placeholder="描述你想了解的内容…" required>${e(state.question)}</textarea><div class="composer-footer"><a class="text-link" href="#/sources">${icon('file')}查找资料</a><button id="question-submit" class="button primary" ${state.turns.some(turn => turn.pending) ? 'disabled' : ''}>发送 ${icon('arrow')}</button></div></form></div></div>`;
+    return `${heading('ASK YOUR KNOWLEDGE', '知识问答', '', button('new-chat', '新建对话'))}<div class="chat-layout ${state.agentConfig?.enabled ? 'conversation-layout' : ''}">${state.agentConfig?.enabled ? `<aside class="conversation-sidebar" id="conversation-list">${conversationList()}</aside>` : ''}<div class="main-column"><div class="conversation-tools" id="conversation-tools">${conversationTools()}</div><div class="chat-thread" id="chat-turns">${chatTurns()}</div><form class="composer" id="question-form"><label class="sr-only" for="question">你的问题</label><textarea id="question" name="question" rows="3" placeholder="${state.conversation ? '继续追问…' : '描述你想了解的内容…'}" required>${e(state.question)}</textarea><div class="composer-footer"><a class="text-link" href="#/sources">${icon('file')}查找资料</a><button id="question-submit" class="button primary" ${state.conversationCreating || state.turns.some(turn => turn.pending) ? 'disabled' : ''}>发送 ${icon('arrow')}</button></div></form></div></div>`;
   }
   function graph() {
     const edges = commonSourceRelations(state.pages);
@@ -394,7 +424,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   }
   async function load() {
     const currentEpoch = ++epoch; cleanup(); readController = new AbortController(); const signal = readController.signal;
-    state.route = parseWorkspaceRoute(win.location.hash); state.loading = true; state.error = null; state.data = null; render();
+    state.route = parseWorkspaceRoute(win.location.hash); state.loading = true; state.error = null; state.data = null; state.conversationCreating = false; render();
     const route = state.route;
     if (route.view !== 'ask') pendingQuestion = null;
     try {
@@ -418,7 +448,18 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       if (route.view === 'review') { if (route.id) data = await wiki.getProposal(route.id, { signal }); else { const proposals = await completeList(wiki.listProposals, { status: state.reviewStatus }, signal); if (!isCurrent(currentEpoch)) return; state.proposals = proposals; } }
       if (route.view === 'settings') { const settings = checkedRetrievalSettings(await wiki.getSettings({ signal })); if (!isCurrent(currentEpoch)) return; state.settings = settings; }
       if (route.view === 'models') await loadModels(currentEpoch);
-      if (route.view === 'ask') { const config = await wiki.getAgentConfig({ signal }); if (!isCurrent(currentEpoch)) return; state.agentConfig = config; }
+      if (route.view === 'ask') {
+        const config = await wiki.getAgentConfig({ signal }); if (!isCurrent(currentEpoch)) return; state.agentConfig = config;
+        if (config.enabled) {
+          const [list, detail] = await Promise.all([wiki.listConversations({ signal }), route.id ? wiki.getConversation(route.id, { signal }) : null]);
+          if (!isCurrent(currentEpoch)) return;
+          state.conversations = list.items; state.conversationMore = list.items.length === list.limit;
+          state.conversation = detail?.conversation ?? null; state.conversationRenaming = false;
+          state.turns = (detail?.turns ?? []).map(turn => ({ question: turn.question, pending: turn.status === 'running',
+            agentPhase: turn.status, agentRun: turn.result ?? { id: turn.run_id, status: 'running', events: [], result: null, suggestions: [], error: null },
+            result: turn.result?.result ?? null, error: turn.result?.error?.message ?? null }));
+        } else if (route.id) throw new Error('知识助手当前未启用，无法继续这份对话。');
+      }
       if (['page-source', 'proposal-source'].includes(route.view)) {
         const owner = route.view === 'page-source' ? await wiki.getPageVersion(route.id, route.version, { signal }) : await wiki.getProposal(route.id, { signal });
         const source = (owner.content ?? owner.after).sections.flatMap(section => section.sources).find(item => item.id === route.sourceId);
@@ -435,6 +476,10 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       if (['page-source', 'proposal-source'].includes(route.view)) await openWikiSource(data, currentEpoch, signal);
       if (route.view === 'answer-source') await openAnswerSource(data.metadata, currentEpoch, signal);
       if (route.view === 'sources') schedulePoll(currentEpoch);
+      if (route.view === 'ask' && state.agentConfig?.enabled) {
+        const running = state.turns.find(turn => turn.agentRun?.status === 'running');
+        if (running) agentSession(running).resume(running.agentRun);
+      }
       if (route.view === 'ask' && pendingQuestion) { const question = pendingQuestion; pendingQuestion = null; submitQuestion(question); }
     } catch (error) { if (isCurrent(currentEpoch) && error.name !== 'AbortError') { state.loading = false; state.error = errorMessage(error); render(); } }
   }
@@ -522,13 +567,27 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     const session = new KnowledgeAgentSession(wiki, { onChange: value => {
       if (!isCurrent(captured) || activeQuestion?.session !== session || !state.turns.includes(turn)) return;
       turn.agentPhase = value.phase; turn.agentRun = value.run;
-      turn.pending = ['submitting', 'running', 'reading', 'cancelling'].includes(value.phase);
+      turn.pending = ['submitting', 'running', 'reading', 'cancelling'].includes(value.phase) || value.phase === 'unknown' && !value.run && !!state.conversation;
       turn.result = value.run?.result ?? null;
       turn.error = value.error ? errorMessage(value.error) : value.run?.error?.message ?? null;
       updateChat();
+      if (['completed', 'failed', 'cancelled'].includes(value.phase) && !turn.metadataRefreshed) {
+        turn.metadataRefreshed = true; refreshConversationMetadata(captured);
+      }
     } });
     activeQuestion = { turn, session, kind: 'agent' };
     return session;
+  }
+  async function refreshConversationMetadata(captured = epoch) {
+    const id = state.conversation?.id;
+    if (!id) return;
+    try {
+      const [detail, list] = await Promise.all([wiki.getConversation(id), wiki.listConversations()]);
+      if (!isCurrent(captured) || state.conversation?.id !== id) return;
+      state.conversation = detail.conversation; state.conversations = list.items; state.conversationMore = list.items.length === list.limit;
+      if (!state.conversationRenaming) $('conversation-tools').innerHTML = conversationTools();
+      $('conversation-list').innerHTML = conversationList();
+    } catch (error) { if (isCurrent(captured)) notify(`对话列表未刷新：${errorMessage(error)}`); }
   }
   async function agentAction(turn, action) {
     if (!turn?.agentRun || state.turns.some(other => other !== turn && other.pending)) return;
@@ -540,13 +599,24 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     } else if (action === 'cancel') await session.cancel(); else await session.refresh();
   }
   async function submitQuestion(question) {
-    const cleaned = question.trim(); if (!cleaned || state.turns.some(turn => turn.pending)) return;
+    const cleaned = question.trim(); if (!cleaned || state.conversationCreating || state.turns.some(turn => turn.pending)) return;
     if (state.route.view !== 'ask') { pendingQuestion = cleaned; state.question = cleaned; navigate('#/ask'); return; }
     if (state.loading || state.error || !state.agentConfig) return;
+    if (state.agentConfig.enabled && !state.conversation) {
+      const captured = epoch; state.conversationCreating = true; state.question = cleaned; render();
+      try {
+        const conversation = await wiki.createConversation({ title: cleaned.replace(/\s+/gu, ' ').slice(0, 200) });
+        if (!isCurrent(captured)) return;
+        state.conversation = conversation; state.conversations = [conversation, ...state.conversations.filter(item => item.id !== conversation.id)];
+        state.route = { view: 'ask', id: conversation.id };
+        win.history?.replaceState(null, '', `#/ask/${conversation.id}`);
+      } catch (error) { if (isCurrent(captured)) notify(errorMessage(error)); return; }
+      finally { if (isCurrent(captured)) { state.conversationCreating = false; render(); } }
+    }
     abandonQuestion();
     const turn = { question: cleaned, pending: true, result: null, error: null };
     state.turns.push(turn); state.question = ''; render();
-    if (state.agentConfig.enabled) { await agentSession(turn).start(cleaned); return; }
+    if (state.agentConfig.enabled) { await agentSession(turn).start(cleaned, { conversationId: state.conversation.id }); return; }
     const captured = epoch, session = new AnswerSession(api, { canReadOriginal: () => true });
     activeQuestion = { turn, session, kind: 'answer' };
     const result = await session.ask(cleaned, null, 'knowledge');
@@ -563,10 +633,17 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function updateUploadList() { $('upload-list').innerHTML = state.pendingFiles.map(file => `<div class="upload-item"><strong>${e(file.name)}</strong><span>${(file.size / 1024).toFixed(1)} KiB · 待上传</span></div>`).join(''); $('confirm-import').disabled = !state.pendingFiles.length || state.busy; }
   function updateUploadAccept() { $('workspace-files').accept = ['audio', 'sound'].includes($('upload-kind').value) ? '.wav,.mp3,.flac,.ogg,.m4a,.mp4,.webm' : ['video', 'video-av'].includes($('upload-kind').value) ? '.mp4,.mov,.webm,.mkv' : `${DOCUMENT_ACCEPT},.png,.jpg,.jpeg`; }
   doc.addEventListener('submit', async event => {
-    const form = event.target; if (!['home-question', 'question-form', 'catalog-search', 'compile-form', 'draft-form', 'settings-form', 'models-form', 'version-form'].includes(form.id)) return;
+    const form = event.target; if (!['conversation-title-form', 'home-question', 'question-form', 'catalog-search', 'compile-form', 'draft-form', 'settings-form', 'models-form', 'version-form'].includes(form.id)) return;
     event.preventDefault(); const values = new FormDataType(form);
     if (form.id === 'models-form') { await modelOperation('save'); return; }
-    if (['home-question', 'question-form'].includes(form.id)) { submitQuestion(String(values.get('question') || '')); return; }
+    if (form.id === 'conversation-title-form') {
+      const conversation = state.conversation;
+      await mutate(() => wiki.renameConversation(conversation.id, String(values.get('title') || '')), updated => {
+        state.conversation = updated; state.conversationRenaming = false;
+        state.conversations = state.conversations.map(item => item.id === updated.id ? updated : item); render();
+      }); return;
+    }
+    if (['home-question', 'question-form'].includes(form.id)) return submitQuestion(String(values.get('question') || ''));
     if (form.id === 'catalog-search') { state.query = String(values.get('query') || '').trim(); state.offset = 0; load(); return; }
     if (form.id === 'version-form') { navigate(`#/knowledge/${state.route.id}/${Number(values.get('version'))}`); return; }
     if (form.id === 'compile-form') {
@@ -615,7 +692,8 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (action === 'confirm-operation') { finishConfirmation(true); return; }
     if (action === 'cancel-operation') { finishConfirmation(false); return; }
     if (action === 'refresh') load();
-    if (action === 'back-reader') { event.preventDefault(); const route = state.route; navigate(route.view === 'page-source' ? `#/knowledge/${route.id}/${route.version}` : route.view === 'proposal-source' ? `#/review/${route.id}` : '#/ask'); }
+    if (action === 'back-reader') { event.preventDefault(); const route = state.route; navigate(route.view === 'page-source' ? `#/knowledge/${route.id}/${route.version}` : route.view === 'proposal-source' ? `#/review/${route.id}` : state.conversation ? `#/ask/${state.conversation.id}` : '#/ask'); }
+    if (action === 'refresh-conversation' && state.conversation) navigate(`#/ask/${state.conversation.id}`);
     if (action === 'import') { updateUploadAccept(); $('import-dialog').showModal(); }
     if (action === 'close-import') $('import-dialog').close();
     if (action === 'confirm-import') confirmImport();
@@ -652,7 +730,20 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     }
     if (action === 'stop-agent') { await agentAction(state.turns[Number(target.dataset.turn)], 'cancel'); return; }
     if (action === 'refresh-agent') { await agentAction(state.turns[Number(target.dataset.turn)], 'refresh'); return; }
-    if (action === 'new-chat') { abandonQuestion(); state.turns = []; state.question = ''; render(); }
+    if (action === 'new-chat') { abandonQuestion(); state.turns = []; state.question = ''; state.conversation = null; state.conversationRenaming = false; navigate('#/ask'); }
+    if (action === 'rename-conversation') { state.conversationRenaming = true; $('conversation-tools').innerHTML = conversationTools(); $('conversation-title').focus(); }
+    if (action === 'cancel-conversation-rename') { state.conversationRenaming = false; $('conversation-tools').innerHTML = conversationTools(); }
+    if (action === 'delete-conversation' && state.conversation) {
+      const id = state.conversation.id;
+      if (state.turns.some(turn => turn.pending)) { notify('请先停止当前任务再删除对话。'); return; }
+      if (!await confirmOperation('删除对话', '删除此对话及其完整历史？此操作无法撤销，不影响原始资料与知识页。')) return;
+      await mutate(() => wiki.deleteConversation(id), () => { state.conversation = null; state.turns = []; state.question = ''; navigate('#/ask'); notify('对话已删除。'); });
+    }
+    if (action === 'more-conversations') await mutate(() => wiki.listConversations({ offset: state.conversations.length }), page => {
+      const existing = new Set(state.conversations.map(item => item.id));
+      state.conversations.push(...page.items.filter(item => !existing.has(item.id))); state.conversationMore = page.items.length === page.limit;
+      $('conversation-list').innerHTML = conversationList();
+    });
     if (action === 'save-answer') { const turn = state.turns[Number(target.dataset.turn)]; if (turn?.result) mutate(() => wiki.createDraft({ title: [...turn.question].slice(0, 200).join(''), body: `问题：${turn.question}\n\n${turn.result.answer}\n\n待核验回答记录：${turn.result.answer_id}\n${turn.result.citations.map(citation => `[${citation.citation_id}] ${citation.filename}`).join('\n')}` }), value => { navigate(`#/drafts/${value.id}`); notify('已保存未核验草稿，不作为问答证据。'); }); }
     if (action === 'delete-draft') {
       const draft = state.data;
