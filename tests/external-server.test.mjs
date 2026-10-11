@@ -301,6 +301,10 @@ async function fixture(t, options = {}, handler) {
       response.end(JSON.stringify({ enabled: options.enabled ?? true, public_origin: publicOrigin, auth_mode: 'jwt' }));
     } else if (request.url === '/v1/config') {
       response.end(JSON.stringify({ auth_mode: options.authMode ?? 'jwt', capabilities: [] }));
+    } else if (request.url === '/v1/session' && request.method === 'GET' && options.sessionMaintenance) {
+      response.statusCode = 503;
+      response.setHeader('Content-Type', 'application/problem+json');
+      response.end(JSON.stringify({ status: 503, error_code: 'migration_incomplete' }));
     } else if (request.url === '/v1/session' && request.method === 'GET') {
       response.statusCode = request.headers.cookie === sessionPair ? 200 : 401;
       response.end(JSON.stringify({ status: response.statusCode === 200 ? 'authenticated' : 'unauthorized' }));
@@ -314,6 +318,29 @@ async function fixture(t, options = {}, handler) {
   t.after(() => new Promise(resolve => { frontend.close(resolve); frontend.closeAllConnections(); }));
   return { origin: `http://127.0.0.1:${frontend.address().port}`, backendOrigin, seen };
 }
+
+test('library maintenance during the session check is reported as retryable maintenance, not an invalid backend', async t => {
+  const { origin } = await fixture(t, { sessionMaintenance: true });
+  const response = await raw(origin, '/v1/documents/doc-one/original', { headers: { Cookie: sessionPair } });
+  assert.equal(response.status, 503);
+  assert.equal(response.headers['retry-after'], '5');
+  const body = JSON.parse(response.body);
+  assert.equal(body.title, 'library_maintenance');
+  assert.equal(body.detail, '资料库正在清理已删除的资料，请稍后重试。');
+});
+
+test('backend maintenance responses keep their status and retry hint through the proxy', async t => {
+  const { origin } = await fixture(t, {}, (request, response) => {
+    response.statusCode = 503;
+    response.setHeader('Content-Type', 'application/problem+json');
+    response.setHeader('Retry-After', '5');
+    response.end('{"status":503,"error_code":"migration_incomplete"}');
+  });
+  const response = await raw(origin, '/v1/documents/doc-one/original', { headers: { Cookie: sessionPair } });
+  assert.equal(response.status, 503);
+  assert.equal(response.headers['retry-after'], '5');
+  assert.equal(JSON.parse(response.body).error_code, 'migration_incomplete');
+});
 
 test('authenticated original-file details use only pinned GET paths and load the original module', async t => {
   const { origin, seen } = await fixture(t, {}, (request, response) => {

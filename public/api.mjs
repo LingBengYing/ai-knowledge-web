@@ -64,6 +64,16 @@ export function validateUpload(file, config, uploadKind = 'document') {
   return file;
 }
 
+const MAINTENANCE_RETRIES = 6;
+function pause(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, milliseconds);
+    function abort() { clearTimeout(timer); reject(signal.reason); }
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
 /** Cookies remain browser-owned; this client never stores a token. */
 export function createApi(config, principal, fetcher = globalThis.fetch) {
   return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document', replacement, onEvent } = {}) {
@@ -99,10 +109,19 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
       headers['Content-Type'] = uploadKind === 'video' ? videoTypes[file.name.split('.').at(-1).toLowerCase()] : 'application/octet-stream';
       if (['sound', 'video-av'].includes(uploadKind)) headers['X-Filename'] = encodeURIComponent(file.name);
     } else if (body !== undefined) headers['Content-Type'] = 'application/json';
-    const response = await fetcher(path, {
+    const send = () => fetcher(path, {
       method, headers, signal, credentials: 'same-origin', cache: 'no-store',
       ...(file !== undefined ? { body: file } : body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
+    let response = await send();
+    // Deleting documents briefly locks the library; reads wait it out instead of failing the page.
+    for (let attempt = 0; method === 'GET' && response.status === 503 && attempt < MAINTENANCE_RETRIES; attempt += 1) {
+      const seconds = Number(response.headers?.get?.('retry-after'));
+      if (!Number.isInteger(seconds) || seconds < 1) break;
+      await response.body?.cancel?.();
+      await pause(Math.min(seconds, 10) * 1000, signal);
+      response = await send();
+    }
     if (binary && response.ok) return readBinary(response, path);
     if (onEvent && response.ok) return readEventStream(response, onEvent, signal);
     const result = response.status === 204 ? null : await response.json().catch(() => null);
