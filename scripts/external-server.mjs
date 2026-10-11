@@ -393,6 +393,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
   let activeReplacementIndexes = 0;
   let activeAttachments = 0;
   let activeRequests = 0;
+  let activeStreams = 0;
   let loginWindow = Date.now();
   let loginAttempts = 0;
   const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
@@ -416,11 +417,17 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     let reservedReplacementIndex = false;
     let reservedAttachment = false;
     let reservedRequest = false;
+    let reservedStream = false;
     res.once('close', () => { if (!res.writableEnded) controller.abort(); });
     try {
       const origin = validateBrowserBoundary(req, publicOrigin);
-      if (activeRequests >= 8) throw new TransportError(429, 'entry_capacity_reached');
-      activeRequests += 1; reservedRequest = true;
+      if (isAgentEventStream(req.method, req.url)) {
+        if (activeStreams >= 32) throw new TransportError(429, 'entry_capacity_reached');
+        activeStreams += 1; reservedStream = true;
+      } else {
+        if (activeRequests >= 8) throw new TransportError(429, 'entry_capacity_reached');
+        activeRequests += 1; reservedRequest = true;
+      }
       const path = req.url.split('?')[0];
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
       const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
@@ -477,7 +484,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           detail: status >= 500 ? '知识库服务暂不可用。' : '请求未满足访问条件。', request_id: requestId }));
       }
       req.resume();
-    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedAttachment) activeAttachments -= 1; if (reservedRequest) activeRequests -= 1; }
+    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedAttachment) activeAttachments -= 1; if (reservedRequest) activeRequests -= 1; if (reservedStream) activeStreams -= 1; }
   });
   server.maxHeadersCount = 40;
   await new Promise((resolveListening, rejectListening) => {

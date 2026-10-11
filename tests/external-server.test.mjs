@@ -621,3 +621,30 @@ test('reindex uses ordinary 128 KiB JSON budget and ordinary deadline without au
   assert.equal((await raw(origin, '/v1/documents/doc-timeout/reindex', { method: 'POST', headers, body: '{"base_publication_id":"publication-old"}' })).status, 504);
   assert.equal(calls, 2, 'oversize was never forwarded and timeout was never retried');
 });
+
+test('open agent event streams do not use up the ordinary request capacity', async t => {
+  const backend = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/health/entry-policy') return res.end(JSON.stringify({ enabled: true, public_origin: publicOrigin, auth_mode: 'jwt' }));
+    if (req.url === '/v1/config') return res.end(JSON.stringify({ auth_mode: 'jwt', capabilities: [] }));
+    if (req.url === '/v1/session') return res.end(JSON.stringify({ status: 'authenticated' }));
+    if (req.url.endsWith('/events')) { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write(': hb\n\n'); return; }
+    res.end('{}');
+  }).listen(0, '127.0.0.1');
+  await once(backend, 'listening');
+  const frontend = await startExternalServer({ backendOrigin: `http://127.0.0.1:${backend.address().port}`, publicOrigin, port: 0 });
+  t.after(() => { frontend.closeAllConnections(); frontend.close(); backend.closeAllConnections(); backend.close(); });
+  const origin = `http://127.0.0.1:${frontend.address().port}`;
+  const agent = new http.Agent({ keepAlive: false, maxSockets: 100 });
+  const get = path => new Promise((resolve, reject) => {
+    http.get(`${origin}${path}`, { agent, headers: { Host: publicHost, Cookie: sessionPair } }, res => {
+      if (res.statusCode === 200 && path.endsWith('/events')) res.once('data', () => resolve(res.statusCode));
+      else { res.resume(); resolve(res.statusCode); }
+    }).on('error', reject);
+  });
+  for (let i = 0; i < 8; i++) assert.equal(await get(`/v1/knowledge-agent/runs/run-${i}/events`), 200);
+  assert.equal(await get('/v1/knowledge-conversations'), 200);
+  for (let i = 8; i < 32; i++) assert.equal(await get(`/v1/knowledge-agent/runs/run-${i}/events`), 200);
+  assert.equal(await get('/v1/knowledge-agent/runs/run-32/events'), 429);
+  assert.equal(await get('/v1/knowledge-conversations'), 200);
+});

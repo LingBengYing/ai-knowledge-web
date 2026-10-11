@@ -957,3 +957,45 @@ test('applying model capabilities updates the existing request client for video 
   assert.equal(f.workspace.state.config, sharedConfig); assert.equal(sharedConfig.capabilities.includes('video_upload'), true);
   assert.equal(f.workspace.state.pendingFiles.length, 0); assert.match(f.nodes.get('toast').textContent, /自动解析.*索引/u); f.workspace.close();
 });
+
+test('live answer frames leave the conversation toolbar and its focused buttons in place', async t => {
+  let publish;
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => agentRun(),
+    streamAgentRun: (_id, { signal, onSnapshot }) => { publish = onSnapshot; return new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); } });
+  t.after(() => f.workspace.close());
+  await f.workspace.start(); await f.submit('question-form', [['question', '合成问题']]); await tick();
+  const tools = f.nodes.get('conversation-tools'); let html = tools.innerHTML, writes = 0;
+  assert.match(html, /rename-conversation/u);
+  Object.defineProperty(tools, 'innerHTML', { get: () => html, set: value => { writes++; html = value; } });
+  for (let i = 0; i < 5; i++) publish({ ...agentRun(), preview: `token ${i}` });
+  assert.equal(writes, 0);
+});
+
+test('first question titles drop control characters and never split a character at the length limit', async t => {
+  const titles = [];
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => agentRun(),
+    createConversation: async command => { titles.push(command.title); return { ...conversation, ...command }; } });
+  t.after(() => f.workspace.close());
+  await f.workspace.start();
+  await f.submit('question-form', [['question', '合成问题\u0085第二段\u0007结尾']]); await tick();
+  f.click('new-chat'); await tick();
+  await f.submit('question-form', [['question', `${'a'.repeat(199)}😀 tail`]]); await tick();
+  assert.deepEqual(titles, ['合成问题 第二段 结尾', 'a'.repeat(199)]);
+});
+
+test('finishing an answer keeps conversations loaded beyond the first page', async t => {
+  let publish;
+  const all = Array.from({ length: 40 }, (_, index) => ({ ...conversation, id: `c${index}`, title: `对话${index}` }));
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), createAgentRun: async () => agentRun(),
+    listConversations: async ({ offset = 0, limit = 30 } = {}) => ({ items: all.slice(offset, offset + limit), offset, limit }),
+    streamAgentRun: (_id, { signal, onSnapshot }) => { publish = onSnapshot; return new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); } });
+  t.after(() => f.workspace.close());
+  await f.workspace.start();
+  await f.click('more-conversations'); await tick();
+  const links = () => (f.nodes.get('conversation-list').innerHTML.match(/class="conversation-link/gu) ?? []).length;
+  assert.equal(links(), 40);
+  await f.submit('question-form', [['question', '合成问题']]); await tick();
+  publish(agentRun('completed')); await tick(); await tick();
+  assert.equal(links(), 41);
+  assert.match(f.nodes.get('conversation-list').innerHTML, /对话39/u);
+});
