@@ -59,6 +59,29 @@ test('Agent model protocol and provider failures retain distinct fixed messages 
   assert.doesNotMatch(unknown.error.message, /访问模型或资料接口失败|网络故障|private-provider-secret/u);
 });
 
+test('final result failure identifies the exact validation rule without exposing server content', async () => {
+  const expected = new Map([
+    ['agent_result_invalid_json', /JSON/u],
+    ['agent_result_invalid_schema', /字段格式/u],
+    ['agent_result_no_search', /未完成资料检索/u],
+    ['agent_result_missing_statements', /没有提交回答内容/u],
+    ['agent_result_no_read', /未阅读原始资料/u],
+    ['agent_result_blank_statement', /空白段落/u],
+    ['agent_result_unread_evidence', /未阅读的来源/u],
+    ['agent_result_unknown_suggestion_document', /建议.*未阅读的文件/u],
+  ]);
+  const labels = new Set();
+  for (const [code, pattern] of expected) {
+    const record = await checkedAgentRun({ ...run('failed'), error: { code, message: 'private-provider-secret' } }, runId);
+    assert.equal(record.error.code, code);
+    assert.match(record.error.message, pattern);
+    assert.doesNotMatch(record.error.message, /private-provider-secret/u);
+    labels.add(record.error.message);
+  }
+  assert.equal(labels.size, expected.size);
+  await assert.rejects(checkedAgentRun({ ...run('failed'), error: { code: 'agent_result_private', message: 'private-provider-secret' } }, runId));
+});
+
 test('Agent exact JSON requests preserve UUID and question and reuse the ordinary same-origin client', async () => {
   const calls = [];
   const api = createKnowledgeAgentApi(createApi({ auth_mode: 'jwt' }, () => '', async (path, options) => {
