@@ -112,22 +112,22 @@ test('file synopsis external generation retains ordinary deadline and JSON limit
   assert.equal(calls, 2);
 });
 
-test('query attachment module uses the exact authenticated static route', async t => {
-  const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-web-query-attachments-')));
+test('feature module uses the exact authenticated static route', async t => {
+  const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-web-feature-module-')));
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));
-  await writeFile(join(publicDirectory, 'query-attachments.mjs'), 'export const synthetic = true;');
+  await writeFile(join(publicDirectory, 'file-synopsis.mjs'), 'export const synthetic = true;');
   const { origin } = await fixture(t, { publicDirectory });
   const headers = { Cookie: sessionPair };
-  const result = await raw(origin, '/query-attachments.mjs', { headers });
+  const result = await raw(origin, '/file-synopsis.mjs', { headers });
   assert.equal(result.status, 200);
   assert.equal(result.body, 'export const synthetic = true;');
   assert.equal(result.headers['content-type'], 'text/javascript; charset=utf-8');
   assert.match(result.headers['cache-control'], /no-store/);
-  assert.equal((await raw(origin, '/query-attachments.mjs', { method: 'HEAD', headers })).status, 200);
-  assert.equal((await raw(origin, '/query-attachments.mjs')).status, 303);
-  assert.equal((await raw(origin, '/query-attachments.mjs?', { headers })).status, 400);
-  assert.equal((await raw(origin, '/query-attachments.mjs', { method: 'POST', headers: { ...headers, Origin: publicOrigin } })).status, 405);
-  for (const path of ['/query-attachments.mjs/more', '/query-attachments.js', '/%71uery-attachments.mjs']) {
+  assert.equal((await raw(origin, '/file-synopsis.mjs', { method: 'HEAD', headers })).status, 200);
+  assert.equal((await raw(origin, '/file-synopsis.mjs')).status, 303);
+  assert.equal((await raw(origin, '/file-synopsis.mjs?', { headers })).status, 400);
+  assert.equal((await raw(origin, '/file-synopsis.mjs', { method: 'POST', headers: { ...headers, Origin: publicOrigin } })).status, 405);
+  for (const path of ['/file-synopsis.mjs/more', '/file-synopsis.js', '/%66ile-synopsis.mjs']) {
     assert.equal((await raw(origin, path, { headers })).status, 404, path);
   }
 });
@@ -469,7 +469,7 @@ test('authenticated four-type entry forwards exact media contracts with separate
   assert.equal((await upload('clip.mp4', 'video/webm', 10)).status, 400);
   assert.equal((await upload('picture.png', 'application/octet-stream', 5)).status, 200);
   assert.equal((await upload('picture.png', 'application/octet-stream', 6)).status, 413);
-  assert.equal((await raw(origin, '/media-sources.mjs', { headers })).status, 200);
+  assert.equal((await raw(origin, '/media-sources.mjs', { headers })).status, 404);
   assert.equal((await raw(origin, '/v1/video-sources/a/1/frame/more', { headers })).status, 404);
   for (const request of seen.filter(request => request.path.endsWith('-answers'))) assert.equal(request.headers.origin, publicOrigin);
 });

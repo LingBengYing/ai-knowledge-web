@@ -26,7 +26,6 @@ const ASSETS = new Map([
   ['/login.mjs', ['login.mjs', 'text/javascript; charset=utf-8']],
   ['/api.mjs', ['api.mjs', 'text/javascript; charset=utf-8']],
   ['/answers.mjs', ['answers.mjs', 'text/javascript; charset=utf-8']],
-  ['/query-attachments.mjs', ['query-attachments.mjs', 'text/javascript; charset=utf-8']],
   ['/file-synopsis.mjs', ['file-synopsis.mjs', 'text/javascript; charset=utf-8']],
   ['/document-cleanup.mjs', ['document-cleanup.mjs', 'text/javascript; charset=utf-8']],
   ['/tag-suggestions.mjs', ['tag-suggestions.mjs', 'text/javascript; charset=utf-8']],
@@ -34,7 +33,7 @@ const ASSETS = new Map([
   ['/audio-vectors.mjs', ['audio-vectors.mjs', 'text/javascript; charset=utf-8']],
   ['/sound-library.mjs', ['sound-library.mjs', 'text/javascript; charset=utf-8']],
   ['/video-av.mjs', ['video-av.mjs', 'text/javascript; charset=utf-8']],
-  ['/media-sources.mjs', ['media-sources.mjs', 'text/javascript; charset=utf-8']],
+  ['/media-sessions.mjs', ['media-sessions.mjs', 'text/javascript; charset=utf-8']],
   ['/document-originals.mjs', ['document-originals.mjs', 'text/javascript; charset=utf-8']],
   ['/workbench-state.mjs', ['workbench-state.mjs', 'text/javascript; charset=utf-8']],
 ]);

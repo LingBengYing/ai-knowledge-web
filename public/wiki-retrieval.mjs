@@ -1,10 +1,9 @@
-import { ApiError, DOCUMENT_FORMATS, documentExtension, documentDownloadOnly } from './api.mjs';
+import { ApiError, DOCUMENT_FORMATS, documentExtension, documentDownloadOnly, escapeHtml as e } from './api.mjs';
 import { RetrievalSession, retrievalEnabled } from './retrieval-tests.mjs';
 import { RetrievalSettingsSession, retrievalSettingsEnabled, retrievalSettingsSummary, retrievalThresholdHelp, retrievalScoreLabel } from './retrieval-settings.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
 import { PdfPreviewSession } from './pdf-preview.mjs';
 
-const e = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const fieldNames = ['method', 'ranking', 'dense-weight', 'top-k', 'threshold-enabled', 'threshold'];
 const defaultDraft = { search_method: 'hybrid', ranking_mode: 'rerank', dense_weight: 0.5, top_k: 5, score_threshold_enabled: false, score_threshold: 0.5 };
 const locationLabel = match => documentDownloadOnly(DOCUMENT_FORMATS[documentExtension(match.filename)]) || documentExtension(match.filename) === 'mdx'

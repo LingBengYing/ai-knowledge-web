@@ -1,4 +1,4 @@
-import { ApiError, DOCUMENT_MIME_TYPES, safeOriginalBlob } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, safeOriginalBlob, sha256Hex } from './api.mjs';
 
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
@@ -13,7 +13,6 @@ const mediaTypes = { document: DOCUMENT_MIME_TYPES, image: ['image/png', 'image/
 const idle = () => ({ phase: 'idle', synopsis: null, task: null, error: null, sourcePhase: 'idle', source: null, sourceError: null });
 const identity = item => JSON.stringify([item?.document_id, item?.index_publication_id, item?.active_revision_id, item?.filename,
   item?.document_type, item?.media_info, item?.synthetic_fixture]);
-const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 
 export function synopsisEnabled(config) {
   return Array.isArray(config?.capabilities) && ['file_synopsis', 'synopsis_sources'].every(name => config.capabilities.includes(name));
@@ -200,7 +199,7 @@ export class SynopsisSession {
       const value = await this.#request(reference.source_url, { signal: controller.signal });
       if (!current()) return this.value;
       const source = checkedSource(value, synopsis, entry, reference, this.#wanted);
-      if (source.text !== null && await digest(new TextEncoder().encode(source.text)) !== reference.sha256) throw invalid();
+      if (source.text !== null && await sha256Hex(new TextEncoder().encode(source.text)) !== reference.sha256) throw invalid();
       if (!current()) return this.value;
       const original = await this.#blob(source.content_url, [source.media_type], synopsis.source_sha256, 20, controller.signal, current, this.#wanted.size);
       if (!current()) return this.value;
@@ -220,7 +219,7 @@ export class SynopsisSession {
     if (!current()) return null;
     if (!(blob instanceof Blob) || !types.includes(blob.type) || !blob.size || blob.size > maxMiB * 1024 * 1024 || (size !== null && blob.size !== size)) throw invalid();
     const bytes = await blob.arrayBuffer();
-    if (expectedSha && await digest(bytes) !== expectedSha) throw invalid();
+    if (expectedSha && await sha256Hex(bytes) !== expectedSha) throw invalid();
     if (!current()) return null;
     const url = this.#urls.createObjectURL(safeOriginalBlob(blob)); this.#blobs.add(url); return { url };
   }

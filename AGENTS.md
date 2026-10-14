@@ -22,6 +22,8 @@
 - **删除要有依据**：删之前用搜索结果确认没有调用方（含其他仓库和生产入口）。删除后跑相关测试，对比改动前后的失败用例，不能新增失败。
 - 历史记录（docs/changes/*）保留不改；它描述的“保留旧功能”只代表当时的决定，不构成继续保留的理由。
 
+2026-10-14 冗余清理（未部署）：`AnswerSession` 只保留真实工作台使用的综合问答 `ask`/`cancel`/`reset`，删除旧经典页遗留的 text/visual/audio/video/sound/video-av 模式、查询附件和 `readSource`，以及 `media-sources.mjs`、`query-attachments.mjs`、`WorkbenchState` 和只测它们的用例；`api.mjs` 二进制读取只允许仍在用的原件/摘要/Wiki来源路径。四个媒体向量/索引会话共用新模块 `public/media-sessions.mjs`。两代理结构未改，只在资源清单中加入 `media-sessions.mjs`、去掉已删除的两个模块（定制生产入口须同样修改，发布运行文件须含新模块）；两代理清单重复仍保留，未做合并；代理仍转发旧的非综合问答接口，是否删除需与后端确认。
+
 2026-10-10 删除旧经典管理页：负责人确认不含 DB-GPT 知识问答的旧页面基本无人使用，已删除 public/index.html、app.js、styles.css 及仅被它使用的 preview.mjs、notices.mjs、voice-question.mjs，三处服务入口不再提供 `/classic/`、`/index.html`、`/app.js`、`/styles.css`，并删除 `/v1/voice-questions` 转发和 `RAG_WEB_WIKI_ENTRY` 开关（根路径 `/` 始终为 wiki-workspace.html）。对应只测旧页面的 ui-tests 已删除。下方提到 app.js、`/classic/`、语音提问或本地文件预览的条目均为历史。
 
 2026-10-10 清理无用前端：已删除0041静态Wiki预览（wiki-preview.html/.mjs/-data.mjs、scripts/wiki-preview-server.mjs、`npm run dev:wiki`及其测试）和已撤下的独立产品帮助模块（product-help.mjs及两代理的`/v1/product-help/search`转发），并清理仅被它们使用的CSS。`wiki-preview.css`仍由真实工作台加载，不可删除；`/classic/`当时保留待负责人决定（已于同日删除，见上条）。下方提到`dev:wiki`/`#/product-help`的条目均为历史。

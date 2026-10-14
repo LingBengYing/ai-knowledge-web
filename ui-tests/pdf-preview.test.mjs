@@ -1,28 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PdfPreviewSession } from '../public/pdf-preview.mjs';
-import { AnswerSession } from '../public/answers.mjs';
-import { knowledgeAnswerFixture } from './knowledge-answer-fixture.mjs';
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const tick = () => new Promise(done => setImmediate(done));
 const canvas = () => ({ width: 0, height: 0, getContext: () => ({}) });
 const pdf = () => new Blob(['%PDF synthetic verified bytes'], { type: 'application/pdf' });
-
-test('unified source gives the renderer the same SHA-verified PDF Blob without a second download', async () => {
-  const material = knowledgeAnswerFixture(), calls = [], urls = [];
-  const session = new AnswerSession(async (path, options) => { calls.push(path); return material.read(path, options); }, {
-    canReadOriginal: () => true,
-    objectUrls: { createObjectURL(blob) { urls.push(blob); return 'blob:verified-pdf'; }, revokeObjectURL() {} },
-  });
-  await session.ask('如何开启夜间模式？', ['manual', 'tutorial'], 'knowledge');
-  await session.readSource(1);
-  assert.equal(session.value.sourcePhase, 'ready');
-  assert.equal(session.value.source.pdfBlob, urls[0]);
-  assert.equal(session.value.source.pdfBlob.type, 'application/pdf');
-  assert.equal(calls.filter(path => path.endsWith('/content')).length, 1);
-  session.closeSource(); assert.equal(session.value.source, null);
-});
 
 function fixture({ pages = 3, naturalWidth = 612, naturalHeight = 792, loading = null, rendering = null } = {}) {
   const calls = [], changes = []; let destroyed = 0, cancelled = 0, cleaned = 0;

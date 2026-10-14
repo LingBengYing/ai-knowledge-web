@@ -23,7 +23,6 @@ const ASSETS = new Map([
   ['/', ['wiki-workspace.html', 'text/html; charset=utf-8']],
   ['/api.mjs', ['api.mjs', 'text/javascript; charset=utf-8']],
   ['/answers.mjs', ['answers.mjs', 'text/javascript; charset=utf-8']],
-  ['/query-attachments.mjs', ['query-attachments.mjs', 'text/javascript; charset=utf-8']],
   ['/file-synopsis.mjs', ['file-synopsis.mjs', 'text/javascript; charset=utf-8']],
   ['/document-cleanup.mjs', ['document-cleanup.mjs', 'text/javascript; charset=utf-8']],
   ['/tag-suggestions.mjs', ['tag-suggestions.mjs', 'text/javascript; charset=utf-8']],
@@ -31,7 +30,7 @@ const ASSETS = new Map([
   ['/audio-vectors.mjs', ['audio-vectors.mjs', 'text/javascript; charset=utf-8']],
   ['/sound-library.mjs', ['sound-library.mjs', 'text/javascript; charset=utf-8']],
   ['/video-av.mjs', ['video-av.mjs', 'text/javascript; charset=utf-8']],
-  ['/media-sources.mjs', ['media-sources.mjs', 'text/javascript; charset=utf-8']],
+  ['/media-sessions.mjs', ['media-sessions.mjs', 'text/javascript; charset=utf-8']],
   ['/document-originals.mjs', ['document-originals.mjs', 'text/javascript; charset=utf-8']],
   ['/workbench-state.mjs', ['workbench-state.mjs', 'text/javascript; charset=utf-8']],
 ]);
@@ -369,7 +368,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
       if (asset) {
         if (WIKI_ASSETS.some(([assetPath]) => assetPath === path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if ((path === '/pdf-preview.mjs' || path.startsWith('/vendor/pdfjs/')) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
-        if (['/model-rebuild.mjs', '/document-replacements.mjs', '/model-configuration.mjs', '/retrieval-tests.mjs', '/retrieval-settings.mjs', '/query-attachments.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+        if (['/model-rebuild.mjs', '/document-replacements.mjs', '/model-configuration.mjs', '/retrieval-tests.mjs', '/retrieval-settings.mjs', '/file-synopsis.mjs', '/tag-suggestions.mjs', '/image-vectors.mjs', '/audio-vectors.mjs', '/sound-library.mjs', '/video-av.mjs', '/media-sessions.mjs'].includes(path) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if (!['GET', 'HEAD'].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         await serveAsset(res, asset, publicDirectory, req.method === 'HEAD');
       } else {

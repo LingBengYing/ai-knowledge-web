@@ -14,10 +14,10 @@ test('sound upload uses complete original bytes and one encoded UTF8 filename he
   for (const path of ['/v1/sound-documents?', '/v1/documents?filename=tone.wav', '/v1/sound-documents/more']) await assert.rejects(api(path, { method: 'POST', file, uploadKind: 'sound' }), e => e.status === 422);
   assert.equal(seen.length, 1);
   const sourceApi = createApi({}, () => '', async () => new Response(file, { headers: { 'Content-Type': 'audio/wav' } }));
-  const blob = await sourceApi('/v1/sound-sources/answer-one/1/content', { binary: true });
+  const blob = await sourceApi('/v1/synopsis-sources/answer-one/1/1/content', { binary: true });
   assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), new Uint8Array(await file.arrayBuffer()));
   const invalid = createApi({}, () => '', async () => new Response(file, { status: 206, headers: { 'Content-Type': 'audio/wav' } }));
-  await assert.rejects(invalid('/v1/sound-sources/answer-one/1/content', { binary: true }), e => e.status === 502);
+  await assert.rejects(invalid('/v1/synopsis-sources/answer-one/1/1/content', { binary: true }), e => e.status === 502);
 });
 
 test('file synopsis original content accepts complete supported file MIME without changing identity', async () => {

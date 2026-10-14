@@ -1,4 +1,4 @@
-import { ApiError, DOCUMENT_MIME_TYPES } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, sha256Hex } from './api.mjs';
 import { checkedRetrievalSettings } from './retrieval-settings.mjs';
 import { createKnowledgeAgentApi } from './knowledge-agent.mjs';
 import { createKnowledgeConversationsApi } from './knowledge-conversations.mjs';
@@ -9,7 +9,6 @@ const invalid = () => new ApiError(422, '知识工作台的请求参数无效，
 const inconsistent = () => new ApiError(502, '来源或分页数据不一致，请重新读取；不会使用演示数据代替。');
 const id = value => { if (typeof value !== 'string' || !validId.test(value)) throw invalid(); return value; };
 const version = (value, minimum = 1) => { if (!Number.isSafeInteger(value) || value < minimum) throw invalid(); return value; };
-const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 const query = (path, fields) => `${path}?${new URLSearchParams(Object.entries(fields).filter(([, value]) => value !== '' && value != null)).toString()}`;
 const paging = (offset, limit) => {
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw invalid();
@@ -27,7 +26,7 @@ export function wikiSourcePath(context) {
 async function verifyBlob(blob, expectedHash, expectedType, expectedSize) {
   if (!(blob instanceof Blob) || !sha256.test(expectedHash ?? '') || blob.size < 1
     || (expectedType != null && blob.type !== expectedType) || (expectedSize != null && blob.size !== expectedSize)
-    || await digest(await blob.arrayBuffer()) !== expectedHash) throw inconsistent();
+    || await sha256Hex(await blob.arrayBuffer()) !== expectedHash) throw inconsistent();
   return blob;
 }
 
@@ -107,7 +106,7 @@ export function createWikiWorkspaceApi({ api }) {
       if (!source || source.source_id !== context.source_id || typeof source.evidence_id !== 'string' || !source.evidence_id || [...source.evidence_id].length > 128 || !sha256.test(source.sha256 ?? '')
         || typeof source.filename !== 'string' || typeof source.media_type !== 'string'
         || source.content_url !== `${path}/content` || (source.frame_url !== null && source.frame_url !== `${path}/frame`)
-        || (source.text !== null && (typeof source.text !== 'string' || await digest(new TextEncoder().encode(source.text)) !== source.sha256))) throw inconsistent();
+        || (source.text !== null && (typeof source.text !== 'string' || await sha256Hex(new TextEncoder().encode(source.text)) !== source.sha256))) throw inconsistent();
       return source;
     },
     async sourceContent(context, { signal, expectedSha256 } = {}) {
@@ -129,7 +128,7 @@ export function createWikiWorkspaceApi({ api }) {
         || !sha256.test(citation.source_sha256 ?? '') || !sha256.test(citation.text_sha256 ?? '')
         || citation.source_url !== path || citation.content_url !== `/v1/documents/${citation.document_id}/revisions/${citation.revision_id}/content`
         || typeof citation.quote !== 'string' || !citation.quote || !validAnswerLocator(citation)
-        || await digest(new TextEncoder().encode(citation.quote)) !== citation.text_sha256) throw inconsistent();
+        || await sha256Hex(new TextEncoder().encode(citation.quote)) !== citation.text_sha256) throw inconsistent();
       return result;
     },
     async allPages({ signal, state = 'active' } = {}) {

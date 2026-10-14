@@ -1,4 +1,4 @@
-import { ApiError, documentDownloadOnly } from './api.mjs';
+import { ApiError, documentDownloadOnly, escapeHtml as e } from './api.mjs';
 import { batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel } from './workbench-state.mjs';
 import { CleanupSession, cleanupEnabled, cleanupLabel, cleanupResourceLabel } from './document-cleanup.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
@@ -10,7 +10,6 @@ import { AudioVectorSession, audioVectorsEnabled, canReadAudioVector } from './a
 import { SoundIndexSession, soundEnabled, canReadSoundIndex } from './sound-library.mjs';
 import { VideoAvIndexSession, videoAvEnabled, canReadVideoAvIndex } from './video-av.mjs';
 
-const e = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const idValid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const safeError = error => error instanceof ApiError ? error.message : '操作未完成，请刷新状态后核对。';
 const invalid = () => new ApiError(502, '资料或任务状态不一致，请刷新后核对。');
@@ -126,7 +125,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
     if (!alive || !initializedDetail || !detail) return;
     const item = detail;
     const heading = $('maint-heading'); if (heading) heading.textContent = item.display_name ?? item.filename;
-    $('maint-evidence').innerHTML = panel('处理与索引', `<p>${e(documentStatusLabel(item))}</p><dl class="metadata"><dt>原文件</dt><dd>${e(item.filename)}</dd><dt>当前版本</dt><dd>${e(item.active_revision_id ?? item.latest_job?.revision_id ?? item.registered_revision_id ?? '尚未解析')}</dd></dl><div class="form-actions">${action('refresh', '刷新状态')}${canStartIndexing(config, item) ? action('index', '建立索引') : ''}${maintenanceCanReindex(config, item) ? action('reindex', '重建文本索引', unknownTasks.has(item.document_id)) : ''}</div>`);
+    $('maint-evidence').innerHTML = panel('处理与索引', `<p>${e(documentStatusLabel(item))}</p><dl class="meta-list"><dt>原文件</dt><dd>${e(item.filename)}</dd><dt>当前版本</dt><dd>${e(item.active_revision_id ?? item.latest_job?.revision_id ?? item.registered_revision_id ?? '尚未解析')}</dd></dl><div class="form-actions">${action('refresh', '刷新状态')}${canStartIndexing(config, item) ? action('index', '建立索引') : ''}${maintenanceCanReindex(config, item) ? action('reindex', '重建文本索引', unknownTasks.has(item.document_id)) : ''}</div>`);
     const o = original.value;
     $('maint-original').innerHTML = !cap(config, 'document_originals') ? '' : panel('原始文件', `${action('original', o.phase === 'loading' ? '正在核对原件…' : '读取同版本原件', o.phase === 'loading')}${notice(o.error ? safeError(o.error) : '')}${o.original ? `<div class="form-actions"><a class="button secondary" href="${e(o.original.url)}" download="${e(o.original.filename)}">下载原件</a>${!o.original.downloadOnly ? `<a class="button secondary" href="${e(o.original.url)}" target="_blank" rel="noopener noreferrer">打开原件</a>` : ''}</div>${o.original.text != null ? `<pre class="source-excerpt">${e(o.original.text)}</pre>` : ''}` : ''}`);
     const r = replacement.value, ready = r.phase === 'ready', value = r.replacement;

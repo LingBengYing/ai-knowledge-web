@@ -432,3 +432,20 @@ test('Agent SSE rejects expanded routes queries wrong types and identity changes
     assert.equal(requests, 2);
   }
 });
+
+test('both entries serve exactly the browser modules that exist and every module the workspace imports', async () => {
+  const { readdir, readFile } = await import('node:fs/promises');
+  const directory = new URL('../public/', import.meta.url);
+  const modules = (await readdir(directory)).filter(name => name.endsWith('.mjs')).sort();
+  for (const entry of ['dev-server.mjs', 'external-server.mjs']) {
+    // Each entry spreads the shared WIKI_ASSETS from wiki-transport.mjs into its own asset map.
+    const server = await readFile(new URL(`../scripts/${entry}`, import.meta.url), 'utf8') + await readFile(new URL('../scripts/wiki-transport.mjs', import.meta.url), 'utf8');
+    const served = [...server.matchAll(/\['\/([A-Za-z0-9-]+\.mjs)', \['\1', 'text\/javascript/gu)].map(match => match[1])
+      .filter(name => name !== 'login.mjs').sort();
+    assert.deepEqual(served, modules, entry);
+  }
+  for (const name of modules) {
+    const source = await readFile(new URL(name, directory), 'utf8');
+    for (const [, imported] of source.matchAll(/(?:from|import\()\s*'\.\/([^']+)'/gu)) assert.ok(modules.includes(imported), `${name} imports missing ${imported}`);
+  }
+});

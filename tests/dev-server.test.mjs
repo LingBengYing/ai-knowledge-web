@@ -108,20 +108,20 @@ test('file synopsis generation retains ordinary deadline and JSON limits without
   assert.equal(calls, 2);
 });
 
-test('query attachment module is an exact static asset with the existing browser boundary', async t => {
-  const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-web-query-attachments-')));
+test('feature module is an exact static asset with the existing browser boundary', async t => {
+  const publicDirectory = await realpath(await mkdtemp(join(tmpdir(), 'ai-knowledge-web-feature-module-')));
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));
-  await writeFile(join(publicDirectory, 'query-attachments.mjs'), 'export const synthetic = true;');
+  await writeFile(join(publicDirectory, 'file-synopsis.mjs'), 'export const synthetic = true;');
   const { origin } = await fixture(t, undefined, { publicDirectory });
-  const result = await raw(origin, '/query-attachments.mjs');
+  const result = await raw(origin, '/file-synopsis.mjs');
   assert.equal(result.status, 200);
   assert.equal(result.body, 'export const synthetic = true;');
   assert.equal(result.headers['content-type'], 'text/javascript; charset=utf-8');
   assert.match(result.headers['cache-control'], /no-store/);
-  assert.equal((await raw(origin, '/query-attachments.mjs', { method: 'HEAD' })).status, 200);
-  assert.equal((await raw(origin, '/query-attachments.mjs?', {})).status, 400);
-  assert.equal((await raw(origin, '/query-attachments.mjs', { method: 'POST', headers: { Origin: origin } })).status, 405);
-  for (const path of ['/query-attachments.mjs/more', '/query-attachments.js', '/%71uery-attachments.mjs']) {
+  assert.equal((await raw(origin, '/file-synopsis.mjs', { method: 'HEAD' })).status, 200);
+  assert.equal((await raw(origin, '/file-synopsis.mjs?', {})).status, 400);
+  assert.equal((await raw(origin, '/file-synopsis.mjs', { method: 'POST', headers: { Origin: origin } })).status, 405);
+  for (const path of ['/file-synopsis.mjs/more', '/file-synopsis.js', '/%66ile-synopsis.mjs']) {
     assert.equal((await raw(origin, path)).status, 404, path);
   }
 });
@@ -829,7 +829,7 @@ test('audio/video routes keep exact MIME upload distinction and independent fram
   }
   assert.equal((await raw(origin, '/v1/video-sources/a/1/frame')).status, 502);
   assert.equal((await raw(origin, '/v1/audio-sources/a/1/frame')).status, 404);
-  assert.equal((await raw(origin, '/media-sources.mjs')).status, 200);
+  assert.equal((await raw(origin, '/media-sources.mjs')).status, 404);
 });
 
 

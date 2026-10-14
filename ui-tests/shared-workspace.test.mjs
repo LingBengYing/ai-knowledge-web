@@ -24,11 +24,11 @@ test('unified answers accept more than 32 real typed citations without weakening
     citation_id: index + 1, source_url: `/v1/knowledge-sources/${fixture.answer.answer_id}/${index + 1}` }));
   const calls = [];
   const session = new AnswerSession(async (path, options) => { calls.push(options.body); return fixture.answer; });
-  await session.ask('灯塔', ['old-selected-document'], 'knowledge');
+  await session.ask('灯塔');
   assert.equal(session.value.phase, 'answered');
   assert.equal(session.value.result.citations.length, 40);
   assert.deepEqual(calls, [{ question: '灯塔' }]);
   fixture.answer.citations[39].source_url = 'https://example.invalid/source';
-  await session.ask('灯塔', null, 'knowledge');
+  await session.ask('灯塔');
   assert.equal(session.value.phase, 'error');
 });

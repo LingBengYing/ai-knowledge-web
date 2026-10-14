@@ -1,4 +1,4 @@
-import { ApiError } from './api.mjs';
+import { ApiError, sha256Hex } from './api.mjs';
 import { answerRequest } from './answers.mjs';
 import { checkedRetrievalSettings, checkedRetrievalOverride, retrievalScoreKind } from './retrieval-settings.mjs';
 
@@ -7,7 +7,6 @@ const sha256 = /^[a-f0-9]{64}$/u;
 const keys = (value, names) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
 const invalid = () => new ApiError(502, '召回片段的范围、版本或完整性不一致，请重新测试。');
 const idle = () => ({ phase: 'idle', command: null, result: null, error: null });
-const digest = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 export const retrievalEnabled = config => config?.capabilities?.includes('retrieval_test') === true;
 
 export function retrievalRequest(question, documentIds = null, topK, rerank) {
@@ -43,16 +42,11 @@ export async function checkedRetrievalResult(value, command) {
       || !Number.isSafeInteger(match.end) || match.end <= match.start || typeof match.text !== 'string' || [...match.text].length !== match.end - match.start
       || !Number.isFinite(match.retrieval_score) || match.retrieval_score < 0
       || (effective.ranking_mode === 'rerank' ? !Number.isFinite(match.rerank_score) : match.rerank_score !== null)
-      || await digest(match.text) !== match.text_sha256) throw invalid();
+      || await sha256Hex(new TextEncoder().encode(match.text)) !== match.text_sha256) throw invalid();
     const identity = JSON.stringify([match.document_id, match.revision_id, match.page, match.start, match.end]);
     if (seen.has(identity)) throw invalid(); seen.add(identity); matches.push(Object.freeze({ ...match }));
   }
   return Object.freeze({ ...value, matches: Object.freeze(matches) });
-}
-
-export function matchCurrentOriginal(match, item) {
-  return Boolean(match && item && item.document_id === match.document_id && item.active_revision_id === match.revision_id
-    && item.filename === match.filename && item.media_info?.sha256 === match.source_sha256);
 }
 
 /** Preview only. No answer trace or model-generated claim is created by this module. */
