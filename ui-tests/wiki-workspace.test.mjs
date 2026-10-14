@@ -286,6 +286,26 @@ test('source detail leaves index management in maintenance instead of requesting
   f.workspace.close();
 });
 
+test('failed source detail explains the cause and retries through the tasks-page call exactly once', async () => {
+  const failedJob = { task_id: 'parse-1', document_id: 'doc', revision_id: 'rev-1', state: 'failed', attempt: 1, error_code: 'parser_timeout', can_cancel: false, can_retry: true };
+  const posts = [];
+  const overrides = { getDocument: async id => ({ document_id: id, filename: 'source.txt', status: 'failed', latest_job: failedJob }),
+    request: async (path, options = {}) => { if (options.method !== 'POST') throw new Error('Unexpected request'); posts.push(path); return { ...failedJob, state: 'queued', attempt: 2, error_code: null, can_cancel: true, can_retry: false }; } };
+  const f = fixture('#/sources/doc', overrides, { capabilities: ['ingestions'] }); await f.workspace.start();
+  assert.match(f.html(), /解析失败原因：文件解析超时/u); assert.match(f.html(), /title="错误代码：parser_timeout"/u);
+  assert.doesNotMatch(f.html(), />[^<]*parser_timeout/u); assert.match(f.html(), /data-action="retry-source-task"/u);
+  await f.click('retry-source-task', { kind: 'ingestion', taskId: 'parse-1' }); await tick();
+  await f.click('retry-source-task', { kind: 'ingestion', taskId: 'parse-1' }); await tick();
+  assert.deepEqual(posts, ['/v1/ingestions/parse-1/retry']);
+  assert.equal(f.nodes.get('source-processing-status').textContent, '等待解析');
+  assert.doesNotMatch(f.nodes.get('source-task-status').innerHTML, /retry-source-task|失败原因/u);
+  assert.match(f.nodes.get('toast').textContent, /已提交一次重试/u); assert.equal(f.timers.size, 1); f.workspace.close();
+  const readOnly = fixture('#/sources/doc', overrides, { capabilities: [] }); await readOnly.workspace.start();
+  assert.match(readOnly.html(), /解析失败原因/u); assert.doesNotMatch(readOnly.html(), /retry-source-task/u);
+  await readOnly.click('retry-source-task', { kind: 'ingestion', taskId: 'parse-1' }); await tick();
+  assert.deepEqual(posts, ['/v1/ingestions/parse-1/retry']); readOnly.workspace.close();
+});
+
 test('import uploads once and explains automatic processing without a client indexing write', async () => {
   let finish; const file = new File(['synthetic import'], 'new.txt');
   const pending = new Promise(resolve => { finish = resolve; });

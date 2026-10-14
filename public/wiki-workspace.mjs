@@ -7,7 +7,8 @@ import { PdfPreviewSession } from './pdf-preview.mjs';
 import { checkedRetrievalSettings, retrievalSettingsFields, retrievalThresholdHelp } from './retrieval-settings.mjs';
 import { ModelConfigurationSession, modelConfigurationEnabled } from './model-configuration.mjs';
 import { ModelRebuildSession, modelRebuildEnabled, modelRebuildPending, modelRebuildReason } from './model-rebuild.mjs';
-import { documentStatusLabel, indexTaskLabel, taskPending } from './workbench-state.mjs';
+import { documentStatusLabel, indexTaskLabel, taskPending, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
+import { failureNotice, failureReason } from './failure-reasons.mjs';
 
 const e = escapeHtml;
 /** Server timestamps stay milliseconds; presentation uses the browser's local time zone. */
@@ -138,6 +139,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   let original, pdf, workflow, objectUrls = [], pendingConfirmation = null;
   let modelSession, rebuildSession, renderedModelVersion, modelLocalError = '';
   let activeQuestion = null, pendingQuestion = null, pendingPurge = false;
+  const unknownSourceTasks = new Set();
   let renderedChatContainer, renderedChatMarkup, renderedToolsContainer, renderedToolsMarkup;
   Object.assign(state, { conversations: [], conversation: null, conversationMore: false, conversationRenaming: false, conversationCreating: false });
   const isCurrent = value => value === epoch;
@@ -170,7 +172,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     workflow?.destroy(); workflow = null;
     abandonQuestion();
     modelSession?.close(); rebuildSession?.close(); modelSession = null; rebuildSession = null; renderedModelVersion = undefined; modelLocalError = '';
-    clearPollTimer(pollTimer); readController?.abort(); original?.close(); original = null; pdf?.close(); pdf = null;
+    unknownSourceTasks.clear(); clearPollTimer(pollTimer); readController?.abort(); original?.close(); original = null; pdf?.close(); pdf = null;
     for (const media of doc.querySelectorAll?.('audio,video') ?? []) { media.pause?.(); media.removeAttribute?.('src'); media.load?.(); }
     objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
   }
@@ -209,10 +211,39 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function sources() {
     if (state.route.id) {
       const item = state.data.document;
-      return `${heading('SOURCE READER', item.display_name || item.filename, '', '<a class="button secondary" href="#/sources">返回资料列表</a>')}<div class="article-layout"><article class="article-paper"><div class="status-line"><span id="source-processing-status" class="badge gray">${e(sourceStatus(item))}</span></div><div id="reader">${empty('正在核对原文件…')}</div></article><aside class="side-column"><section class="panel"><div class="panel-header"><h2>资料信息</h2></div><div class="panel-body reader-meta"><dl class="meta-list"><dt>原文件名</dt><dd>${e(item.filename)}</dd><dt>类型</dt><dd>${e(types[item.document_type])}</dd></dl>${button('refresh', '刷新处理状态')}<a class="button secondary" href="#/tasks">查看处理任务</a></div></section><button class="button secondary" data-ask="${e(item.display_name || item.filename)}讲了什么？">了解相关内容</button><a class="button secondary" href="#/documents/${e(item.document_id)}">整理 / 更新原文件</a></aside></div>`;
+      return `${heading('SOURCE READER', item.display_name || item.filename, '', '<a class="button secondary" href="#/sources">返回资料列表</a>')}<div class="article-layout"><article class="article-paper"><div class="status-line"><span id="source-processing-status" class="badge gray">${e(sourceStatus(item))}</span></div><div id="source-task-status">${sourceTaskStatus(item)}</div><div id="reader">${empty('正在核对原文件…')}</div></article><aside class="side-column"><section class="panel"><div class="panel-header"><h2>资料信息</h2></div><div class="panel-body reader-meta"><dl class="meta-list"><dt>原文件名</dt><dd>${e(item.filename)}</dd><dt>类型</dt><dd>${e(types[item.document_type])}</dd></dl>${button('refresh', '刷新处理状态')}<a class="button secondary" href="#/tasks">查看处理任务</a></div></section><button class="button secondary" data-ask="${e(item.display_name || item.filename)}讲了什么？">了解相关内容</button><a class="button secondary" href="#/documents/${e(item.document_id)}">整理 / 更新原文件</a></aside></div>`;
     }
     const cat = state.catalog;
     return `${heading('SOURCES', '原始资料', '', '<a class="button secondary" href="#/documents">资料维护</a><a class="button secondary" href="#/directories">目录管理</a>' + button('import', '导入资料', true))}<div class="toolbar">${searchForm('搜索文件名或正文')}<select id="source-kind" class="filter-select" aria-label="资料类型"><option value="">所有类型</option>${Object.entries(types).map(([key, value]) => `<option value="${key}" ${state.sourceKind === key ? 'selected' : ''}>${value}</option>`).join('')}</select></div><div class="result-count">找到 ${cat.total} 份资料 · 当前显示 ${cat.items.length} 份</div><div class="table-wrap"><table class="data-table"><thead><tr><th>资料名称 / 匹配片段</th><th>类型</th><th>处理状态</th><th>可用于问答</th></tr></thead><tbody>${cat.items.map(item => `<tr><td><a class="table-title" href="#/sources/${e(item.document_id)}"><span class="file-icon">${icon('file')}</span><span><strong class="row-title">${e(item.display_name || item.filename)}</strong><span class="row-subtitle">${e(item.excerpt || item.filename)}</span></span></a></td><td>${e(types[item.kind])}</td><td>${e(sourceStatus(state.sourceDocuments.get(item.document_id), item.state))}</td><td><span class="badge ${item.answerable ? 'green' : 'amber'}">${item.answerable ? '已发布' : '尚未发布'}</span></td></tr>`).join('')}</tbody></table></div>${!cat.items.length ? empty('没有匹配资料') : ''}<div class="pagination">${button('prev-catalog', '上一页', false, cat.offset === 0 ? 'disabled' : '')}<span>${cat.total ? cat.offset + 1 : 0}–${cat.offset + cat.items.length} / ${cat.total}</span>${button('next-catalog', '下一页', false, cat.offset + cat.items.length >= cat.total ? 'disabled' : '')}</div>`;
+  }
+  /** Failure explanation plus the tasks page's retry action, gated by the same capability and can_retry flag. */
+  function sourceTaskStatus(item) {
+    const parts = [['ingestion', item?.latest_job], ['indexing', item?.latest_index_job]].filter(([, task]) => task?.task_id).map(([kind, task]) => {
+      const failed = task.state === 'failed', retry = taskOperationAllowed(state.config, kind, task, 'retry'), unknown = unknownSourceTasks.has(task.task_id);
+      if (!failed && !retry) return '';
+      return `${failed ? failureNotice(task.error_code, { prefix: `${kind === 'indexing' ? '索引' : '解析'}失败原因：` }) : ''}${unknown ? notice('上次重试结果待核对，请刷新处理状态。', true) : ''}${retry ? `<div class="form-actions">${button('retry-source-task', kind === 'indexing' ? '重试索引' : '重试解析', true, `data-kind="${kind}" data-task-id="${e(task.task_id)}" ${unknown || state.busy ? 'disabled' : ''}`)}</div>` : ''}`;
+    });
+    if (item?.auto_index?.state === 'failed') parts.push(notice(`索引未完成：${failureReason(item.auto_index.error_code, '索引准备未完成，请到资料维护中检查处理状态。')}`, true));
+    return parts.join('');
+  }
+  function updateSourceTaskStatus() {
+    const item = state.data?.document; if (!item) return;
+    const badge = $('source-processing-status'), node = $('source-task-status');
+    if (badge) badge.textContent = sourceStatus(item);
+    if (node) node.innerHTML = sourceTaskStatus(item);
+  }
+  async function retrySourceTask(target) {
+    const item = state.data?.document, kind = target.dataset.kind, captured = epoch;
+    const task = kind === 'indexing' ? item?.latest_index_job : kind === 'ingestion' ? item?.latest_job : null;
+    if (state.busy || state.route.view !== 'sources' || !state.route.id || !task || task.task_id !== target.dataset.taskId
+      || !taskOperationAllowed(state.config, kind, task, 'retry') || unknownSourceTasks.has(task.task_id)) return;
+    unknownSourceTasks.add(task.task_id); updateSourceTaskStatus();
+    await mutate(async () => checkedTaskTransition(task, kind, await api(taskOperationPath(kind, task, 'retry'), { method: 'POST' }), 'retry'), next => {
+      unknownSourceTasks.delete(task.task_id); unknownSourceTasks.delete(next.task_id);
+      state.data.document = rowWithTask(state.data.document, kind, next);
+      notify('已提交一次重试。'); schedulePoll(captured);
+    });
+    if (isCurrent(captured)) updateSourceTaskStatus();
   }
   function sourceStatus(item, fallback) {
     if (!item) return statusText(fallback);
@@ -267,7 +298,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     const view = agentProgressView({ phase: turn.agentPhase, run });
     const terminal = ['completed', 'failed', 'cancelled'].includes(turn.agentPhase);
     const canAct = run?.status === 'running' && !terminal;
-    const record = `<div class="agent-run-record">${run?.id ? `<p>任务编号：<code>${e(run.id)}</code></p>` : ''}${run?.error?.code ? `<p>失败原因：<code>${e(run.error.code)}</code></p>` : ''}${turn.agentPhase === 'unknown' && !run && state.conversation ? button('refresh-conversation', '核对已提交的问题') : ''}</div>`;
+    const record = `<div class="agent-run-record">${run?.id ? `<p>任务编号：<code>${e(run.id)}</code></p>` : ''}${run?.error?.code ? `<p title="错误代码：${e(run.error.code)}">失败原因：${e(failureReason(run.error.code))}</p>` : ''}${turn.agentPhase === 'unknown' && !run && state.conversation ? button('refresh-conversation', '核对已提交的问题') : ''}</div>`;
     const timeline = view.entries.length ? `<ol class="agent-timeline">${view.entries.map(agentEvent).join('')}</ol>` : '';
     if (terminal) return `<details class="agent-progress agent-progress-complete"><summary>查阅过程 · ${e(view.status)}</summary><p class="agent-outcome">${e(view.title)}</p><p class="agent-summary">${e(view.summary)}</p>${timeline}${record}</details>`;
     return `<section class="agent-progress agent-progress-live${view.active ? ' is-active' : ''}" aria-label="操作进度" data-current-stage="${e(view.entries.at(-1)?.type ?? 'waiting')}"><div class="agent-live-heading"><span class="agent-indicator" aria-hidden="true">${icon(view.entries.at(-1)?.type === 'searching' ? 'search' : 'book')}</span><div><div class="agent-status" role="status" aria-live="polite" aria-atomic="true">${e(view.title)}</div><p class="agent-description">${e(view.detail)}</p></div></div><details class="agent-progress-trace" open><summary>查阅过程</summary>${timeline}${record}</details>${canAct ? `<div class="agent-actions">${button('stop-agent', '停止', false, `data-turn="${index}" ${turn.agentPhase === 'cancelling' ? 'disabled' : ''}`)}${button('refresh-agent', '刷新状态', false, `data-turn="${index}" ${turn.agentPhase === 'cancelling' ? 'disabled' : ''}`)}</div>` : ''}</section>`;
@@ -396,7 +427,8 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     for (const role of [...modelRoles, 'projection']) {
       $(`model-test-${role}`).disabled = !ready || role === 'projection' && !saved.projection.can_test;
       const result = value.tests[role];
-      text(`model-test-${role}-status`, result ? result.status === 'passed' ? '通过' : `未通过 · ${result.error_code}` : '');
+      text(`model-test-${role}-status`, result ? result.status === 'passed' ? '通过' : `未通过 · ${failureReason(result.error_code)}` : '');
+      const testStatus = $(`model-test-${role}-status`); if (testStatus) testStatus.title = result?.status === 'failed' ? `错误代码：${result.error_code}` : '';
     }
     text('model-projection-status', saved?.projection.configured ? `已配置 · ${saved.projection.dimension ?? '—'} 维` : '未配置');
     const rebuilding = modelRebuildPending(job), rebuildBusy = ['loading', 'starting'].includes(rebuild?.phase);
@@ -597,7 +629,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       const signal = readController.signal;
       if (state.route.id) {
         const document = await wiki.getDocument(state.route.id, { signal }); if (!isCurrent(captured)) return;
-        state.data.document = document; $('source-processing-status').textContent = sourceStatus(document);
+        state.data.document = document; updateSourceTaskStatus();
       } else {
         const catalog = await wiki.listCatalog({ offset: state.offset, limit: 20, q: state.query, kind: state.sourceKind, signal });
         const documents = await sourceDocuments(catalog, signal); if (!isCurrent(captured)) return;
@@ -783,6 +815,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (action === 'refresh') load();
     if (action === 'back-reader') { event.preventDefault(); const route = state.route; navigate(route.view === 'page-source' ? `#/knowledge/${route.id}/${route.version}` : route.view === 'proposal-source' ? `#/review/${route.id}` : state.conversation ? `#/ask/${state.conversation.id}` : '#/ask'); }
     if (action === 'refresh-conversation' && state.conversation) navigate(`#/ask/${state.conversation.id}`);
+    if (action === 'retry-source-task') { await retrySourceTask(target); return; }
     if (action === 'import') { updateUploadAccept(); $('import-dialog').showModal(); }
     if (action === 'close-import') $('import-dialog').close();
     if (action === 'confirm-import') confirmImport();

@@ -1,44 +1,12 @@
 import { ApiError } from './api.mjs';
 import { answerRequest, checkedKnowledgeAnswer } from './answers.mjs';
+import { agentFailureMessages } from './failure-reasons.mjs';
 
 const identifier = /^[A-Za-z0-9_-]{1,128}$/u;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
 const statuses = ['running', 'completed', 'failed', 'cancelled'];
 const events = Object.freeze({ running: '任务已开始', planning: '整理任务', searching: '检索知识库', reading: '阅读原始资料', completed: '任务已完成', failed: '任务未完成', cancelled: '任务已取消' });
-const failureMessages = Object.freeze({
-  agent_interrupted: '服务重启中断了这条任务，原有对话已保留。',
-  agent_context_compaction_failed: '历史上下文整理未完成，原始对话已保留，本次未继续调用问答模型。',
-  agent_unavailable: '知识助手服务暂时无法连接，请检查服务状态。',
-  agent_failed: '任务异常结束，请提供任务编号以便排查。',
-  agent_invalid_response: '知识助手返回的结果格式或来源校验未通过，请提供任务编号排查。',
-  agent_timeout: '任务超过等待时间，请查看最后完成的步骤后再决定是否重新提交。',
-  agent_limit_exceeded: '本次任务超出可处理范围，请缩小问题范围。',
-  agent_callback_failed: '知识助手回调未完成，暂未确认具体原因，请提供任务编号排查。',
-  agent_callback_invalid: '模型或资料接口返回格式不正确，请提供任务编号排查。',
-  agent_model_tool_required: '模型未返回必需的工具调用，查阅已停止，请检查生成模型的工具调用兼容性。',
-  agent_model_invalid: '模型返回的工具调用格式或参数无效，查阅已停止，请提供任务编号排查。',
-  agent_model_unavailable: '生成模型服务暂不可用，查阅已停止，请检查模型配置或服务状态。',
-  agent_model_timeout: '生成模型响应超时，查阅已停止，请稍后再提交。',
-  agent_invalid_action: '模型未按工具调用格式执行，尚未完成查阅，请检查模型兼容性。',
-  agent_invalid_tool_input: '模型生成的查阅参数不正确，请提供任务编号排查。',
-  agent_tool_failed: '查阅工具执行失败，请结合最后完成的步骤排查。',
-  agent_invalid_result: '最终结果未通过来源校验或格式校验，未作为有据回答展示。',
-  agent_result_invalid_json: '模型提交的最终结果不是有效 JSON，回答未能确认。',
-  agent_result_invalid_schema: '模型提交的最终结果字段格式不正确，回答未能确认。',
-  agent_result_no_search: '模型未完成资料检索就提交了结果，回答未能确认。',
-  agent_result_missing_statements: '模型声明可以回答，但没有提交回答内容。',
-  agent_result_no_read: '模型未阅读原始资料就提交了回答，来源未能确认。',
-  agent_result_blank_statement: '模型提交的回答含空白段落，回答未能确认。',
-  agent_result_unread_evidence: '回答引用了本次未阅读的来源，未作为有据回答展示。',
-  agent_result_unknown_suggestion_document: '资料补充建议引用了本次未阅读的文件，结果未能确认。',
-  agent_step_limit: '知识助手达到本次查阅步数，请将问题拆成更具体的任务。',
-  agent_execution_failed: '知识助手执行中断，请提供任务编号排查执行过程。',
-  agent_cancelled: '知识助手连接已中断，本次任务未完成。',
-  agent_busy: '知识助手正在处理其他任务，请稍后再提交。',
-  scope_changed: '任务期间资料范围发生变化，请核对资料后重新提交。',
-  configuration_changed: '任务期间模型配置发生变化，请确认当前配置后重新提交。',
-  evidence_changed: '任务引用的资料版本发生变化，请核对最新资料后重新提交。',
-});
+const failureMessages = agentFailureMessages;
 const invalid = () => new ApiError(502, '智能体返回的任务记录不完整，请刷新状态核对。');
 const inputError = () => new ApiError(422, '智能体请求参数无效，请重新发起。');
 const validText = value => typeof value === 'string' && !!value.trim();

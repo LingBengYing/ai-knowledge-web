@@ -50,16 +50,8 @@ const ROUTES = [
   [/^\/v1\/management\/document-cleanups$/, ['GET', 'POST'], 'cleanup-list'],
   [/^\/v1\/video-av-documents$/, ['POST'], 'video-av-upload'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/, ['GET', 'POST'], 'video-av-index'],
-  [/^\/v1\/video-av-answers$/, ['POST'], 'answer'],
-  [/^\/v1\/video-av-query-answers$/, ['POST'], 'attachment'],
-  [/^\/v1\/video-av-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
-  [/^\/v1\/video-av-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'media'],
   [/^\/v1\/sound-documents$/, ['POST'], 'sound-upload'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/, ['GET', 'POST'], 'sound-index'],
-  [/^\/v1\/sound-answers$/, ['POST'], 'answer'],
-  [/^\/v1\/sound-query-answers$/, ['POST'], 'attachment'],
-  [/^\/v1\/sound-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
-  [/^\/v1\/sound-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'media'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/, ['GET', 'POST'], 'image-vector'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/, ['GET', 'POST'], 'audio-vector'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/tag-suggestions$/, ['GET'], 'source'],
@@ -71,18 +63,8 @@ const ROUTES = [
   [/^\/v1\/synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/frame$/, ['GET'], 'content'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/original$/, ['GET'], 'source'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content$/, ['GET'], 'media'],
-  [/^\/v1\/answers$/, ['POST'], 'answer'],
   [/^\/v1\/knowledge-answers$/, ['POST'], 'answer'],
   [/^\/v1\/knowledge-sources\/[A-Za-z0-9_-]{1,128}\/[1-9][0-9]*$/, ['GET'], 'source'],
-  [/^\/v1\/attachment-answers$/, ['POST'], 'attachment'],
-  [/^\/v1\/visual-answers$/, ['POST'], 'answer'],
-  [/^\/v1\/(?:audio|video)-answers$/, ['POST'], 'answer'],
-  [/^\/v1\/(?:audio|video)-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
-  [/^\/v1\/(?:audio|video)-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'media'],
-  [/^\/v1\/video-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/frame$/, ['GET'], 'content'],
-  [/^\/v1\/visual-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
-  [/^\/v1\/(?:sources|visual-sources)\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content$/, ['GET'], 'content'],
-  [/^\/v1\/sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])$/, ['GET'], 'source'],
   [/^\/v1\/documents$/, ['POST'], 'upload'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/index$/, ['POST'], 'index'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/reindex$/, ['POST'], 'reindex'],
@@ -285,7 +267,7 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
     }
   }
   const bodyless = ['wiki-draft', 'wiki-page', 'wiki-conversation'].includes(kind) && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
-  if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'attachment', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+  if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'replacement' && req.method === 'GET' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (['sound-upload', 'video-av-upload'].includes(kind)) {
     if (kind === 'sound-upload') validateSoundFilename(headers['X-Filename']);
@@ -378,7 +360,7 @@ async function backendJson(backend, path, headers = {}, signal) {
 export async function startExternalServer({ publicOrigin, backendOrigin = 'http://127.0.0.1:18084', port = 18085,
   publicDirectory = DEFAULT_PUBLIC, requestBytes = 128 * 1024, responseBytes = 4 * 1024 * 1024,
   deadlineMs = 10_000, agentStreamDeadlineMs = 600_000, uploadBytes = 20 * 1024 * 1024, uploadDeadlineMs = 30_000,
-  attachmentBytes = 28 * 1024 * 1024, imageVectorDeadlineMs = 180_000, audioVectorDeadlineMs = 180_000,
+  imageVectorDeadlineMs = 180_000, audioVectorDeadlineMs = 180_000,
   modelTestDeadlineMs = 70_000, retrievalDeadlineMs = 180_000, answerDeadlineMs = 180_000, imageUploadBytes = 10 * 1024 * 1024, contentBytes = 10 * 1024 * 1024, mediaBytes = 20 * 1024 * 1024 } = {}) {
 
   publicAddress(publicOrigin);
@@ -386,7 +368,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
   if (!Number.isInteger(port) || port < 0 || port === 80 || port > 65535) throw new TransportError(500, 'invalid_port');
   for (const [value, max] of [[requestBytes, 128 * 1024], [responseBytes, 4 * 1024 * 1024], [deadlineMs, 10_000], [agentStreamDeadlineMs, 600_000],
     [imageUploadBytes, 10 * 1024 * 1024], [contentBytes, 10 * 1024 * 1024], [mediaBytes, 20 * 1024 * 1024],
-    [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000], [answerDeadlineMs, 180_000], [modelTestDeadlineMs, 70_000], [retrievalDeadlineMs, 180_000], [attachmentBytes, 28 * 1024 * 1024], [imageVectorDeadlineMs, 180_000], [audioVectorDeadlineMs, 180_000]]) {
+    [uploadBytes, 20 * 1024 * 1024], [uploadDeadlineMs, 30_000], [answerDeadlineMs, 180_000], [modelTestDeadlineMs, 70_000], [retrievalDeadlineMs, 180_000], [imageVectorDeadlineMs, 180_000], [audioVectorDeadlineMs, 180_000]]) {
     if (!Number.isInteger(value) || value < 1 || value > max) throw new TransportError(500, 'invalid_limit');
   }
   const startup = new AbortController();
@@ -401,7 +383,6 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
   } finally { clearTimeout(startupTimer); }
   let activeUploads = 0;
   let activeReplacementIndexes = 0;
-  let activeAttachments = 0;
   let activeRequests = 0;
   let activeLongRequests = 0;
   let activeStreams = 0;
@@ -416,7 +397,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     const replacementUpload = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/.test(req.url.split('?')[0]);
     const replacementIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/.test(req.url);
     const upload = replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
-    const answer = req.method === 'POST' && ['/v1/wiki/proposals', '/v1/knowledge-answers', '/v1/answers', '/v1/attachment-answers', '/v1/visual-answers', '/v1/audio-answers', '/v1/video-answers', '/v1/sound-answers', '/v1/sound-query-answers', '/v1/video-av-answers', '/v1/video-av-query-answers'].includes(req.url);
+    const answer = req.method === 'POST' && ['/v1/wiki/proposals', '/v1/knowledge-answers'].includes(req.url);
     const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
     const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
     const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);
@@ -426,7 +407,6 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     const timer = setTimeout(() => controller.abort(), isAgentEventStream(req.method, req.url) ? agentStreamDeadlineMs : modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
     let reservedUpload = false;
     let reservedReplacementIndex = false;
-    let reservedAttachment = false;
     let reservedRequest = false;
     let reservedLongRequest = false;
     let reservedLogin = 0;
@@ -488,12 +468,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           if (activeReplacementIndexes >= 2) throw new TransportError(429, 'replacement_index_capacity_reached');
           activeReplacementIndexes += 1; reservedReplacementIndex = true;
         }
-        if (route[2] === 'attachment') {
-          if (activeAttachments >= 2) throw new TransportError(429, 'attachment_capacity_reached');
-          activeAttachments += 1;
-          reservedAttachment = true;
-        }
-        await proxy(req, res, backend, headers, { requestBytes: (['upload', 'sound-upload', 'video-av-upload'].includes(route[2]) || replacementUpload) ? uploadBytes : route[2] === 'attachment' ? attachmentBytes : requestBytes,
+        await proxy(req, res, backend, headers, { requestBytes: (['upload', 'sound-upload', 'video-av-upload'].includes(route[2]) || replacementUpload) ? uploadBytes : requestBytes,
           imageUploadBytes, responseBytes: route[2] === 'media' ? mediaBytes : route[2] === 'content' ? contentBytes : responseBytes }, controller.signal, route[2]);
         if (reservedLogin && res.statusCode === 200 && reservedLogin === loginWindow) loginFailures -= 1;
       }
@@ -506,7 +481,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           detail: (known && error.detail) || (status >= 500 ? '知识库服务暂不可用。' : '请求未满足访问条件。'), request_id: requestId }));
       }
       req.resume();
-    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedAttachment) activeAttachments -= 1; if (reservedRequest) activeRequests -= 1; if (reservedLongRequest) activeLongRequests -= 1; if (reservedStream) activeStreams -= 1; }
+    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedRequest) activeRequests -= 1; if (reservedLongRequest) activeLongRequests -= 1; if (reservedStream) activeStreams -= 1; }
   });
   server.maxHeadersCount = 40;
   await new Promise((resolveListening, rejectListening) => {
