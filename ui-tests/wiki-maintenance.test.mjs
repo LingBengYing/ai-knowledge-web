@@ -23,7 +23,7 @@ function fixture(route, overrides = {}, config = { capabilities: ['metadata', 'f
   const changes = [], notices = [], confirmations = [];
   const mounted = mountWikiMaintenance({ container, document: { getElementById: node }, window: win, api, route, config,
     navigate: value => changes.push(value), notify: value => notices.push(value), confirm: async message => { confirmations.push(message); return overrides.confirm !== false; } });
-  return { mounted, calls, nodes, timers, changes, notices, confirmations, html: () => container.innerHTML,
+  return { mounted, container, calls, nodes, timers, changes, notices, confirmations, html: () => container.innerHTML,
     submit: async id => { await listeners.submit?.({ target: { id }, preventDefault() {} }); await tick(); },
     click: async (action, extra = {}) => { await listeners.click?.({ target: { closest: () => ({ dataset: { maintenanceAction: action, ...extra } }) }, preventDefault() {} }); await tick(); },
     change: (id, extra = {}) => listeners.change?.({ target: { id, ...node(id), ...extra } }), node };
@@ -111,6 +111,23 @@ test('automatic index polling is aborted on disposal and a failed read is not au
   } }); await g.mounted.ready;
   const [nextKey, next] = g.timers.entries().next().value; g.timers.delete(nextKey); await next(); await tick();
   assert.equal(g.timers.size, 0); assert.match(g.node('maint-status').innerHTML, /任务状态暂不可读/u); assert.equal(failedReads, 2); g.mounted.destroy();
+});
+test('list polling refreshes only the list region so unsaved search and batch drafts keep their nodes', async () => {
+  let reads = 0, state = 'processing';
+  const auto = { ...row(), document_id: 'doc', latest_job: job('parse', 'processing'), latest_index_job: null };
+  const f = fixture({ view: 'documents' }, { api: async path => {
+    if (path.startsWith('/v1/management/documents?')) { reads++; return { items: [{ ...auto, latest_job: job('parse', state), status: state }], total: 1, total_pages: 1 }; }
+    if (path === '/v1/management/folders') return { items: [] };
+    if (path === '/v1/management/tags') return { items: [] };
+    if (path === '/v1/ingestions/parse') return job('parse', state);
+    throw new Error('Unexpected path');
+  } }); await f.mounted.ready;
+  assert.match(f.html(), /id="maint-list"/u); f.container.innerHTML = 'typed-draft'; f.node('maint-batch').innerHTML = 'batch-draft';
+  const poll = async () => { const [key, callback] = f.timers.entries().next().value; f.timers.delete(key); await callback(); await tick(); };
+  await poll(); assert.equal(f.html(), 'typed-draft'); assert.match(f.node('maint-list').innerHTML, /资料名称/u);
+  state = 'parsed'; await poll(); assert.equal(reads, 2);
+  assert.equal(f.html(), 'typed-draft'); assert.equal(f.node('maint-batch').innerHTML, 'batch-draft'); assert.match(f.node('maint-list').innerHTML, /已解析/u);
+  f.mounted.destroy();
 });
 test('detail preserves unsaved metadata when read-only session refreshes and saves only metadata', async () => {
   let saved = row();
@@ -304,4 +321,17 @@ for (const kind of ['audio', 'sound', 'video']) test(`native ${kind} specialized
   assert.match(f.node('maint-media').innerHTML, /尚未建立/u); assert.ok(!f.calls.some(([, options]) => options.method === 'POST'));
   await f.click('media-build', { key: kind }); await f.click('media-build', { key: kind });
   assert.match(f.node('maint-media').innerHTML, /已就绪/u); assert.equal(f.calls.filter(([, options]) => options.method === 'POST').length, 1); f.mounted.destroy();
+});
+test('cleanup retry after a 503 sends again, and an unknown outcome explains instead of silently doing nothing', async () => {
+  let posts = 0, status = 503;
+  const f = fixture({ view: 'documents' }, { api: async (path, options = {}) => {
+    if (options.method === 'POST') { posts++; throw new ApiError(status, `请求未完成（${status}），请稍后重试。`); }
+    if (path.startsWith('/v1/management/documents?')) return { items: [row()], total: 1, total_pages: 1 };
+    if (path === '/v1/management/folders' || path === '/v1/management/tags') return { items: [] };
+    throw new Error('Unexpected path');
+  } }, { capabilities: ['document_cleanup'] }); await f.mounted.ready;
+  await f.click('cleanup-row', { documentId: 'doc' }); assert.equal(posts, 1); assert.match(f.node('maint-status').innerHTML, /503/u);
+  status = 504; await f.click('cleanup-row', { documentId: 'doc' }); assert.equal(posts, 2); assert.equal(f.confirmations.length, 2);
+  await f.click('cleanup-row', { documentId: 'doc' }); assert.equal(posts, 2); assert.equal(f.confirmations.length, 2); assert.match(f.node('maint-status').innerHTML, /待核对/u);
+  f.mounted.destroy();
 });

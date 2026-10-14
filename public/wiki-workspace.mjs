@@ -144,7 +144,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   const isCurrent = value => value === epoch;
   const notify = message => { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000); };
   const errorMessage = error => error?.status === 401 ? '当前会话不可用，请在模型与管理入口连接后重试。' : error?.message ?? '请求未完成，请刷新读取后核对。';
-  const linkPage = page => `#/knowledge/${page.page_id}`;
+  const linkPage = page => `#/knowledge/${e(page.page_id)}`;
   const pageName = id => state.pages.find(page => page.page_id === id)?.content.title ?? id;
   const navigate = hash => { if (win.location.hash === hash) load(); else win.location.hash = hash; };
   function finishConfirmation(accepted) {
@@ -195,7 +195,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (state.route.id) {
       const page = state.data, relations = commonSourceRelations(state.pages).filter(edge => edge.from === page.page_id || edge.to === page.page_id);
       const actions = pageDeleted(page) ? pageLifecycleButton(page) : `<a class="button primary" href="#/compile/${e(page.page_id)}">编译更新提案</a>${pageLifecycleButton(page)}`;
-      return `${heading('KNOWLEDGE PAGE', page.content.title, '', actions)}<div class="article-layout"><article class="article-paper"><div class="article-header"><span class="badge green">${e(kinds[page.content.kind])}</span>${pageDeleted(page) ? '<span class="badge gray">已删除</span>' : ''}<span class="badge gray">版本 ${page.version}</span><time>${e(formatTimestamp(page.created_at))}</time><form class="version-form" id="version-form"><label for="version">查看版本</label><input id="version" name="version" type="number" min="1" value="${page.version}" required><button class="button small secondary">读取</button></form></div>${!pageDeleted(page) && page.source_state === 'stale' ? notice('来源已变化，请编译更新。') : ''}<div class="article-body knowledge-body">${sections(page.content, source => `#/page-source/${page.page_id}/${page.version}/${source.id}`)}</div></article><aside class="side-column"><section class="panel"><div class="panel-header"><h2>关联知识</h2></div><div class="panel-body">${relations.map(edge => { const id = edge.from === page.page_id ? edge.to : edge.from; return `<a class="related-item" href="#/knowledge/${e(id)}">${icon('book')}<span>${e(pageName(id))}</span><span>${edge.count} 份共同来源</span></a>`; }).join('') || '<p class="muted">暂无关联知识</p>'}</div></section><button class="button secondary" data-ask="${e(page.content.title)}讲了什么？">围绕此主题提问</button></aside></div>`;
+      return `${heading('KNOWLEDGE PAGE', page.content.title, '', actions)}<div class="article-layout"><article class="article-paper"><div class="article-header"><span class="badge green">${e(kinds[page.content.kind])}</span>${pageDeleted(page) ? '<span class="badge gray">已删除</span>' : ''}<span class="badge gray">版本 ${page.version}</span><time>${e(formatTimestamp(page.created_at))}</time><form class="version-form" id="version-form"><label for="version">查看版本</label><input id="version" name="version" type="number" min="1" value="${page.version}" required><button class="button small secondary">读取</button></form></div>${!pageDeleted(page) && page.source_state === 'stale' ? notice('来源已变化，请编译更新。') : ''}<div class="article-body knowledge-body">${sections(page.content, source => `#/page-source/${e(page.page_id)}/${page.version}/${e(source.id)}`)}</div></article><aside class="side-column"><section class="panel"><div class="panel-header"><h2>关联知识</h2></div><div class="panel-body">${relations.map(edge => { const id = edge.from === page.page_id ? edge.to : edge.from; return `<a class="related-item" href="#/knowledge/${e(id)}">${icon('book')}<span>${e(pageName(id))}</span><span>${edge.count} 份共同来源</span></a>`; }).join('') || '<p class="muted">暂无关联知识</p>'}</div></section><button class="button secondary" data-ask="${e(page.content.title)}讲了什么？">围绕此主题提问</button></aside></div>`;
     }
     const deleted = state.route.view === 'knowledge-deleted', all = deleted ? state.deletedPages : state.pages;
     const pages = filterKnowledge(all, state.query, state.pageKind);
@@ -342,7 +342,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function review() {
     if (state.route.id) {
       const proposal = state.data;
-      return `${heading('REVIEW CHANGES', proposal.after.title, `${statusText(proposal.status)} · ${proposal.generation_method === 'model' ? '模型编译' : '原文摘编'} · 基于版本 ${proposal.base_version}`, '<a class="button secondary" href="#/review">返回审阅列表</a>')}<article class="panel diff-panel"><div class="panel-body"><div class="status-line"><span class="badge amber">${e(statusText(proposal.status))}</span></div>${proposal.source_state === 'stale' ? notice('来源已变化，需重新编译。') : ''}<div class="diff-before"><h3>原内容</h3>${proposal.before ? sections(proposal.before, () => `#/knowledge/${proposal.page_id}/${proposal.base_version}`) : '<p>新知识页，无原有版本。</p>'}</div><div class="diff-after"><h3>建议内容</h3>${sections(proposal.after, source => `#/proposal-source/${proposal.id}/${source.id}`)}</div><div class="review-actions">${proposal.status === 'pending' ? `${button('accept-proposal', '采纳并生成知识页版本', true, state.busy || proposal.source_state === 'stale' ? 'disabled' : '')}${button('dismiss-proposal', '暂不采纳', false, state.busy ? 'disabled' : '')}` : `<span class="badge green">${e(statusText(proposal.status))}</span>`}${proposal.page_id && (proposal.base_version > 0 || proposal.status === 'accepted') ? `<a class="text-link" href="#/knowledge/${e(proposal.page_id)}">查看知识页</a>` : ''}</div></div></article>`;
+      return `${heading('REVIEW CHANGES', proposal.after.title, `${statusText(proposal.status)} · ${proposal.generation_method === 'model' ? '模型编译' : '原文摘编'} · 基于版本 ${proposal.base_version}`, '<a class="button secondary" href="#/review">返回审阅列表</a>')}<article class="panel diff-panel"><div class="panel-body"><div class="status-line"><span class="badge amber">${e(statusText(proposal.status))}</span></div>${proposal.source_state === 'stale' ? notice('来源已变化，需重新编译。') : ''}<div class="diff-before"><h3>原内容</h3>${proposal.before ? sections(proposal.before, () => `#/knowledge/${e(proposal.page_id)}/${proposal.base_version}`) : '<p>新知识页，无原有版本。</p>'}</div><div class="diff-after"><h3>建议内容</h3>${sections(proposal.after, source => `#/proposal-source/${e(proposal.id)}/${e(source.id)}`)}</div><div class="review-actions">${proposal.status === 'pending' ? `${button('accept-proposal', '采纳并生成知识页版本', true, state.busy || proposal.source_state === 'stale' ? 'disabled' : '')}${button('dismiss-proposal', '暂不采纳', false, state.busy ? 'disabled' : '')}` : `<span class="badge green">${e(statusText(proposal.status))}</span>`}${proposal.page_id && (proposal.base_version > 0 || proposal.status === 'accepted') ? `<a class="text-link" href="#/knowledge/${e(proposal.page_id)}">查看知识页</a>` : ''}</div></div></article>`;
     }
     return `${heading('REVIEW CHANGES', '更新审阅', '比较前后内容、核对来源，再决定是否生成新版本。', '<a class="button primary" href="#/compile">创建编译提案</a>')}<div class="toolbar"><label for="review-status">提案状态</label><select id="review-status" class="filter-select">${['pending', 'accepted', 'dismissed'].map(value => `<option value="${value}" ${state.reviewStatus === value ? 'selected' : ''}>${e(statusText(value))}</option>`).join('')}</select></div><div class="result-count">${state.proposals.length} 份${e(statusText(state.reviewStatus))}提案</div><div class="review-list">${state.proposals.map(proposal => `<a class="review-item" href="#/review/${e(proposal.id)}"><span class="badge ${proposal.status === 'pending' ? 'amber' : 'green'}">${e(statusText(proposal.status))}</span><strong>${e(proposal.after.title)}</strong><p>${proposal.generation_method === 'model' ? '模型编译' : '原文摘编'} · 基于版本 ${proposal.base_version} · ${e(formatTimestamp(proposal.created_at))}</p>${icon('chevron')}</a>`).join('')}</div>${!state.proposals.length ? empty('目前没有此状态的提案', '从资料创建编译提案后，会在此展示真实前后差异。') : ''}`;
   }
@@ -620,9 +620,22 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   }
   async function mutate(operation, success) {
     if (state.busy) return; state.busy = true; const captured = epoch;
-    for (const node of doc.querySelectorAll?.('button[type="submit"],form .button.primary,[data-action="index"],[data-action="accept-proposal"],[data-action="dismiss-proposal"],[data-action="delete-draft"],[data-action="delete-page"],[data-action="restore-page"],[data-action="purge-page"],[data-action="confirm-import"]') ?? []) node.disabled = true;
-    try { const value = await operation(); state.busy = false; if (isCurrent(captured)) await success(value); else notify('操作已完成；请回到对应列表读取最新结果。'); }
-    catch (error) { state.busy = false; notify(`${errorMessage(error)}；没有自动重试。`); if (isCurrent(captured)) { for (const node of doc.querySelectorAll?.('form .button.primary,[data-action="index"],[data-action="accept-proposal"],[data-action="dismiss-proposal"],[data-action="delete-draft"],[data-action="delete-page"],[data-action="restore-page"],[data-action="purge-page"]') ?? []) node.disabled = false; } }
+    const disabled = [...(doc.querySelectorAll?.('button[type="submit"],form .button.primary,[data-action="index"],[data-action="accept-proposal"],[data-action="dismiss-proposal"],[data-action="delete-draft"],[data-action="delete-page"],[data-action="restore-page"],[data-action="purge-page"],[data-action="confirm-import"]') ?? [])].filter(node => !node.disabled);
+    for (const node of disabled) node.disabled = true;
+    try {
+      const value = await operation(); state.busy = false;
+      if (isCurrent(captured)) { await success(value); if (isCurrent(captured)) { for (const node of disabled) if (doc.contains?.(node) !== false) node.disabled = false; updateChat(); } }
+      else { notify('操作已完成；请回到对应列表读取最新结果。'); renderKeepingDrafts(); }
+    }
+    catch (error) { state.busy = false; notify(`${errorMessage(error)}；没有自动重试。`); if (!isCurrent(captured)) renderKeepingDrafts(); else { for (const node of doc.querySelectorAll?.('form .button.primary,[data-action="index"],[data-action="accept-proposal"],[data-action="dismiss-proposal"],[data-action="delete-draft"],[data-action="delete-page"],[data-action="restore-page"],[data-action="purge-page"]') ?? []) node.disabled = false; } }
+  }
+  /** A page rendered while another page's operation was busy is re-rendered once it settles, keeping typed field values and focus. */
+  function renderKeepingDrafts() {
+    if (state.loading || state.error) return;
+    const fields = [...(doc.querySelectorAll?.('#content input[id],#content textarea[id],#content select[id]') ?? [])].filter(node => node.type !== 'file').map(node => [node.id, node.value, node.checked]), focused = doc.activeElement?.id;
+    render();
+    for (const [id, value, checked] of fields) { const node = $(id); if (node) { node.value = value; if (typeof checked === 'boolean') node.checked = checked; } }
+    if (focused) $(focused)?.focus?.();
   }
   function abandonQuestion() {
     if (!activeQuestion) return;
@@ -643,6 +656,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       turn.pending = ['submitting', 'running', 'reading', 'cancelling'].includes(value.phase) || value.phase === 'unknown' && !value.run && !!state.conversation;
       turn.result = value.run?.result ?? null;
       turn.error = value.error ? errorMessage(value.error) : value.run?.error?.message ?? null;
+      if (value.phase === 'error' && !state.question) { state.question = turn.question; if ($('question')) $('question').value = turn.question; }
       updateChat();
       if (['completed', 'failed', 'cancelled'].includes(value.phase) && !turn.metadataRefreshed) {
         turn.metadataRefreshed = true; refreshConversationMetadata(captured);

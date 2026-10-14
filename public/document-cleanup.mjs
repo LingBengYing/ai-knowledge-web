@@ -89,7 +89,7 @@ export class CleanupSession {
       this.emit({...this.value,phase:'ready',records:this.merge(records),batch:batch?result:null,error:null});return result;
     }catch(error){
       if(serial!==this.serial)return null;
-      const known=[400,401,403,404,409,413,415,422].includes(error?.status);
+      const known=error?.status>=400&&error.status<500||[500,503].includes(error?.status);// a server answer stays retryable; only no answer, gateway 502/504 or an unverifiable receipt is unknown
       this.emit({...this.value,phase:known?'error':'unknown',unknownIds:known?this.value.unknownIds:[...new Set([...this.value.unknownIds,...captured])],error});
       if(error?.status===401)this.onAuthenticationFailure(error);throw error;
     }finally{if(serial===this.serial){this.controller=null;this.pendingIds=[];}}

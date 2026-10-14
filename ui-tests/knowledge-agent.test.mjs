@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createApi } from '../public/api.mjs';
+import { ApiError, createApi } from '../public/api.mjs';
 import { createKnowledgeAgentApi, checkedAgentConfig, checkedAgentRun, agentProgressView, KnowledgeAgentSession } from '../public/knowledge-agent.mjs';
 
 const runId = '64ccaf3b-6801-4d68-8df6-c40ec575b318';
@@ -194,4 +194,14 @@ test('Agent same-sequence completion updates details without adding another sear
   assert.match(agentProgressView(session.value).summary, /检索发起 1 次/u);
   assert.equal(agentProgressView(session.value).entries[0].current, false);
   session.close();
+});
+
+test('a definite Agent create refusal ends as error with the specific reason while ambiguous failures stay unknown', async () => {
+  const outcome = async (thrown, question = 'question') => { let attempts = 0; const session = new KnowledgeAgentSession({ streamAgentRun: idleStream, createAgentRun: async () => { attempts++; throw thrown; } }); await session.start(question); session.close(); return [session.value.phase, session.value.error?.message, attempts]; };
+  assert.deepEqual(await outcome(new ApiError(409, 'private server text', { errorCode: 'agent_busy' })), ['error', '知识助手正在处理其他任务，请稍后再提交。', 1]);
+  const [phase, message] = await outcome(new ApiError(403, 'private server text')); assert.equal(phase, 'error'); assert.match(message, /未被受理（403）/u); assert.doesNotMatch(message, /private/u);
+  assert.deepEqual(await outcome(new ApiError(422, 'x'), '坏\u0001问题'), ['error', '请输入非空问题，不能包含不合法字符。', 0]);
+  for (const status of [408, 429, 503]) assert.equal((await outcome(new ApiError(status, 'x')))[0], 'unknown');
+  assert.equal((await outcome(new Error('network')))[0], 'unknown');
+  assert.equal(agentProgressView({ phase: 'error' }).title, '问题未提交');
 });
