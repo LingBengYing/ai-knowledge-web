@@ -193,18 +193,19 @@ export function checkedTask(value) {
   return checkedTaskShape(value, taskNames);
 }
 
+/** An exhausted, never-published index task may still be retried: the server restarts it as a new task. */
 export function checkedIndexTask(value) {
-  return checkedTaskShape(value, indexTaskNames);
+  return checkedTaskShape(value, indexTaskNames, true);
 }
 
-function checkedTaskShape(value, names) {
+function checkedTaskShape(value, names, restartable = false) {
   const validId = id => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(id);
   if (!value || !validId(value.task_id) || !validId(value.document_id) || !validId(value.revision_id)
     || !Object.hasOwn(names, value.state) || !Number.isInteger(value.attempt) || value.attempt < 1 || value.attempt > 3
     || typeof value.can_cancel !== 'boolean' || typeof value.can_retry !== 'boolean'
     || !(value.error_code === null || (typeof value.error_code === 'string' && /^[A-Za-z0-9_:-]{1,100}$/u.test(value.error_code)))
     || (value.can_cancel && !taskPending(value))
-    || (value.can_retry && (!['failed', 'cancelled'].includes(value.state) || value.attempt >= 3))) throw new Error('invalid task response');
+    || (value.can_retry && (!['failed', 'cancelled'].includes(value.state) || (!restartable && value.attempt >= 3)))) throw new Error('invalid task response');
   return Object.freeze({ task_id: value.task_id, document_id: value.document_id, revision_id: value.revision_id,
     state: value.state, attempt: value.attempt, error_code: value.error_code, can_cancel: value.can_cancel, can_retry: value.can_retry });
 }

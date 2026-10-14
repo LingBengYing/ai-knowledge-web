@@ -224,13 +224,15 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   }
   function replaceTask(before, kind, value, actionName) {
     const next = kind === 'indexing' ? checkedIndexTask(value) : checkedTask(value);
-    if (next.task_id !== before.task_id || next.document_id !== before.document_id || next.revision_id !== before.revision_id
+    const restarted = kind === 'indexing' && actionName === 'retry' && next.task_id !== before.task_id;
+    if (restarted && (next.document_id !== before.document_id || next.attempt !== 1 || next.state !== 'queued')) throw invalid();
+    if (!restarted && (next.task_id !== before.task_id || next.document_id !== before.document_id || next.revision_id !== before.revision_id
       || next.attempt < before.attempt || (actionName && next.attempt !== before.attempt + (actionName === 'retry' ? 1 : 0))
-      || (next.attempt === before.attempt && (!taskPending(before) && next.state !== before.state || before.state === 'processing' && next.state === 'queued'))) throw invalid();
+      || (next.attempt === before.attempt && (!taskPending(before) && next.state !== before.state || before.state === 'processing' && next.state === 'queued')))) throw invalid();
     const field = kind === 'indexing' ? 'latest_index_job' : 'latest_job';
     items = items.map(item => item.document_id === next.document_id ? { ...item, [field]: next, [kind === 'indexing' ? 'index_status' : 'status']: next.state } : item);
     if (detail?.document_id === next.document_id) detail = items.find(item => item.document_id === next.document_id);
-    unknownTasks.delete(next.task_id); return next;
+    unknownTasks.delete(before.task_id); unknownTasks.delete(next.task_id); return next;
   }
   async function readTask(entry, token = serial) {
     const next = await api(`/v1/${entry.kind === 'indexing' ? 'indexings' : 'ingestions'}/${encodeURIComponent(entry.task.task_id)}`, { signal: controller?.signal });

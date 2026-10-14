@@ -165,6 +165,26 @@ test('task retry is capability gated, exactly once, and binds the incremented at
   assert.equal(disabled.calls.filter(([, options]) => options.method === 'POST').length, 0); disabled.mounted.destroy();
 });
 
+test('an exhausted index task retries by restarting as a new task at attempt one', async () => {
+  const exhausted = { ...job('index', 'failed'), attempt: 3, error_code: 'indexing_failed', can_retry: true };
+  const restarted = { ...job('index-2', 'queued'), attempt: 1, can_cancel: true };
+  const replies = async path => path.startsWith('/v1/management/documents?') ? { items: [{ ...row(), index_publication_id: null, latest_index_job: exhausted }], total: 1, total_pages: 1 }
+    : path === '/v1/indexings/index/retry' ? restarted : (() => { throw new Error('Unexpected path'); })();
+  const f = fixture({ view: 'tasks' }, { api: replies }); await f.mounted.ready;
+  assert.match(f.html(), /第 3 次尝试/u); assert.match(f.html(), /task-retry/u);
+  await f.click('task-retry', { kind: 'indexing', taskId: 'index' });
+  assert.equal(f.calls.filter(([, options]) => options.method === 'POST').length, 1);
+  assert.match(f.html(), /index-2/u); assert.match(f.html(), /第 1 次尝试/u); assert.doesNotMatch(f.html(), /第 3 次尝试/u);
+  f.mounted.destroy();
+  for (const forged of [{ ...restarted, document_id: 'other' }, { ...restarted, attempt: 2 }, { ...restarted, state: 'failed', can_cancel: false }]) {
+    const g = fixture({ view: 'tasks' }, { api: async path => path.startsWith('/v1/management/documents?') ? { items: [{ ...row(), latest_index_job: exhausted }], total: 1, total_pages: 1 } : forged }); await g.mounted.ready;
+    await g.click('task-retry', { kind: 'indexing', taskId: 'index' });
+    assert.doesNotMatch(g.html(), /index-2/u); g.mounted.destroy();
+  }
+  // Parsing tasks keep the three-attempt limit.
+  assert.throws(() => restoredMaintenanceTasks([{ ...row(), latest_job: { ...job('parse', 'failed'), attempt: 3, error_code: 'parser_failed', can_retry: true } }]));
+});
+
 test('batch operations send only selected current-page identities; successful reindex needs a receipt', async () => {
   const f = fixture({ view: 'documents' }, { api: async (path, options = {}) => {
     if (path.startsWith('/v1/management/documents?')) return { items: [row()], total: 1, total_pages: 1 };
