@@ -1,6 +1,12 @@
 # AI Knowledge Web · 知识库工作台
 
-## 最新生产版本（2026-10-11，0053）：SSE 实时显示
+## 最新生产版本（2026-10-13，0055）：回答排版与来源分组
+
+配套后端0075，围绕问题展示综合回答，支持安全的段落、标题与列表排版；来源默认折叠，按资料及版本分组，正文引用仅连接已验证的来源。原回答和SSE行为保持。已发布并完成实际生产页面刷新、排版及分组检查；本轮未调用模型，不认证新的真实语义质量，选定旧答案的4处来源发布前后均返回409，全仓旧时序失败仍保留。见[行为合同](docs/changes/0055-answer-focused-presentation/spec.md)、[本机验证](docs/changes/0055-answer-focused-presentation/verification.md)与[生产记录](docs/changes/0055-answer-focused-presentation/deployment-verification.md)。
+
+以下带日期段落为历史阶段，当前状态以上述最新发布记录为准。
+
+## 此前生产版本（2026-10-11，0053）：SSE 实时显示
 
 思考和回答通过 fetch SSE 边生成边显示，开发及生产入口代理均逐块转发；刷新附着原任务，不重新发问。已配套Java0072发布，真实模型8次单问的公网首思考724ms、首回答6586ms早于8199ms终态；生产最终页面及重启刷新通过。浏览器加载晚于结束，本次未直接见证生产页面中间增长，不能用本机替身截图替代；额外旧合成引用触发的原验收停止记录保留，后经精确两来源零模型复核。详见[生产记录](docs/changes/0053-agent-sse-streaming/deployment-verification.md)与[本机验证](docs/changes/0053-agent-sse-streaming/verification.md)。
 

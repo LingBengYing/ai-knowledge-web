@@ -49,6 +49,72 @@ const knowledge = { page_id: 'p1', version: 1, source_state: 'current', created_
 const draft = { id: 'd1', title: '草稿', body: '未核验的正文', version: 2, created_at: timestamp, updated_at: timestamp };
 const proposal = { id: 'proposal', page_id: 'p1', base_version: 1, before: knowledge.content, after: knowledge.content, status: 'pending', generation_method: 'extractive', source_state: 'current', created_at: timestamp };
 const settings = { version: 2, search_method: 'hybrid', ranking_mode: 'rerank', dense_weight: 0.5, top_k: 5, score_threshold_enabled: false, score_threshold: 0.5 };
+const presentationCitation = (citation_id, document_id = 'doc-a', revision_id = 'rev-a') => ({ citation_id, document_id, revision_id, filename: '同名资料.pdf', page: citation_id, media_type: 'application/pdf' });
+const presentationRun = (answer, citations) => ({ ...agentRun('completed'), suggestions: [], result: { answer_id: 'answer-format', status: 'answered', answer, reason: null, citations } });
+const presentationHistory = run => ({
+  getAgentConfig: async () => ({ enabled: true }),
+  getConversation: async () => ({ conversation: { ...conversation, turn_count: 1 }, turns: [{ question: '请先给结论，再说明如何办理。', status: 'completed', result: run }] }),
+});
+
+test('answer-focused presentation formats explicit structure and links only final known citations', async t => {
+  const run = presentationRun('## 办理结论\n\n**可以办理**，但需满足条件。[1]\n\n办理步骤：\n1. 准备材料。[2]\n2. 提交申请。\n\n- 核实申请人身份。\n- 确认经营范围。\n\n<img src=x onerror=alert(1)> [外部链接](javascript:alert(1)) [99]', [presentationCitation(1), presentationCitation(2)]);
+  const f = fixture(`#/ask/${conversationId}`, presentationHistory(run)); t.after(() => f.workspace.close());
+  await f.workspace.start(); const html = f.html();
+  assert.match(html, /<h3>办理结论<\/h3>/u);
+  assert.match(html, /<strong>可以办理<\/strong>/u);
+  assert.match(html, /<ol[^>]*><li[^>]*>准备材料。/u);
+  assert.match(html, /<ul><li>核实申请人身份。<\/li><li>确认经营范围。<\/li><\/ul>/u);
+  assert.match(html, /class="answer-citation" href="#\/answer-source\/answer-format\/1"[^>]*>\[1\]<\/a>/u);
+  assert.doesNotMatch(html, /href="[^"\n]*\/99"|href="javascript:|<img src=x/u);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/u);
+  assert.match(html, /\[外部链接\]\(javascript:alert\(1\)\) \[99\]/u);
+});
+
+test('answer sources collapse and group exact document revisions without losing locations', async t => {
+  const run = presentationRun('结论有三方面依据。[1][2][3][4]', [presentationCitation(1), presentationCitation(2), presentationCitation(3, 'doc-b'), presentationCitation(4, 'doc-a', 'rev-b')]);
+  const f = fixture(`#/ask/${conversationId}`, presentationHistory(run)); t.after(() => f.workspace.close());
+  await f.workspace.start(); const html = f.html();
+  assert.match(html, /<details class="answer-sources" data-chat-detail="answer-sources"><summary>依据 2 份资料 · 4 处引用<\/summary>/u);
+  assert.equal((html.match(/class="answer-source-group"/gu) ?? []).length, 3);
+  assert.equal((html.match(/<h4>同名资料\.pdf<\/h4>/gu) ?? []).length, 3);
+  for (const number of [1, 2, 3, 4]) assert.match(html, new RegExp(`class="answer-source-location" href="#/answer-source/answer-format/${number}">\\[${number}\\] 第 ${number} 页`, 'u'));
+  assert.doesNotMatch(html, /class="answer-sources"[^>]* open/u);
+});
+
+test('historical model-only source markers are hidden without changing ordinary terms or stored answer', async t => {
+  const answer = '结论成立。[source-1]【source-2】(source-3)（source-4）[1]\n\n参数 source-1 表示输入；文件 source-2.txt 保持原名。`[source-5]` 是代码，普通 [附录] 保持。';
+  const run = presentationRun(answer, [presentationCitation(1)]);
+  const f = fixture(`#/ask/${conversationId}`, presentationHistory(run)); t.after(() => f.workspace.close());
+  await f.workspace.start(); const html = f.html();
+  assert.doesNotMatch(html, /\[source-1\]|【source-2】|\(source-3\)|（source-4）/u);
+  assert.match(html, /参数 source-1 表示输入；文件 source-2\.txt 保持原名。/u);
+  assert.match(html, /\[source-5\]/u);
+  assert.equal(f.workspace.state.turns[0].result.answer, answer);
+  await f.click('save-answer', { turn: '0' });
+  assert.ok(f.calls.find(([name, command]) => name === 'createDraft' && command.body.includes(answer)));
+});
+
+test('answer formatting preserves code, unknown references and explicit numbered step values', async t => {
+  const run = presentationRun('3. 第三步。[1]\n5. 第五步。\n\n`[1]` 只是代码。\n\n```text\n[source-9]\n[1] <script>\n```\n\n[1](https://example.invalid) 和 [01] 不转换成引用。', [presentationCitation(1)]);
+  const f = fixture(`#/ask/${conversationId}`, presentationHistory(run)); t.after(() => f.workspace.close());
+  await f.workspace.start(); const html = f.html();
+  assert.match(html, /<li value="3">第三步。/u); assert.match(html, /<li value="5">第五步。/u);
+  assert.match(html, /<code>\[1\]<\/code> 只是代码。/u);
+  assert.match(html, /<pre><code>\[source-9\]\n\[1\] &lt;script&gt;<\/code><\/pre>/u);
+  assert.match(html, /\[1\]\(https:\/\/example\.invalid\) 和 \[01\]/u);
+  assert.equal((html.match(/class="answer-citation"/gu) ?? []).length, 1);
+  assert.doesNotMatch(html, /href="https:|<script>/u);
+});
+
+test('source-like filenames and ordinary adjoining terms are not removed as model markers', async t => {
+  const answer = '请打开 [source-1].txt 和 (source-2).pdf。\n\n参数(source-3)为输入，路径/source-4 和 file[source-5]name 都是普通文字。\n\n结论成立。 (source-9)[1]';
+  const f = fixture(`#/ask/${conversationId}`, presentationHistory(presentationRun(answer, [presentationCitation(1)]))); t.after(() => f.workspace.close());
+  await f.workspace.start(); const html = f.html();
+  assert.match(html, /请打开 \[source-1\]\.txt 和 \(source-2\)\.pdf。/u);
+  assert.match(html, /参数\(source-3\)为输入，路径\/source-4 和 file\[source-5\]name 都是普通文字。/u);
+  assert.doesNotMatch(html, /\(source-9\)/u);
+});
+
 test('native recall and maintenance routes preserve identity and reject extra segments', () => {
   for (const view of ['retrieval', 'documents', 'tasks', 'directories']) assert.deepEqual(parseWorkspaceRoute(`#/${view}`), { view });
   for (const view of ['documents', 'tasks']) assert.deepEqual(parseWorkspaceRoute(`#/${view}/doc-123`), { view, id: 'doc-123' });

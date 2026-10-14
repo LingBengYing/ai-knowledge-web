@@ -62,6 +62,62 @@ export function formatLocator(locator = {}) {
   const end = locator.end_us ?? (Number.isFinite(locator.end_ms) ? locator.end_ms * 1000 : null);
   return start !== null && end !== null ? `${start / 1e6}–${end / 1e6} 秒 · ${locator.time_precision ?? '服务器时间区间'}` : '服务器原始来源';
 }
+/** Formatting only: citations come from the validated final result, never model source aliases. */
+function answerContent(result) {
+  const citations = new Map(result.citations.map(citation => [String(citation.citation_id), citation]));
+  const inline = (text, emphasis = true) => {
+    const tokens = /`[^`\n]+`|\[[^\]\n]+\]\([^\n]*?\)|\*\*[^*\n]+\*\*|\[[1-9][0-9]*\]|\[source-[1-9][0-9]*\]|【source-[1-9][0-9]*】|\(source-[1-9][0-9]*\)|（source-[1-9][0-9]*）/gu;
+    let html = '', offset = 0;
+    for (const match of text.matchAll(tokens)) {
+      const token = match[0]; html += e(text.slice(offset, match.index)); offset = match.index + token.length;
+      if (token.startsWith('`')) html += `<code>${e(token.slice(1, -1))}</code>`;
+      else if (token.startsWith('**') && emphasis) html += `<strong>${inline(token.slice(2, -2), false)}</strong>`;
+      else if (/^(?:\[source-[1-9][0-9]*\]|【source-[1-9][0-9]*】|\(source-[1-9][0-9]*\)|（source-[1-9][0-9]*）)$/u.test(token)) {
+        const before = text.slice(0, match.index), after = text.slice(offset);
+        // A filename or a term containing an alias is source text, not a removable citation marker.
+        if (/[\p{L}\p{N}_/\\-]$/u.test(before) || /^[\p{L}\p{N}_/\\-]|^\.[\p{L}\p{N}_-]/u.test(after)) html += e(token);
+      }
+      else {
+        const number = /^\[([1-9][0-9]*)\]$/u.exec(token)?.[1];
+        html += number && citations.has(number)
+          ? `<a class="answer-citation" href="#/answer-source/${e(result.answer_id)}/${number}" aria-label="查看引用 ${number}">${token}</a>` : e(token);
+      }
+    }
+    return html + e(text.slice(offset));
+  };
+  const blocks = [], paragraph = []; let list, code = null;
+  const flushParagraph = () => { if (paragraph.length) { const text = inline(paragraph.join('\n')); if (text.trim()) blocks.push(`<p>${text}</p>`); paragraph.length = 0; } };
+  const flushList = () => { if (list) { blocks.push(`<${list.tag}>${list.items.join('')}</${list.tag}>`); list = null; } };
+  for (const line of result.answer.replace(/\r\n?/gu, '\n').split('\n')) {
+    if (/^\s*```/u.test(line)) {
+      flushParagraph(); flushList();
+      if (code === null) code = []; else { blocks.push(`<pre><code>${e(code.join('\n'))}</code></pre>`); code = null; }
+      continue;
+    }
+    if (code !== null) { code.push(line); continue; }
+    if (!line.trim()) { flushParagraph(); flushList(); continue; }
+    const heading = /^#{1,6}\s+(.+)$/u.exec(line), unordered = /^[-*+]\s+(.+)$/u.exec(line), ordered = /^([1-9][0-9]*)[.)、]\s+(.+)$/u.exec(line);
+    if (heading) { flushParagraph(); flushList(); blocks.push(`<h3>${inline(heading[1])}</h3>`); }
+    else if (unordered || ordered && Number.isSafeInteger(Number(ordered[1]))) {
+      flushParagraph(); const tag = unordered ? 'ul' : 'ol'; if (list?.tag !== tag) flushList();
+      list ??= { tag, items: [] };
+      list.items.push(`<li${ordered ? ` value="${ordered[1]}"` : ''}>${inline(unordered?.[1] ?? ordered[2])}</li>`);
+    } else { flushList(); paragraph.push(line); }
+  }
+  flushParagraph(); flushList(); if (code !== null) blocks.push(`<pre><code>${e(code.join('\n'))}</code></pre>`);
+  return `<div class="answer-content answer-paragraph">${blocks.join('')}</div>`;
+}
+function answerSources(result) {
+  if (!result.citations.length) return '';
+  const groups = new Map(), documents = new Set();
+  for (const citation of result.citations) {
+    const key = JSON.stringify([citation.document_id, citation.revision_id]);
+    documents.add(citation.document_id);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(citation);
+  }
+  return `<details class="answer-sources" data-chat-detail="answer-sources"><summary>依据 ${documents.size} 份资料 · ${result.citations.length} 处引用</summary><div class="answer-reference-list">${[...groups.values()].map(citations => `<section class="answer-source-group"><h4>${e(citations[0].filename)}</h4><div>${citations.map(citation => `<a class="answer-source-location" href="#/answer-source/${e(result.answer_id)}/${citation.citation_id}">[${citation.citation_id}] ${e(formatLocator(citation))}</a>`).join('')}</div></section>`).join('')}</div></details>`;
+}
 const kinds = { topic: '主题', entity: '实体', procedure: '操作指南', overview: '概览' };
 const types = { document: '文档', image: '图片', audio: '音频', video: '视频' };
 const modelRoles = ['generation', 'embedding', 'rerank'];
@@ -186,7 +242,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       if (!preview) return '';
       return `<section class="answer-preview" aria-label="正在生成的回答"><span class="badge amber">${turn.pending ? '生成中' : '尚未完成'}</span><p class="preserve-lines answer-paragraph" aria-live="polite" aria-atomic="false">${e(preview)}</p></section>`;
     }
-    return `<p class="preserve-lines answer-paragraph">${e(turn.result.answer)}</p>${turn.result.reason ? notice(`原因：${turn.result.reason}`) : ''}<div class="answer-reference-list">${turn.result.citations.map(citation => `<a href="#/answer-source/${turn.result.answer_id}/${citation.citation_id}">[${citation.citation_id}] ${e(citation.filename)} · ${e(formatLocator(citation))}</a>`).join('')}</div><details class="retrieval-steps"><summary>回答记录</summary><p>回答编号：${e(turn.result.answer_id)}</p><p>${turn.result.citations.length} 条引用；状态：${e(turn.result.status)}</p></details><div class="answer-footer">${button('save-answer', '存为草稿', false, `data-turn="${index}" ${state.busy ? 'disabled' : ''}`)}</div>`;
+    return `${answerContent(turn.result)}${turn.result.reason ? notice(`原因：${turn.result.reason}`) : ''}${answerSources(turn.result)}<details class="retrieval-steps"><summary>回答记录</summary><p>回答编号：${e(turn.result.answer_id)}</p><p>${turn.result.citations.length} 条引用；状态：${e(turn.result.status)}</p></details><div class="answer-footer">${button('save-answer', '存为草稿', false, `data-turn="${index}" ${state.busy ? 'disabled' : ''}`)}</div>`;
   }
   function agentEvent(event) {
     const details = event.details;
