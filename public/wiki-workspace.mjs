@@ -1,4 +1,4 @@
-import { createApi, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
+import { createApi, escapeHtml, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
 import { createWikiWorkspaceApi } from './wiki-workspace-api.mjs';
 import { AnswerSession } from './answers.mjs';
 import { KnowledgeAgentSession, agentProgressView } from './knowledge-agent.mjs';
@@ -9,7 +9,6 @@ import { ModelConfigurationSession, modelConfigurationEnabled } from './model-co
 import { ModelRebuildSession, modelRebuildEnabled, modelRebuildPending, modelRebuildReason } from './model-rebuild.mjs';
 import { documentStatusLabel, indexTaskLabel, taskPending } from './workbench-state.mjs';
 
-export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const e = escapeHtml;
 /** Server timestamps stay milliseconds; presentation uses the browser's local time zone. */
 export function formatTimestamp(milliseconds) {
@@ -707,9 +706,9 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     const turn = { question: cleaned, pending: true, result: null, error: null };
     state.turns.push(turn); state.question = ''; render();
     if (state.agentConfig.enabled) { await agentSession(turn).start(cleaned, { conversationId: state.conversation.id }); return; }
-    const captured = epoch, session = new AnswerSession(api, { canReadOriginal: () => true });
+    const captured = epoch, session = new AnswerSession(api);
     activeQuestion = { turn, session, kind: 'answer' };
-    const result = await session.ask(cleaned, null, 'knowledge');
+    const result = await session.ask(cleaned);
     if (!isCurrent(captured) || activeQuestion?.session !== session || !state.turns.includes(turn)) return;
     turn.pending = false; turn.result = result.result; turn.error = result.error ? errorMessage(result.error) : null;
     updateChat();

@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { ApiError, createApi } from '../public/api.mjs';
+import { ApiError, createApi, escapeHtml } from '../public/api.mjs';
 import { createWikiWorkspaceApi } from '../public/wiki-workspace-api.mjs';
-import { parseWorkspaceRoute, escapeHtml, filterKnowledge, commonSourceRelations, formatLocator, formatTimestamp, createWikiWorkspace } from '../public/wiki-workspace.mjs';
+import { parseWorkspaceRoute, filterKnowledge, commonSourceRelations, formatLocator, formatTimestamp, createWikiWorkspace } from '../public/wiki-workspace.mjs';
 
 const page = (id, doc, revision = 'r1') => ({ page_id: id, version: 1, content: { title: id, kind: 'topic', sections: [{ body: '正文灯塔', sources: [{ document_id: doc, publication_id: 'pub', source_revision_id: revision }] }] } });
 test('live workspace routes preserve version and server source identity', () => {

@@ -1,4 +1,4 @@
-import { ApiError, documentDownloadOnly } from './api.mjs';
+import { ApiError, documentDownloadOnly, escapeHtml as e } from './api.mjs';
 import { batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel } from './workbench-state.mjs';
 import { CleanupSession, cleanupEnabled, cleanupLabel, cleanupResourceLabel } from './document-cleanup.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
@@ -10,7 +10,6 @@ import { AudioVectorSession, audioVectorsEnabled, canReadAudioVector } from './a
 import { SoundIndexSession, soundEnabled, canReadSoundIndex } from './sound-library.mjs';
 import { VideoAvIndexSession, videoAvEnabled, canReadVideoAvIndex } from './video-av.mjs';
 
-const e = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const idValid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const safeError = error => error instanceof ApiError ? error.message : '操作未完成，请刷新状态后核对。';
 const invalid = () => new ApiError(502, '资料或任务状态不一致，请刷新后核对。');

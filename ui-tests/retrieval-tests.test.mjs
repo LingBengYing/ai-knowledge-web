@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from '../public/api.mjs';
-import { RetrievalSession, retrievalEnabled, retrievalRequest, checkedRetrievalResult, matchCurrentOriginal } from '../public/retrieval-tests.mjs';
+import { RetrievalSession, retrievalEnabled, retrievalRequest, checkedRetrievalResult } from '../public/retrieval-tests.mjs';
 
 const sha = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 const text = '星港😀预算47万元。';
@@ -63,15 +63,4 @@ test('bad tail invalidates the entire preview and authentication loss clears the
   let expired = 0;
   const lost = new RetrievalSession(async () => { throw new ApiError(401, 'expired'); }, { onAuthenticationFailure: () => expired++ });
   await lost.run('问题', ['doc-one']); assert.equal(expired, 1); assert.equal(lost.value.command, null); assert.equal(lost.value.result, null);
-});
-
-test('opening a preview original requires the current saved document revision and source identity', async () => {
-  const match = await hit();
-  const row = { document_id: match.document_id, filename: match.filename, active_revision_id: match.revision_id, latest_job: { revision_id: match.revision_id }, media_info: { sha256: match.source_sha256 } };
-  assert.equal(matchCurrentOriginal(match, row), true);
-  for (const update of [{ active_revision_id: 'other' }, { filename: 'other.txt' }, { media_info: { sha256: 'b'.repeat(64) } }]) assert.equal(matchCurrentOriginal(match, { ...row, ...update }), false);
-  const pending = { ...row, latest_job: { revision_id: 'new-candidate', status: 'running' } };
-  assert.equal(matchCurrentOriginal(match, pending), true, 'a pending candidate does not replace the active source');
-  assert.equal(matchCurrentOriginal(match, { ...pending, active_revision_id: 'new-candidate' }), false,
-    'publishing the new active revision invalidates the old retrieval source');
 });

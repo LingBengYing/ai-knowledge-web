@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApi, ApiError, validateUpload } from '../public/api.mjs';
-import { WorkbenchState, checkedTask, taskPending, taskLabel } from '../public/workbench-state.mjs';
+import { checkedTask, taskPending, taskLabel } from '../public/workbench-state.mjs';
 
+const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
 const task = (change = {}) => ({ task_id: 'task-one', document_id: 'doc-one', revision_id: 'rev-one', state: 'queued', attempt: 1, error_code: null, can_cancel: true, can_retry: false, ...change });
 
 test('raw upload keeps original File bytes, filename and same-origin identity; no JSON serialization', async () => {
@@ -60,98 +61,43 @@ test('checked task exposes safe finite fields only and refuses malformed capabil
   assert.match(taskLabel('parsed'), /未索引/);
 });
 
-test('identity or page invalidation clears tasks and refuses all late poll results', () => {
-  const state = new WorkbenchState();
-  state.watchTask(task());
-  const ticket = state.beginRead('ingestion');
-  state.invalidate();
-  assert.equal(state.task, null);
-  assert.equal(state.commitTask(ticket, task({ state: 'processing' })), false);
-  assert.equal(state.task, null);
+test('PNG/JPEG uploads require image and ingestion capabilities and use a separate 10MiB limit', async () => {
+  const config = { capabilities: ['image_text_upload', 'ingestions'] };
+  for (const name of ['a.png', 'a.JPG', 'a.jpeg']) assert.equal(validateUpload(new File([bytes], name), config).name, name);
+  for (const caps of [[], ['ingestions'], ['image_text_upload']]) assert.throws(() => validateUpload(new File([bytes], 'a.png'), { capabilities: caps }));
+  assert.throws(() => validateUpload(new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'a.png'), config));
+  assert.equal(validateUpload(new File([new Uint8Array(20 * 1024 * 1024)], 'a.pdf')).size, 20 * 1024 * 1024);
+  let body;
+  const api = createApi({ capabilities: ['visual_image_upload', 'ingestions'] }, () => '', async (_url, options) => {
+    body = options.body; return new Response('{}', { status: 202 });
+  });
+  const file = new File([bytes], 'a.png');
+  await api('/v1/documents?filename=a.png', { method: 'POST', file });
+  assert.equal(body, file);
 });
 
-test('newer task and newer attempt cannot be overwritten by previous requests', () => {
-  const state = new WorkbenchState();
-  state.watchTask(task());
-  const first = state.beginRead('ingestion');
-  state.watchTask(task({ task_id: 'task-two', document_id: 'doc-two' }));
-  assert.equal(state.commitTask(first, task({ state: 'processing' })), false);
-  state.watchTask(task({ attempt: 2 }));
-  const current = state.beginRead('ingestion');
-  assert.equal(state.commitTask(current, task({ state: 'processing', attempt: 1 })), false);
-  assert.equal(state.task.attempt, 2);
-  assert.throws(() => state.commitTask(current, task({ task_id: 'forged' })));
+test('binary API is restricted, bounded while reading, and retains current authentication', async () => {
+  let seen;
+  const api = createApi({ auth_mode: 'development_headers', workspace_id: 'org-main' }, () => 'owner', async (path, options) => {
+    seen = options; return new Response(bytes, { headers: { 'Content-Type': 'image/png' } });
+  });
+  const blob = await api('/v1/synopsis-sources/answer-1/1/1/frame', { binary: true });
+  assert.ok(blob instanceof Blob); assert.equal(blob.size, bytes.length);
+  assert.equal(seen.headers['X-Principal-Id'], 'owner');
+  for (const path of ['/v1/config', '/v1/synopsis-sources/answer-1/1/1/frame?q=x']) await assert.rejects(api(path, { binary: true }));
+  const oversized = createApi({}, () => '', async () => new Response(new Uint8Array(10 * 1024 * 1024 + 1), { headers: { 'Content-Type': 'image/png' } }));
+  await assert.rejects(oversized('/v1/synopsis-sources/answer-1/1/1/frame', { binary: true }));
 });
 
-test('parsed state stops polling and updates only the matching authorized current row', () => {
-  const state = new WorkbenchState();
-  state.items = [{ document_id: 'doc-one', status: 'queued' }, { document_id: 'doc-other', status: 'queued' }];
-  state.watchTask(task());
-  const current = state.beginRead('ingestion');
-  assert.equal(state.commitTask(current, task({ state: 'parsed', can_cancel: false })), true);
-  assert.equal(taskPending(state.task), false);
-  assert.equal(state.items[0].status, 'parsed');
-  assert.equal(state.items[1].status, 'queued');
-  assert.equal(state.items[0].latest_job.task_id, 'task-one');
-  const next = state.beginRead('ingestion');
-  assert.throws(() => state.commitTask(next, task()));
-});
-
-test('an in-flight list snapshot cannot regress the task just advanced by polling or retry', () => {
-  const state = new WorkbenchState();
-  const older = task();
-  state.watchTask(task({ attempt: 2, state: 'parsed', can_cancel: false }));
-  const page = state.beginRead('documents');
-  state.commitPage(page, [{ document_id: 'doc-one', status: 'queued', latest_job: older },
-    { document_id: 'doc-other', status: 'queued', latest_job: task({ document_id: 'doc-other' }) }]);
-  assert.equal(state.items[0].status, 'parsed');
-  assert.equal(state.items[0].latest_job.attempt, 2);
-  assert.equal(state.items[1].status, 'queued');
-  state.commitPage(state.beginRead('documents'), []);
-  assert.deepEqual(state.items, []); // A task must never insert a document absent from an authorized page.
-});
-
-test('a newer authorized list task advances the panel and adopts current action permissions', () => {
-  const state = new WorkbenchState();
-  state.watchTask(task({ state: 'failed', can_cancel: false, can_retry: true }));
-  const newer = task({ attempt: 2, state: 'processing', can_cancel: false });
-  state.commitPage(state.beginRead('documents'), [{ document_id: 'doc-one', status: 'processing', latest_job: newer }]);
-  assert.equal(state.task.attempt, 2);
-  assert.equal(state.task.state, 'processing');
-  assert.equal(state.task.can_cancel, false);
-  assert.equal(state.task.can_retry, false);
-  assert.equal(state.items[0].latest_job, state.task);
-  const parsed = task({ attempt: 2, state: 'parsed', can_cancel: false });
-  state.commitPage(state.beginRead('documents'), [{ document_id: 'doc-one', status: 'parsed', latest_job: parsed }]);
-  assert.equal(state.task.state, 'parsed');
-  assert.equal(taskPending(state.task), false);
-});
-
-test('reopening a captured detail resolves the latest authorized attempt and terminal state', () => {
-  for (const latest of [task({ attempt: 2, state: 'processing', can_cancel: false }),
-    task({ state: 'parsed', can_cancel: false })]) {
-    const state = new WorkbenchState();
-    const captured = { document_id: 'doc-one', status: 'queued', latest_job: task() };
-    state.commitPage(state.beginRead('documents'), [captured]);
-    state.openDetail(captured.document_id);
-    state.watchTask(captured.latest_job);
-    state.commitTask(state.beginRead('ingestion'), latest);
-    state.watchTask(state.taskForDocument(captured.document_id));
-    assert.deepEqual(state.task, latest);
-    assert.equal(state.task.can_cancel, false);
-    assert.deepEqual(state.detail.latest_job, state.task);
-    assert.equal(captured.latest_job.state, 'queued');
-  }
-});
-
-test('task reopening cannot resurrect a row outside the current authorized page or mismatched identity', () => {
-  const state = new WorkbenchState();
-  state.items = [{ document_id: 'doc-one', latest_job: task() }];
-  assert.deepEqual(state.taskForDocument('doc-one'), task());
-  state.invalidate();
-  assert.throws(() => state.taskForDocument('doc-one'), /unavailable task document/);
-  state.items = [{ document_id: 'doc-one', latest_job: task({ document_id: 'doc-other' }) }];
-  assert.throws(() => state.taskForDocument('doc-one'), /invalid task document/);
-  state.items = [{ document_id: 'doc-one' }];
-  assert.throws(() => state.taskForDocument('doc-one'), /invalid task response/);
+test('explicit audio and video upload modes preserve MP4 distinction and require their server capabilities', async () => {
+  const config = { capabilities: ['audio_upload', 'video_upload', 'ingestions'] };
+  const file = new File([bytes], 'clip.mp4'); let seen;
+  const api = createApi(config, () => '', async (_url, options) => { seen = options; return new Response('{}', { status: 202 }); });
+  assert.equal(validateUpload(file, config, 'audio'), file);
+  await api('/v1/documents?filename=clip.mp4', { method: 'POST', file, uploadKind: 'audio' });
+  assert.equal(seen.headers['Content-Type'], 'application/octet-stream');
+  await api('/v1/documents?filename=clip.mp4', { method: 'POST', file, uploadKind: 'video' });
+  assert.equal(seen.headers['Content-Type'], 'video/mp4');
+  assert.throws(() => validateUpload(file, { capabilities: ['audio_upload', 'ingestions'] }, 'video'));
+  assert.throws(() => validateUpload(new File([bytes], 'clip.wav'), config, 'video'));
 });

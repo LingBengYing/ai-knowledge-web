@@ -1,4 +1,4 @@
-import { ApiError, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob, sha256Hex } from './api.mjs';
 
 const id = /^[A-Za-z0-9_-]{1,128}$/u;
 const hashes = /^[a-f0-9]{64}$/u;
@@ -72,9 +72,9 @@ export class DocumentOriginalSession {
       if (!current()) return this.value;
       if (!(blob instanceof Blob) || blob.size !== original.size_bytes || blob.type !== original.media_type) throw invalid();
       const bytes = await blob.arrayBuffer();
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const digest = await sha256Hex(bytes);
       if (!current()) return this.value;
-      if ([...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('') !== original.source_sha256) throw invalid();
+      if (digest !== original.source_sha256) throw invalid();
       let text = null, textError = null;
       if (documentTextPreview(original.media_type)) {
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }

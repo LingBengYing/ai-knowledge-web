@@ -6,6 +6,10 @@ export class ApiError extends Error {
   }
 }
 
+export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+/** Lowercase hex SHA-256 of bytes (BufferSource). */
+export const sha256Hex = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+
 export function imageUploadMode(config) {
   const capabilities = config?.capabilities;
   if (!Array.isArray(capabilities) || !capabilities.includes('ingestions')) return null;
@@ -83,7 +87,7 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
       throw new ApiError(422, '流式输出只能从当前知识助手任务读取。');
     }
     if (binary && (method !== 'GET' || body !== undefined || file !== undefined
-      || (!/^\/v1\/(?:(?:sources|visual-sources|audio-sources|video-sources|sound-sources|video-av-sources)\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/content|video-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/frame|synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/(?:content|frame)|documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content)$/u.test(path)
+      || (!/^\/v1\/(?:synopsis-sources\/[A-Za-z0-9_-]{1,128}\/(?:[1-9]|[12][0-9]|3[0-2])\/[1-8]\/(?:content|frame)|documents\/[A-Za-z0-9_-]{1,128}\/revisions\/[A-Za-z0-9_-]{1,128}\/content)$/u.test(path)
         && !wikiBinarySource.test(path)))) {
       throw new ApiError(422, '原素材只能从服务器指定的来源接口读取。');
     }
@@ -191,12 +195,10 @@ async function readBinary(response, path) {
     || (wikiBinarySource.test(path) && path.endsWith('/content'));
   const headerType = response.headers.get('content-type')?.toLowerCase();
   const type = original ? headerType?.split(';')[0].trim() : headerType;
-  const audio = path.startsWith('/v1/audio-sources/') || path.startsWith('/v1/sound-sources/');
-  const video = ['/v1/video-sources/', '/v1/video-av-sources/'].some(prefix => path.startsWith(prefix)) && path.endsWith('/content');
   const audioTypes = ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'];
-  const types = original ? [...DOCUMENT_MIME_TYPES, 'image/png', 'image/jpeg', ...audioTypes, ...Object.values(videoTypes)]
-    : audio ? audioTypes : video ? Object.values(videoTypes) : ['image/png', 'image/jpeg'];
-  const limit = (original || audio || video ? 20 : 10) * 1024 * 1024;
+  // Originals may be any library format; everything else readable here is a server-decoded frame image.
+  const types = original ? [...DOCUMENT_MIME_TYPES, 'image/png', 'image/jpeg', ...audioTypes, ...Object.values(videoTypes)] : ['image/png', 'image/jpeg'];
+  const limit = (original ? 20 : 10) * 1024 * 1024;
   if (response.status !== 200 || !types.includes(type) || Number(response.headers.get('content-length')) > limit) {
     await response.body?.cancel();
     throw new ApiError(502, '来源原素材的类型、状态或大小无效。');

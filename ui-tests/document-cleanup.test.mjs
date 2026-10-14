@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from '../public/api.mjs';
-import { CleanupSession, cleanupEnabled, canRequestCleanup, cleanupLabel, checkedCleanup } from '../public/document-cleanup.mjs';
+import { CleanupSession, cleanupEnabled, cleanupLabel, checkedCleanup } from '../public/document-cleanup.mjs';
 
 const kinds = ['database_payload','database_file','managed_backups','managed_temporaries','remote_inventory','remote_logical_rows','remote_write_terminal','remote_physical_storage','restore_barrier'];
 const receipt = (id = 'doc-one', status = 'pending') => ({ document_id: id, cleanup_id: status === 'not_requested' ? null : 'cleanup-one', status: status === 'completed' ? 'deleted' : 'deleting', cleanup_status: status,
@@ -11,8 +11,6 @@ const receipt = (id = 'doc-one', status = 'pending') => ({ document_id: id, clea
 test('cleanup uses its own actual capability and current writer eligibility, never can_delete', () => {
   assert.equal(cleanupEnabled({capabilities:['document_removal','document_delete']}), false);
   assert.equal(cleanupEnabled({capabilities:['document_cleanup']}), true);
-  assert.equal(canRequestCleanup({document_id:'doc-one',can_edit:true,can_delete:false}), true);
-  for (const row of [null, {document_id:'../one',can_edit:true}]) assert.equal(canRequestCleanup(row), false);
 });
 test('accepted, blocked, failed and unadopted withdrawals never claim completed deletion', () => {
   for (const status of ['not_requested','pending','running','blocked','failed','completed']) assert.equal(checkedCleanup(receipt('doc-one',status),'doc-one').cleanup_status,status);
