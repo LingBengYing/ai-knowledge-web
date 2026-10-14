@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { createApi } from '../public/api.mjs';
+import { ApiError, createApi } from '../public/api.mjs';
 import { createWikiWorkspaceApi } from '../public/wiki-workspace-api.mjs';
 import { parseWorkspaceRoute, escapeHtml, filterKnowledge, commonSourceRelations, formatLocator, formatTimestamp, createWikiWorkspace } from '../public/wiki-workspace.mjs';
 
@@ -1064,4 +1064,53 @@ test('finishing an answer keeps conversations loaded beyond the first page', asy
   publish(agentRun('completed')); await tick(); await tick();
   assert.equal(links(), 41);
   assert.match(f.nodes.get('conversation-list').innerHTML, /对话39/u);
+});
+
+test('loading more conversations restores the composer send button that the write lock disabled', async t => {
+  const all = Array.from({ length: 33 }, (_, index) => ({ ...conversation, id: `c${index}`, title: `对话${index}` }));
+  const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), listConversations: async ({ offset = 0, limit = 30 } = {}) => ({ items: all.slice(offset, offset + limit), offset, limit }) });
+  t.after(() => f.workspace.close());
+  await f.workspace.start(); const send = f.doc.getElementById('question-submit');
+  f.doc.querySelectorAll = selector => selector.includes('form .button.primary') ? [send] : [];
+  assert.equal(send.disabled, false);
+  await f.click('more-conversations'); await tick();
+  assert.equal(f.workspace.state.busy, false); assert.equal(send.disabled, false);
+  assert.equal((f.nodes.get('conversation-list').innerHTML.match(/class="conversation-link/gu) ?? []).length, 33);
+});
+
+test('a write that settles after navigation re-renders the new page without stale busy locks and keeps typed drafts', async t => {
+  let release; const slow = new Promise(resolve => { release = resolve; });
+  const f = fixture('#/compile', { createProposal: async () => { await slow; return proposal; } });
+  t.after(() => f.workspace.close());
+  await f.workspace.start();
+  f.submit('compile-form', [['title', '标题'], ['kind', 'topic'], ['document_ids', 'doc'], ['generation_method', 'extractive']]); await tick();
+  await f.go('#/knowledge'); assert.match(f.html(), /data-action="delete-page" data-page="p1" disabled/u);
+  const search = f.doc.getElementById('source-query'); search.id = 'source-query'; search.value = '未提交的搜索';
+  f.doc.querySelectorAll = selector => selector.includes('#content input[id]') ? [search] : [];
+  release(); await tick(); await tick();
+  assert.equal(f.workspace.state.busy, false); assert.doesNotMatch(f.html(), /data-action="delete-page" data-page="p1" disabled/u);
+  assert.equal(f.doc.getElementById('source-query').value, '未提交的搜索');
+  assert.match(f.nodes.get('toast').textContent, /操作已完成/u);
+});
+
+test('a definite Agent refusal unlocks sending, shows the reason and returns the question to the composer', async t => {
+  const f = fixture(`#/ask/${conversationId}`, { getAgentConfig: async () => ({ enabled: true }), listConversations: async () => ({ items: [conversation], offset: 0, limit: 30 }),
+    createAgentRun: async () => { throw new ApiError(409, 'private server text', { errorCode: 'agent_busy' }); } });
+  t.after(() => f.workspace.close());
+  await f.workspace.start();
+  await f.submit('question-form', [['question', '被拒绝的问题']]); await tick();
+  const [turn] = f.workspace.state.turns;
+  assert.equal(turn.agentPhase, 'error'); assert.equal(turn.pending, false); assert.equal(turn.error, '知识助手正在处理其他任务，请稍后再提交。');
+  assert.equal(f.workspace.state.question, '被拒绝的问题'); assert.equal(f.nodes.get('question').value, '被拒绝的问题');
+  assert.equal(f.nodes.get('question-submit').disabled, false); assert.doesNotMatch(f.nodes.get('chat-turns').innerHTML, /private server text|核对已提交的问题/u);
+});
+
+test('server identities in knowledge, proposal and source links are escaped', async t => {
+  const id = 'p1"><img src=x>', hostile = { ...knowledge, page_id: id, content: { ...knowledge.content, sections: [{ ...knowledge.content.sections[0], sources: [{ ...source, id: 's"1' }] }] } };
+  const f = fixture(`#/knowledge/p1`, { allPages: async () => [hostile], getPage: async () => hostile, getProposal: async () => ({ ...proposal, id: 'q"1', page_id: id, before: hostile.content, after: hostile.content }) });
+  t.after(() => f.workspace.close());
+  await f.workspace.start();
+  for (const html of [f.html(), f.nodes.get('sidebar').innerHTML]) { assert.doesNotMatch(html, /<img src=x>|s"1/u); assert.match(html, /p1&quot;&gt;&lt;img src=x&gt;/u); }
+  assert.match(f.html(), /#\/page-source\/p1&quot;&gt;&lt;img src=x&gt;\/1\/s&quot;1/u);
+  await f.go('#/review/proposal'); assert.doesNotMatch(f.html(), /<img src=x>|q"1|s"1/u); assert.match(f.html(), /#\/proposal-source\/q&quot;1\/s&quot;1/u);
 });

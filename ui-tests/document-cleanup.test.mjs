@@ -84,3 +84,11 @@ test('an accepted write must contain a stable requested cleanup task rather than
   const unrequested=new CleanupSession(async()=>receipt('doc-one','not_requested'));await assert.rejects(unrequested.requestOne('doc-one'));assert.equal(unrequested.value.phase,'unknown');assert.deepEqual(unrequested.value.records,[]);
   let calls=0;const changed=new CleanupSession(async()=>++calls===1?receipt():{...receipt(),cleanup_id:'different-task'});await changed.load('doc-one');await assert.rejects(changed.requestOne('doc-one'));assert.equal(changed.value.phase,'unknown');assert.equal(changed.value.records[0].cleanup_id,'cleanup-one');
 });
+test('a server refusal such as 503 or 429 stays retryable while a gateway 504 remains unknown', async () => {
+  for (const status of [503,429,500]) {
+    let calls=0;const session=new CleanupSession(async()=>{if(++calls===1)throw new ApiError(status,'safe');return receipt();});
+    await assert.rejects(session.requestOne('doc-one')); assert.equal(session.value.phase,'error'); assert.deepEqual(session.value.unknownIds,[]);
+    assert.equal((await session.requestOne('doc-one')).document_id,'doc-one'); assert.equal(calls,2);
+  }
+  const gateway=new CleanupSession(async()=>{throw new ApiError(504,'safe');}); await assert.rejects(gateway.requestOne('doc-one')); assert.deepEqual(gateway.value.unknownIds,['doc-one']);
+});

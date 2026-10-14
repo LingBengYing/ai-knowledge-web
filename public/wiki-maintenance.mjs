@@ -55,7 +55,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   let alive = true, serial = 0, controller = null, timer = null, busy = false, loading = false, error = '', feedback = '';
   let items = [], folders = [], tags = [], total = 0, totalPages = 0, detail = null, initializedDetail = false;
   let page = 1, pageSize = 20, filters = { q: '', type: '', status: '', tag: '', folder_id: '', sort: 'updated_desc' }, taskFilter = 'all';
-  const selected = new Set(), unknownTasks = new Set(), panelMarkup = new WeakMap();
+  const selected = new Set(), unknownTasks = new Set(), panelMarkup = new WeakMap(); let batchShown = -1;
   const $ = name => document.getElementById(name);
   const put = (name, html) => { const node = $(name); if (node && panelMarkup.get(node) !== html) { node.innerHTML = html; panelMarkup.set(node, html); } };
   const setTimer = (fn, delay) => window.setTimeout ? window.setTimeout(fn, delay) : setTimeout(fn, delay);
@@ -87,16 +87,19 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   function pagination() {
     return `<div class="pagination maintenance-actions"><span>${total ? (page - 1) * pageSize + 1 : 0}–${Math.min(page * pageSize, total)} / ${total}</span>${action('previous', '上一页', loading || page <= 1)}${action('next', '下一页', loading || page >= totalPages)}${select('maint-size', [['20', '20 条'], ['50', '50 条'], ['100', '100 条']], String(pageSize), 'aria-label="每页条数"')}</div>`;
   }
-  function renderList() {
+  function renderList(regionsOnly = false) {
     const toolbar = `<a class="button secondary" href="#/directories">目录管理</a><a class="button secondary" href="#/tasks">处理任务</a><a class="button primary" href="#/sources">导入资料</a>${action('refresh', '刷新', loading)}`;
     const filter = `<form id="maint-filter" class="panel panel-body"><div class="form-grid maintenance-filters">${field('搜索资料', `<input id="maint-q" type="search" maxlength="200" value="${e(filters.q)}">`)}${field('类型', select('maint-type', [['', '全部类型'], ...Object.entries(typeLabels)], filters.type))}${field('处理状态', select('maint-state', [['', '全部状态'], ['queued', '等待解析'], ['processing', '正在解析'], ['parsed', '已解析'], ['failed', '解析失败'], ['cancelled', '已取消']], filters.status))}${field('目录', folderSelect('maint-filter-folder', filters.folder_id, '全部目录'))}${field('标签', select('maint-filter-tag', [['', '全部标签'], ...tags.map(tag => [tag, tag])], filters.tag))}${field('排序', select('maint-sort', [['updated_desc', '最近更新'], ['updated_asc', '最早更新'], ['name_asc', '名称正序'], ['name_desc', '名称倒序']], filters.sort))}</div><div class="form-actions"><button class="button primary" ${busy ? 'disabled' : ''}>筛选</button>${action('reset', '重置')}</div></form>`;
     const rows = items.map(item => `<tr><td><input type="checkbox" data-maintenance-select="${e(item.document_id)}" aria-label="选择 ${e(item.display_name)}" ${selected.has(item.document_id) ? 'checked' : ''}></td><td><a class="text-link" href="#/documents/${e(item.document_id)}">${e(item.display_name)}</a><div>${e(item.filename)}</div></td><td>${e(typeLabels[item.document_type] ?? item.document_type)}</td><td>${e(documentStatusLabel(item))}</td><td>${e(item.folder_name ?? folders.find(folder => folder.folder_id === item.folder_id)?.name ?? '未分类')}</td><td>${(item.tags ?? []).map(tag => `<span class="badge gray">${e(tag)}</span>`).join(' ')}</td><td><a class="text-link" href="#/documents/${e(item.document_id)}">查看详情</a>${cleanupEnabled(config) ? action('cleanup-row', '删除并清理', false, `data-document-id="${e(item.document_id)}"`) : ''}</td></tr>`).join('');
-    container.innerHTML = header('资料维护', toolbar) + '<div id="maint-status"></div>' + filter
-      + `<div id="maint-batch"></div><section class="panel maintenance-table"><table class="data-table"><thead><tr><th><input id="maint-select-page" type="checkbox" aria-label="选择当前页" ${items.length && selected.size === items.length ? 'checked' : ''}></th><th>资料</th><th>类型</th><th>处理状态</th><th>目录</th><th>标签</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="7">${loading ? '正在读取资料…' : '暂无符合条件的资料'}</td></tr>`}</tbody></table></section>${pagination()}<div id="maint-cleanups"></div>`;
+    const list = `<section class="panel maintenance-table"><table class="data-table"><thead><tr><th><input id="maint-select-page" type="checkbox" aria-label="选择当前页" ${items.length && selected.size === items.length ? 'checked' : ''}></th><th>资料</th><th>类型</th><th>处理状态</th><th>目录</th><th>标签</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="7">${loading ? '正在读取资料…' : '暂无符合条件的资料'}</td></tr>`}</tbody></table></section>${pagination()}`;
+    if (regionsOnly && $('maint-list')) { $('maint-list').innerHTML = list; renderStatus(); if (batchShown !== selected.size) renderBatch(); return; }
+    container.innerHTML = header('资料维护', toolbar) + '<div id="maint-status"></div>' + filter + `<div id="maint-batch"></div><div id="maint-list">${list}</div><div id="maint-cleanups"></div>`;
     renderStatus(); renderBatch(); renderCleanup();
   }
+  /** Background polling refreshes only the list region so unsaved filter and batch drafts and focus survive. */
+  function renderRegions() { if (route.view === 'documents' && !route.id) renderList(true); else render(); }
   function renderBatch() {
-    const node = $('maint-batch'); if (!node || route.id) return;
+    const node = $('maint-batch'); if (!node || route.id) return; batchShown = selected.size;
     node.innerHTML = selected.size ? `<section class="panel panel-body"><strong>已选 ${selected.size} 项 · 当前页</strong><div class="form-grid">${cap(config, 'batch_move') ? field('移入目录', folderSelect('maint-batch-folder')) : ''}${cap(config, 'batch_tag') ? field('添加标签', '<input id="maint-batch-tags" maxlength="1000">') : ''}</div><div class="form-actions">${cap(config, 'batch_move') ? action('batch-move', '移动') : ''}${cap(config, 'batch_tag') ? action('batch-tag', '添加标签') : ''}${cap(config, 'batch_text_reindex') ? action('batch-reindex', '重建文本索引') : ''}${cleanupEnabled(config) ? action('batch-cleanup', '删除并清理所选资料') : ''}${action('clear-selection', '取消选择')}</div></section>` : '';
   }
   function renderTasks() {
@@ -182,7 +185,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
     if (!alive) return;
     clearTimer(timer); timer = null; controller?.abort(); controller = new AbortController(); const signal = controller.signal, token = ++serial;
     loading = true; error = '';
-    if (!initializedDetail) render();
+    if (!initializedDetail) { if (preserveForm) renderRegions(); else render(); }
     try {
       if (route.view === 'directories') {
         const result = await api('/v1/management/folders', { signal }); if (!Array.isArray(result?.items)) throw invalid();
@@ -202,7 +205,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
       }
       if (!alive || token !== serial) return;
       loading = false;
-      if (preserveForm && initializedDetail) { renderPanels(); renderStatus(); } else render();
+      if (preserveForm && initializedDetail) { renderPanels(); renderStatus(); } else if (preserveForm) renderRegions(); else render();
       if (detail) await openPanels();
       schedule();
       return true;
@@ -244,7 +247,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
         const next = await readTask(entry, token); if (!alive || token !== serial) return; if (next && !taskPending(next)) terminal = true;
       }
       if (terminal) await load({ preserveForm: true });
-      else { if (initializedDetail) renderPanels(); else render(); schedule(); }
+      else { if (initializedDetail) renderPanels(); else renderRegions(); schedule(); }
     } catch (failure) { if (alive && token === serial) { error = safeError(failure); renderStatus(); } }
   }
   async function mutation(fn, done) {
@@ -309,6 +312,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   }
   async function doCleanup(ids, fromRecord = false) {
     if (!cleanupEnabled(config) || !ids.length) return;
+    if (ids.some(id => cleanup.value.unknownIds.includes(id))) { error = '上次清理结果待核对，请先读取清理记录或刷新此项；没有再次提交。'; renderStatus(); return; }
     const names = ids.map(id => { const item = detail?.document_id === id ? detail : items.find(item => item.document_id === id); return item?.display_name ?? item?.filename ?? id; }).join('、');
     if (!await confirm(`删除并清理这 ${ids.length} 份资料（${names}）？资料将从知识库撤下，原文件和索引进入清理流程，无法从本应用恢复。已有知识页不会自动删除，其来源可能失效。`)) return;
     await mutation(() => ids.length === 1 ? cleanup.requestOne(ids[0]) : cleanup.requestBatch(ids), async result => {

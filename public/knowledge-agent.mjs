@@ -43,6 +43,9 @@ const invalid = () => new ApiError(502, '智能体返回的任务记录不完整
 const inputError = () => new ApiError(422, '智能体请求参数无效，请重新发起。');
 const validText = value => typeof value === 'string' && !!value.trim();
 const failure = error => new ApiError(error?.status ?? 502, error?.status === 401 ? '当前会话不可用，请重新连接。' : '任务状态未能确认，请刷新状态核对；没有自动重发。');
+/** A 4xx answer (except timeout/rate limit) is a definite refusal: no run was created, so the question can be sent again. */
+const refused = error => Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
+const refusal = error => new ApiError(error.status, error.status === 401 ? '当前会话不可用，请重新连接。' : failureMessages[error.errorCode] ?? `问题未被受理（${error.status}），请核对后重新发送。`, { errorCode: error.errorCode });
 const checkedId = value => { if (typeof value !== 'string' || !identifier.test(value)) throw inputError(); return value; };
 const checkedFailure = value => {
   if (!value || !Object.hasOwn(failureMessages, value.code)) throw invalid();
@@ -99,6 +102,7 @@ const progressStages = Object.freeze({
 const progressPhases = Object.freeze({
   submitting: ['正在提交查阅任务', '正在提交本次问题。', '提交中'],
   cancelling: ['正在停止查阅', '正在等待服务器确认停止。', '停止中'],
+  error: ['问题未提交', '服务器未受理本次问题，可修改后重新发送。', '未提交'],
   unknown: ['任务状态待核对', '未能确认后台进度，可刷新状态核对。', '待核对'],
   paused: ['已停止等待', '已停止等待，后台处理状态尚未确认。', '停止等待'],
   completed: ['查阅完成', '回答已返回，可查看回答记录。', '已完成'],
@@ -228,11 +232,12 @@ export class KnowledgeAgentSession {
   }
   async start(question, { conversationId } = {}) {
     if (['submitting', 'running', 'reading', 'cancelling'].includes(this.value.phase)) return this.value;
-    const ticket = this.#begin(); this.#publish('submitting', null);
+    const ticket = this.#begin(); this.#publish('submitting', null); let sent = false;
     try {
-      const run = await this.#api.createAgentRun({ ...answerRequest(question), request_id: this.#requestId(), ...(conversationId ? { conversation_id: conversationId } : {}) }, { signal: this.#controller.signal });
+      const body = { ...answerRequest(question), request_id: this.#requestId(), ...(conversationId ? { conversation_id: conversationId } : {}) }; sent = true;
+      const run = await this.#api.createAgentRun(body, { signal: this.#controller.signal });
       if (ticket === this.#epoch) { this.#accept(run); void this.#watch(ticket); }
-    } catch (error) { if (ticket === this.#epoch) this.#publish('unknown', null, failure(error)); }
+    } catch (error) { if (ticket === this.#epoch) this.#publish(!sent || refused(error) ? 'error' : 'unknown', null, !sent ? error : refused(error) ? refusal(error) : failure(error)); }
     return this.value;
   }
   async refresh() {
