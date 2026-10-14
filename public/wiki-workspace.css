@@ -174,3 +174,4 @@ audio.source-reader-media { height: 54px; }
   .page-heading .actions { width: 100%; }
   .sidebar-bottom { display: none; }
 }
+.field-hint { margin: 4px 0 0; color: #818a75; font-size: 11px; line-height: 1.5; }
