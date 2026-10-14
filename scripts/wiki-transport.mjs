@@ -7,6 +7,7 @@ export const WIKI_ASSETS = [
   ['/wiki-retrieval.mjs', ['wiki-retrieval.mjs', 'text/javascript; charset=utf-8']],
   ['/wiki-maintenance.mjs', ['wiki-maintenance.mjs', 'text/javascript; charset=utf-8']],
   ['/knowledge-agent.mjs', ['knowledge-agent.mjs', 'text/javascript; charset=utf-8']],
+  ['/failure-reasons.mjs', ['failure-reasons.mjs', 'text/javascript; charset=utf-8']],
   ['/knowledge-conversations.mjs', ['knowledge-conversations.mjs', 'text/javascript; charset=utf-8']],
   ['/wiki-workspace.css', ['wiki-workspace.css', 'text/css; charset=utf-8']],
   ['/wiki-preview.css', ['wiki-preview.css', 'text/css; charset=utf-8']],

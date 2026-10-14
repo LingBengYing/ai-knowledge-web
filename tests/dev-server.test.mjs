@@ -126,153 +126,6 @@ test('feature module is an exact static asset with the existing browser boundary
   }
 });
 
-test('query attachment POST preserves large original JSON and approved identity without retries', async t => {
-  const received = [];
-  const { origin, backendOrigin } = await fixture(t, (req, res) => {
-    const chunks = [];
-    req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => {
-      received.push({ path: req.url, method: req.method, body: Buffer.concat(chunks), headers: req.headers });
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Set-Cookie', `${sessionPair}; Path=/; HttpOnly; SameSite=Strict`);
-      res.end('{"mode":"text","query_attachments":[],"result":{"status":"abstained"}}');
-    });
-  });
-  const body = Buffer.from(JSON.stringify({ question: '  合成问题\n保留完整尾部  ', mode: 'text', document_ids: ['doc-one', 'not-published'],
-    attachments: [{ filename: 'query.png', media_type: 'image/png', content_base64: 'a'.repeat(140 * 1024) }] }));
-  assert.ok(body.length > 128 * 1024);
-  const headers = { Origin: origin, 'Content-Type': 'application/json', Cookie: `unrelated=private; ${sessionPair}`,
-    'X-Principal-Id': 'owner', 'X-Workspace-Id': 'org-main' };
-  const response = await raw(origin, '/v1/attachment-answers', { method: 'POST', headers, body });
-  assert.equal(response.status, 200);
-  assert.equal(response.headers['set-cookie'], undefined);
-  assert.equal(received.length, 1);
-  assert.equal(received[0].path, '/v1/attachment-answers');
-  assert.equal(received[0].method, 'POST');
-  assert.ok(received[0].body.equals(body));
-  assert.equal(received[0].headers.origin, backendOrigin);
-  assert.equal(received[0].headers.cookie, sessionPair);
-  assert.equal(received[0].headers['x-principal-id'], 'owner');
-  assert.equal(received[0].headers['x-workspace-id'], 'org-main');
-  assert.equal((await raw(origin, '/v1/answers', { method: 'POST', headers, body })).status, 413);
-  assert.equal(received.length, 1);
-});
-
-test('query attachment route rejects queries, wrong methods, non-JSON and unsafe identities before forwarding', async t => {
-  let calls = 0;
-  const { origin } = await fixture(t, (_req, res) => { calls++; res.end('{}'); });
-  const headers = { Origin: origin, 'Content-Type': 'application/json' };
-  for (const suffix of ['?', '?mode=text', '?filename=query.png']) {
-    assert.equal((await raw(origin, '/v1/attachment-answers' + suffix, { method: 'POST', headers, body: '{}' })).status, 400);
-  }
-  for (const method of ['GET', 'PUT', 'DELETE', 'HEAD']) {
-    assert.equal((await raw(origin, '/v1/attachment-answers', { method, headers })).status, 405);
-  }
-  for (const type of [undefined, 'text/plain', 'application/octet-stream', 'multipart/form-data']) {
-    assert.equal((await raw(origin, '/v1/attachment-answers', { method: 'POST', headers: { Origin: origin, ...(type ? { 'Content-Type': type } : {}) }, body: '{}' })).status, 415);
-  }
-  for (const badHeaders of [{ Origin: 'http://other.invalid' }, { Host: 'other.invalid' }, { 'Sec-Fetch-Site': 'cross-site' }]) {
-    assert.equal((await raw(origin, '/v1/attachment-answers', { method: 'POST', headers: { ...headers, ...badHeaders }, body: '{}' })).status, 403);
-  }
-  assert.equal((await raw(origin, '/v1/attachment-answers', { method: 'POST', headers: { ...headers, Authorization: 'Bearer synthetic', Cookie: sessionPair }, body: '{}' })).status, 400);
-  for (const path of ['/v1/attachment-answers/more', '/v1/%61ttachment-answers', '/v1/attachment-answers/']) {
-    assert.equal((await raw(origin, path, { method: 'POST', headers, body: '{}' })).status, 404);
-  }
-  assert.equal(calls, 0);
-});
-
-test('query attachment defaults permit exactly 28MiB and reject the next byte before forwarding', async t => {
-  const sizes = [];
-  const { origin } = await fixture(t, (req, res) => {
-    let size = 0;
-    req.on('data', chunk => { size += chunk.length; });
-    req.on('end', () => { sizes.push(size); res.end('{}'); });
-  });
-  const limit = 28 * 1024 * 1024;
-  const body = Buffer.alloc(limit, 0x20);
-  body[0] = 0x7b; body[body.length - 1] = 0x7d;
-  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body };
-  assert.equal((await raw(origin, '/v1/attachment-answers', options)).status, 200);
-  assert.deepEqual(sizes, [limit]);
-  assert.equal((await raw(origin, '/v1/attachment-answers', { ...options, body: Buffer.concat([body, Buffer.from(' ')]) })).status, 413);
-  assert.deepEqual(sizes, [limit]);
-});
-
-test('query attachment budgets are independent and preserve ordinary deadlines, JSON and response caps', async t => {
-  const seen = [];
-  const { origin } = await fixture(t, (req, res) => {
-    const chunks = [];
-    req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => {
-      seen.push(req.url);
-      if (Buffer.concat(chunks).toString() === 'large-response') res.end('x'.repeat(65));
-      else setTimeout(() => res.end('{}'), 75);
-    });
-  }, { requestBytes: 32, attachmentBytes: 64, responseBytes: 64, deadlineMs: 30, answerDeadlineMs: 500 });
-  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: ' '.repeat(64) };
-  assert.equal((await raw(origin, '/v1/attachment-answers', options)).status, 200);
-  assert.equal((await raw(origin, '/v1/attachment-answers', { ...options, body: ' '.repeat(65) })).status, 413);
-  assert.equal((await raw(origin, '/v1/answers', options)).status, 413);
-  assert.equal((await raw(origin, '/v1/config')).status, 504);
-  assert.equal((await raw(origin, '/v1/attachment-answers', { ...options, body: 'large-response' })).status, 502);
-  assert.equal(seen.length, 3);
-});
-
-test('query attachment capacity is at most two and success or failure releases its independent reservation', async t => {
-  const responses = [];
-  const { origin } = await fixture(t, (req, res) => {
-    req.resume();
-    if (req.url === '/v1/attachment-answers') responses.push(res);
-    else res.end('{}');
-  });
-  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
-  const first = raw(origin, '/v1/attachment-answers', options);
-  const second = raw(origin, '/v1/attachment-answers', options);
-  for (let i = 0; responses.length < 2 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(responses.length, 2);
-  assert.equal((await raw(origin, '/v1/attachment-answers', options)).status, 429);
-  assert.equal((await raw(origin, '/v1/config')).status, 200);
-  assert.equal((await raw(origin, '/v1/documents?filename=synthetic.txt', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream' }, body: 'synthetic' })).status, 200);
-  assert.equal(responses.length, 2);
-  responses[0].end('{}'); responses[1].destroy();
-  assert.equal((await first).status, 200);
-  assert.equal((await second).status, 502);
-  const next = raw(origin, '/v1/attachment-answers', options);
-  for (let i = 0; responses.length < 3 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(responses.length, 3);
-  responses[2].end('{}');
-  assert.equal((await next).status, 200);
-});
-
-test('query attachment answer deadline covers incoming bytes and complete response without retries', async t => {
-  let calls = 0;
-  const { origin } = await fixture(t, (req, res) => {
-    calls++; req.resume();
-    if (calls === 1) res.write('{}');
-    else req.socket.destroy();
-  }, { deadlineMs: 30, answerDeadlineMs: 80 });
-  const incoming = await new Promise((resolveResult, rejectResult) => {
-    const req = http.request(`${origin}/v1/attachment-answers`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' } }, res => {
-      res.resume(); res.on('end', () => { resolveResult(res.statusCode); req.end(); });
-    });
-    req.on('error', rejectResult); req.write('{');
-  });
-  assert.equal(incoming, 504); assert.equal(calls, 0);
-  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
-  assert.equal((await raw(origin, '/v1/attachment-answers', options)).status, 504);
-  assert.equal((await raw(origin, '/v1/attachment-answers', options)).status, 502);
-  assert.equal(calls, 2);
-});
-
-test('query attachment size has a hard 28MiB maximum and permits only positive integer limits', async () => {
-  for (const attachmentBytes of [0, -1, 1.5, 28 * 1024 * 1024 + 1, NaN]) {
-    await assert.rejects(async () => {
-      const server = await startDevServer({ port: 0, attachmentBytes });
-      await new Promise(resolve => server.close(resolve));
-    }, error => error.code === 'invalid_limit');
-  }
-});
-
 async function fixture(t, handler = (_req, res) => res.end('{}'), options = {}) {
   const backend = http.createServer(handler).listen(0, '127.0.0.1');
   await once(backend, 'listening');
@@ -673,7 +526,7 @@ test('answer POST preserves complete JSON scope, refusal responses and approved 
   const bodies = [JSON.stringify({ question: '合成问题' }), JSON.stringify({ question: '合成问题', document_ids: ['doc-one', 'not-published'] }),
     JSON.stringify({ question: '合成问题', document_ids: [] })];
   for (const body of bodies) {
-    const result = await raw(origin, '/v1/answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json',
+    const result = await raw(origin, '/v1/knowledge-answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json',
       'X-Principal-Id': 'owner', 'X-Workspace-Id': 'org-main', Cookie: `unrelated=private; ${sessionPair}` }, body });
     assert.equal(result.status, 200);
     assert.equal(JSON.parse(result.body).reason, 'no_evidence');
@@ -682,7 +535,7 @@ test('answer POST preserves complete JSON scope, refusal responses and approved 
   assert.deepEqual(seen.map(value => value.body), bodies);
   assert.equal(seen.length, 3);
   for (const request of seen) {
-    assert.equal(request.path, '/v1/answers');
+    assert.equal(request.path, '/v1/knowledge-answers');
     assert.equal(request.method, 'POST');
     assert.equal(request.headers.origin, backendOrigin);
     assert.equal(request.headers.cookie, sessionPair);
@@ -691,20 +544,35 @@ test('answer POST preserves complete JSON scope, refusal responses and approved 
   }
 });
 
-test('answer and source transport permits only exact methods, unencoded IDs and source numbers 1..32', async t => {
+test('legacy text, media and attachment answer endpoints and their sources are no longer forwarded', async t => {
+  let calls = 0;
+  const { origin } = await fixture(t, (_req, res) => { calls++; res.end('{}'); });
+  const json = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
+  for (const path of ['/v1/answers', '/v1/visual-answers', '/v1/audio-answers', '/v1/video-answers', '/v1/sound-answers', '/v1/video-av-answers',
+    '/v1/attachment-answers', '/v1/sound-query-answers', '/v1/video-av-query-answers']) assert.equal((await raw(origin, path, json)).status, 404, path);
+  for (const path of ['/v1/sources/a/1', '/v1/sources/a/1/content', '/v1/visual-sources/a/1', '/v1/visual-sources/a/1/content', '/v1/audio-sources/a/1',
+    '/v1/audio-sources/a/1/content', '/v1/video-sources/a/1', '/v1/video-sources/a/1/content', '/v1/video-sources/a/1/frame', '/v1/sound-sources/a/1',
+    '/v1/sound-sources/a/1/content', '/v1/video-av-sources/a/1', '/v1/video-av-sources/a/1/content']) assert.equal((await raw(origin, path)).status, 404, path);
+  assert.equal(calls, 0);
+  assert.equal((await raw(origin, '/v1/knowledge-answers', json)).status, 200);
+  assert.equal((await raw(origin, '/v1/knowledge-sources/a/1')).status, 200);
+  assert.equal(calls, 2);
+});
+
+test('answer and source transport permits only exact methods and unencoded IDs and source numbers', async t => {
   const seen = [];
   const { origin } = await fixture(t, (req, res) => { seen.push(req.url); req.resume(); res.end('{}'); });
-  for (const path of ['/v1/sources/answer-one/1', `/v1/sources/${'a'.repeat(128)}/32`]) {
+  for (const path of ['/v1/knowledge-sources/answer-one/1', `/v1/knowledge-sources/${'a'.repeat(128)}/32`]) {
     assert.equal((await raw(origin, path)).status, 200, path);
   }
-  for (const path of ['/v1/sources', '/v1/sources/answer-one', '/v1/sources/answer-one/0', '/v1/sources/answer-one/01',
-    '/v1/sources/answer-one/33', '/v1/sources/answer-one/-1', '/v1/sources/answer-one/1/more', '/v1/sources/answer.one/1',
-    '/v1/sources/%61nswer-one/1', '/v1/sources/answer-one/%31', `/v1/sources/${'a'.repeat(129)}/1`,
-    '/v1/answers/more', '/v1/%61nswers']) {
+  for (const path of ['/v1/knowledge-sources', '/v1/knowledge-sources/answer-one', '/v1/knowledge-sources/answer-one/0', '/v1/knowledge-sources/answer-one/01',
+    '/v1/knowledge-sources/answer-one/-1', '/v1/knowledge-sources/answer-one/1/more', '/v1/knowledge-sources/answer.one/1',
+    '/v1/knowledge-sources/%61nswer-one/1', '/v1/knowledge-sources/answer-one/%31', `/v1/knowledge-sources/${'a'.repeat(129)}/1`,
+    '/v1/knowledge-answers/more', '/v1/%6bnowledge-answers']) {
     assert.equal((await raw(origin, path, { headers: { Origin: origin } })).status, 404, path);
   }
-  for (const path of ['/v1/answers', '/v1/sources/answer-one/1']) {
-    const method = path === '/v1/answers' ? 'POST' : 'GET';
+  for (const path of ['/v1/knowledge-answers', '/v1/knowledge-sources/answer-one/1']) {
+    const method = path === '/v1/knowledge-answers' ? 'POST' : 'GET';
     for (const suffix of ['?', '?unknown=1']) {
       assert.equal((await raw(origin, path + suffix, { method, headers: { Origin: origin, 'Content-Type': 'application/json' },
         body: method === 'POST' ? '{}' : undefined })).status, 400, path + suffix);
@@ -713,8 +581,8 @@ test('answer and source transport permits only exact methods, unencoded IDs and 
     assert.equal((await raw(origin, path, { method, headers: { Origin: 'http://other.invalid', 'Content-Type': 'application/json' } })).status, 403);
     assert.equal((await raw(origin, path, { method, headers: { Origin: origin, Authorization: 'Bearer synthetic', Cookie: sessionPair } })).status, 400);
   }
-  assert.equal((await raw(origin, '/v1/answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'text/plain' }, body: '{}' })).status, 415);
-  assert.equal((await raw(origin, '/v1/sources/answer-one/1', { headers: { 'Content-Length': '2' }, body: '{}' })).status, 400);
+  assert.equal((await raw(origin, '/v1/knowledge-answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'text/plain' }, body: '{}' })).status, 415);
+  assert.equal((await raw(origin, '/v1/knowledge-sources/answer-one/1', { headers: { 'Content-Length': '2' }, body: '{}' })).status, 400);
   assert.equal(seen.length, 2);
 });
 
@@ -723,14 +591,14 @@ test('answer deadline is independent while request/response limits and ordinary 
   const { origin } = await fixture(t, (req, res) => {
     calls++;
     req.resume();
-    if (req.url === '/v1/sources/large/1') res.end('x'.repeat(65));
+    if (req.url === '/v1/knowledge-sources/large/1') res.end('x'.repeat(65));
     else setTimeout(() => res.end('{}'), 75);
   }, { requestBytes: 32, responseBytes: 64, deadlineMs: 30, uploadDeadlineMs: 500, answerDeadlineMs: 500 });
   const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
-  assert.equal((await raw(origin, '/v1/answers', options)).status, 200);
+  assert.equal((await raw(origin, '/v1/knowledge-answers', options)).status, 200);
   assert.equal((await raw(origin, '/v1/config')).status, 504);
-  assert.equal((await raw(origin, '/v1/answers', { ...options, body: 'x'.repeat(33) })).status, 413);
-  assert.equal((await raw(origin, '/v1/sources/large/1')).status, 502);
+  assert.equal((await raw(origin, '/v1/knowledge-answers', { ...options, body: 'x'.repeat(33) })).status, 413);
+  assert.equal((await raw(origin, '/v1/knowledge-sources/large/1')).status, 502);
   assert.equal(calls, 3);
 });
 
@@ -743,7 +611,7 @@ test('answer deadline covers incoming body and complete response; upstream error
     else req.socket.destroy();
   }, { deadlineMs: 30, answerDeadlineMs: 80 });
   const incoming = await new Promise((resolveResult, rejectResult) => {
-    const req = http.request(`${origin}/v1/answers`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' } }, res => {
+    const req = http.request(`${origin}/v1/knowledge-answers`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' } }, res => {
       res.resume();
       res.on('end', () => { resolveResult(res.statusCode); req.end(); });
     });
@@ -753,8 +621,8 @@ test('answer deadline covers incoming body and complete response; upstream error
   assert.equal(incoming, 504);
   assert.equal(calls, 0);
   const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' };
-  assert.equal((await raw(origin, '/v1/answers', options)).status, 504);
-  assert.equal((await raw(origin, '/v1/answers', options)).status, 502);
+  assert.equal((await raw(origin, '/v1/knowledge-answers', options)).status, 504);
+  assert.equal((await raw(origin, '/v1/knowledge-answers', options)).status, 502);
   assert.equal(calls, 2);
 });
 
@@ -765,25 +633,6 @@ test('answer deadline has a hard 180 second maximum and accepts only positive in
       await new Promise(resolveClosed => server.close(resolveClosed));
     }, error => error.code === 'invalid_limit');
   }
-});
-
-test('image routes forward exact visual POST, typed metadata and bounded source bytes', async t => {
-  const seen = [];
-  const { origin } = await fixture(t, (req, res) => {
-    seen.push(req.url);
-    res.setHeader('Content-Type', req.url.endsWith('/content') ? 'image/png' : 'application/json');
-    res.end(req.url.endsWith('/content') ? 'synthetic-image' : '{}');
-  }, { responseBytes: 4, contentBytes: 20 });
-  assert.equal((await raw(origin, '/v1/visual-answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })).status, 200);
-  for (const prefix of ['sources', 'visual-sources']) {
-    assert.equal((await raw(origin, `/v1/${prefix}/answer-1/1`)).status, 200);
-    assert.equal((await raw(origin, `/v1/${prefix}/answer-1/1/content`)).body, 'synthetic-image');
-  }
-  const before = seen.length;
-  for (const path of ['/v1/visual-sources/a/01', '/v1/visual-sources/a/33/content', '/v1/sources/%61/1/content', '/v1/visual-sources/a/1/content/more']) assert.equal((await raw(origin, path)).status, 404);
-  for (const path of ['/v1/visual-sources/a/1?x=1', '/v1/sources/a/1/content?']) assert.equal((await raw(origin, path)).status, 400);
-  assert.equal((await raw(origin, '/v1/visual-sources/a/1/content', { headers: { 'Content-Length': '1' }, body: 'x' })).status, 400);
-  assert.equal(seen.length, before);
 });
 
 test('PNG/JPEG uploads get their own limit without expanding text or JSON limits', async t => {
@@ -797,22 +646,14 @@ test('PNG/JPEG uploads get their own limit without expanding text or JSON limits
   assert.equal(calls, 4);
 });
 
-test('visual answer has an independent deadline while content retains ordinary deadline and no retries', async t => {
-  let calls = 0;
-  const { origin } = await fixture(t, (_req, res) => { calls++; setTimeout(() => res.end('{}'), 80); }, { deadlineMs: 25, answerDeadlineMs: 250 });
-  assert.equal((await raw(origin, '/v1/visual-answers', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })).status, 200);
-  assert.equal((await raw(origin, '/v1/visual-sources/a/1/content')).status, 504);
-  assert.equal(calls, 2);
-});
-
 test('content limits only shrink and oversized content fails before bytes reach the browser', async t => {
   for (const options of [{ contentBytes: 10 * 1024 * 1024 + 1 }, { imageUploadBytes: 10 * 1024 * 1024 + 1 }]) await assert.rejects(startDevServer({ port: 0, ...options }));
   const { origin } = await fixture(t, (_req, res) => res.end('12345'), { contentBytes: 4 });
-  const response = await raw(origin, '/v1/sources/a/1/content');
+  const response = await raw(origin, '/v1/synopsis-sources/a/1/1/frame');
   assert.equal(response.status, 502); assert.doesNotMatch(response.body, /12345/);
 });
 
-test('audio/video routes keep exact MIME upload distinction and independent frame/media limits', async t => {
+test('audio/video uploads keep exact MIME distinction and independent frame/media limits', async t => {
   const seen = [];
   const { origin } = await fixture(t, (req, res) => { seen.push([req.url, req.headers['content-type']]); res.end(req.url.endsWith('/content') || req.url.endsWith('/frame') ? '12345678' : '{}'); }, { responseBytes: 4, contentBytes: 6, mediaBytes: 10 });
   const upload = (type, name = 'clip.mp4') => raw(origin, '/v1/documents?filename=' + name, { method: 'POST', headers: { Origin: origin, 'Content-Type': type }, body: '123' });
@@ -820,15 +661,8 @@ test('audio/video routes keep exact MIME upload distinction and independent fram
   assert.equal((await upload('video/mp4')).status, 200);
   assert.equal((await upload('video/webm')).status, 400);
   assert.deepEqual(seen.slice(0, 2).map(value => value[1]), ['application/octet-stream', 'video/mp4']);
-  for (const type of ['audio', 'video']) {
-    assert.equal((await raw(origin, `/v1/${type}-answers`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })).status, 200);
-    assert.equal((await raw(origin, `/v1/${type}-sources/a/1`)).status, 200);
-    assert.equal((await raw(origin, `/v1/${type}-sources/a/1/content`)).body, '12345678');
-    assert.equal((await raw(origin, `/v1/${type}-sources/a/1/content?`)).status, 400);
-    assert.equal((await raw(origin, `/v1/${type}-sources/a/1/content/extra`)).status, 404);
-  }
-  assert.equal((await raw(origin, '/v1/video-sources/a/1/frame')).status, 502);
-  assert.equal((await raw(origin, '/v1/audio-sources/a/1/frame')).status, 404);
+  assert.equal((await raw(origin, '/v1/documents/a/revisions/r/content')).body, '12345678');
+  assert.equal((await raw(origin, '/v1/synopsis-sources/a/1/1/frame')).status, 502);
   assert.equal((await raw(origin, '/media-sources.mjs')).status, 404);
 });
 

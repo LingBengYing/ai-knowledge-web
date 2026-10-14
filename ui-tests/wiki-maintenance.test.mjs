@@ -76,7 +76,7 @@ test('tasks recover automatic indexing admission and follow real server publicat
   saved = { ...saved, auto_index: { ...saved.auto_index, state: 'dispatching' } }; await poll();
   assert.match(f.html(), /正在准备索引/u);
   saved = { ...saved, auto_index: { state: 'submitted', task_id: 'index', error_code: null }, latest_index_job: job('index', 'processing') }; await poll();
-  assert.match(f.html(), /任务编号：index/u); assert.doesNotMatch(f.html(), /自动索引|正在准备索引/u);
+  assert.match(f.html(), /<dt>任务编号<\/dt><dd><code>index<\/code><\/dd>/u); assert.doesNotMatch(f.html(), /自动索引|正在准备索引/u);
   saved = { ...saved, latest_index_job: job('index', 'indexed'), index_publication_id: 'pub' }; await f.click('refresh');
   assert.match(f.html(), /已索引/u); assert.equal(f.timers.size, 0);
   assert.ok(f.calls.every(([, options]) => !options.method || options.method === 'GET'));
@@ -218,7 +218,7 @@ test('replacement action preserves old publication and only posts when explicitl
   assert.match(f.node('maint-replacement').innerHTML, /\.docx/u); assert.equal(f.calls.filter(([, options]) => options.method === 'POST').length, 0);
   f.node('maint-replace-file').files = [new File(['12345'], 'new.docx')]; await f.submit('maint-replace');
   assert.equal(f.calls.filter(([, options]) => options.method === 'POST').length, 1);
-  assert.match(f.node('maint-replacement').innerHTML, /新版本待索引/u); assert.match(f.node('maint-evidence').innerHTML, /<dd>rev<\/dd>/u);
+  assert.match(f.node('maint-replacement').innerHTML, /新版本待索引/u); assert.match(f.node('maint-evidence').innerHTML, /<dt>当前版本<\/dt><dd><code>rev<\/code><\/dd>/u);
   f.mounted.destroy();
 });
 
@@ -354,4 +354,23 @@ test('cleanup retry after a 503 sends again, and an unknown outcome explains ins
   status = 504; await f.click('cleanup-row', { documentId: 'doc' }); assert.equal(posts, 2); assert.equal(f.confirmations.length, 2);
   await f.click('cleanup-row', { documentId: 'doc' }); assert.equal(posts, 2); assert.equal(f.confirmations.length, 2); assert.match(f.node('maint-status').innerHTML, /待核对/u);
   f.mounted.destroy();
+});
+
+test('failed document detail explains the cause and retries with the same call the tasks page uses', async () => {
+  const failed = { ...job('parse', 'failed'), error_code: 'parser_failed', can_retry: true };
+  const replies = async path => path.startsWith('/v1/management/documents?') ? { items: [{ ...row(), status: 'failed', active_revision_id: null, index_publication_id: null, latest_index_job: null, latest_job: failed }], total: 1, total_pages: 1 }
+    : ['/v1/management/folders', '/v1/management/tags'].includes(path) ? { items: [] }
+    : path === '/v1/ingestions/parse/retry' ? { ...job('parse', 'queued'), attempt: 2, can_cancel: true } : (() => { throw new Error('Unexpected path'); })();
+  const f = fixture({ view: 'documents', id: 'doc' }, { api: replies }); await f.mounted.ready;
+  const evidence = () => f.node('maint-evidence').innerHTML;
+  assert.match(evidence(), /解析失败原因：文件解析失败/u); assert.match(evidence(), /title="错误代码：parser_failed"/u);
+  assert.match(evidence(), /data-maintenance-action="task-retry"[^>]*data-kind="ingestion" data-task-id="parse">重试解析/u);
+  await f.click('task-retry', { kind: 'ingestion', taskId: 'parse' }); await f.click('task-retry', { kind: 'ingestion', taskId: 'parse' });
+  assert.deepEqual(f.calls.filter(([, options]) => options.method === 'POST').map(([path]) => path), ['/v1/ingestions/parse/retry']);
+  assert.match(evidence(), /等待解析/u); assert.doesNotMatch(evidence(), /task-retry|失败原因/u); assert.equal(f.timers.size, 1);
+  f.mounted.destroy();
+  const blocked = fixture({ view: 'documents', id: 'doc' }, { api: replies }, { capabilities: [] }); await blocked.mounted.ready;
+  assert.match(blocked.node('maint-evidence').innerHTML, /解析失败原因/u); assert.doesNotMatch(blocked.node('maint-evidence').innerHTML, /task-retry/u);
+  await blocked.click('task-retry', { kind: 'ingestion', taskId: 'parse' });
+  assert.equal(blocked.calls.filter(([, options]) => options.method === 'POST').length, 0); blocked.mounted.destroy();
 });

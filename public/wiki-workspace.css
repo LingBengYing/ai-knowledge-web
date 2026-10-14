@@ -225,3 +225,33 @@ article.panel + article.panel, article.panel + section.panel { margin-top: 12px;
   .graph-connection a, .graph-connection a:first-child { text-align: center; }
   .side-column > * + *, .article-layout > aside > * + * { margin-top: 16px; }
 }
+/* Follow-up: technical identities stay available for support but out of the primary reading line. */
+.tech-detail { margin-top: 10px; color: var(--muted); font-size: 12px; }
+.tech-detail summary { cursor: pointer; width: fit-content; }
+.tech-detail .meta-list { margin-top: 8px; }
+.tech-detail code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.task-failure + .task-failure, .task-failure .form-actions { margin-top: 10px; }
+#source-task-status:not(:empty) { margin-bottom: 16px; }
+#source-task-status .form-actions { margin-top: 10px; }
+.maint-select-hint { display: none; }
+.maint-select-page { display: inline-flex; align-items: center; gap: 8px; }
+@media (max-width: 700px) {
+  /* Maintenance table becomes one card per document: checkbox, title, status and actions stay reachable at 390px without sideways scroll. */
+  .maintenance-table { overflow-x: visible; }
+  .maintenance-table .data-table { min-width: 0; }
+  .maintenance-table .data-table thead tr { display: block; }
+  .maintenance-table .data-table thead th { display: none; }
+  .maintenance-table .data-table thead th:first-child { display: block; padding: 10px 13px; color: var(--ink); font-size: 13px; }
+  .maint-select-hint { display: inline; }
+  .maintenance-table .data-table tbody tr { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr); gap: 6px 10px; padding: 14px 13px; border-bottom: 1px solid #edf0e7; }
+  .maintenance-table .data-table tbody tr:last-child { border-bottom: 0; }
+  .maintenance-table .data-table tbody td { display: block; min-width: 0; padding: 0; border: 0; font-size: 13px; overflow-wrap: anywhere; }
+  .maintenance-table .data-table td.maint-cell-select { grid-row: 1 / span 4; width: auto; padding-top: 2px; }
+  .maintenance-table .data-table td.maint-cell-select input { width: 20px; height: 20px; }
+  .maintenance-table .data-table td.maint-cell-title { grid-column: 2 / -1; }
+  .maintenance-table .data-table td.maint-cell-meta::before { content: attr(data-label) '：'; color: var(--muted); }
+  .maintenance-table .data-table td.maint-cell-actions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 4px; white-space: normal; }
+  .maintenance-table td .text-link + .button { margin-left: 0; }
+  .maintenance-table .data-table tr.maint-empty { display: block; }
+  .maintenance-table .data-table tr.maint-empty td { grid-column: 1 / -1; }
+}

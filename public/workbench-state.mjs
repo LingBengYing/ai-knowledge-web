@@ -1,3 +1,5 @@
+import { ApiError } from './api.mjs';
+
 const taskNames = { queued: '等待解析', processing: '正在解析', parsed: '已解析 · 未索引', failed: '解析失败', cancelled: '已取消' };
 const indexTaskNames = { queued: '等待索引', processing: '正在索引', indexed: '已索引', failed: '索引失败', cancelled: '索引已取消' };
 
@@ -57,3 +59,25 @@ export function batchFeedback(ids, results) {
 export function parseTags(value) {
   return [...new Set(value.split(/[,，\n]/u).map(tag => tag.trim()).filter(Boolean))];
 }
+
+const invalidTransition = () => new ApiError(502, '资料或任务状态不一致，请刷新后核对。');
+/** Same permission gate the tasks page uses: the task capability plus the server's can_cancel/can_retry flag. */
+export function taskOperationAllowed(config, kind, task, operation) {
+  return ['cancel', 'retry'].includes(operation) && config?.capabilities?.includes(kind === 'indexing' ? 'indexings' : 'ingestions') === true
+    && task?.[operation === 'cancel' ? 'can_cancel' : 'can_retry'] === true;
+}
+export const taskOperationPath = (kind, task, operation) => `/v1/${kind === 'indexing' ? 'indexings' : 'ingestions'}/${encodeURIComponent(task.task_id)}/${operation}`;
+
+/** Validates a task read or cancel/retry receipt against the task it replaces; throws when identities or attempts drift. */
+export function checkedTaskTransition(before, kind, value, actionName) {
+  const next = kind === 'indexing' ? checkedIndexTask(value) : checkedTask(value);
+  const restarted = kind === 'indexing' && actionName === 'retry' && next.task_id !== before.task_id;
+  if (restarted && (next.document_id !== before.document_id || next.attempt !== 1 || next.state !== 'queued')) throw invalidTransition();
+  if (!restarted && (next.task_id !== before.task_id || next.document_id !== before.document_id || next.revision_id !== before.revision_id
+    || next.attempt < before.attempt || (actionName && next.attempt !== before.attempt + (actionName === 'retry' ? 1 : 0))
+    || (next.attempt === before.attempt && (!taskPending(before) && next.state !== before.state || before.state === 'processing' && next.state === 'queued')))) throw invalidTransition();
+  return next;
+}
+/** The row as the tasks page shows it after a task update: latest task replaced and its status field following the task state. */
+export const rowWithTask = (row, kind, next) => ({ ...row, [kind === 'indexing' ? 'latest_index_job' : 'latest_job']: next, [kind === 'indexing' ? 'index_status' : 'status']: next.state });
+
