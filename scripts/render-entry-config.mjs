@@ -2,38 +2,7 @@ import { readConfiguration } from './external-server.mjs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
-export function renderEntryConfiguration(env) {
-  const { publicOrigin, port } = readConfiguration(env);
-  const url = new URL(publicOrigin);
-  const certificate = env.RAG_TLS_CERTIFICATE_PATH;
-  const key = env.RAG_TLS_KEY_PATH;
-  for (const path of [certificate, key]) {
-    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_./-]+$/.test(path) || path.includes('/../')) {
-      throw new Error('TLS certificate paths must be explicit absolute paths');
-    }
-  }
-  const externalPort = Number(url.port || 443);
-  if (externalPort === port || externalPort === Number(new URL(env.RAG_WEB_BACKEND_ORIGIN ?? 'http://127.0.0.1:18084').port)) {
-    throw new Error('External and internal ports must be distinct');
-  }
-  // Include inside the existing nginx http block; no database or Java location is published.
-  return `# Generated external entry; certificate contents are never read by this renderer.
-limit_req_zone $binary_remote_addr zone=knowledge_entry_rate:1m rate=10r/s;
-server {
-    listen ${externalPort} ssl;
-    server_name ${url.hostname};
-    if ($http_host != "${url.host}") { return 444; }
-    ssl_certificate ${certificate};
-    ssl_certificate_key ${key};
-    ssl_protocols TLSv1.2 TLSv1.3;
-    access_log off;
-    error_log /dev/null crit;
-    client_max_body_size 20m;
-    client_body_timeout 30s;
-    location / {
-        limit_req zone=knowledge_entry_rate burst=20 nodelay;
-        limit_req_status 429;
-        proxy_pass http://127.0.0.1:${port};
+const PROXIED = `        proxy_pass http://127.0.0.1:PORT;
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
         proxy_set_header Origin $http_origin;
@@ -51,7 +20,49 @@ server {
         proxy_request_buffering off;
         proxy_next_upstream off;
         proxy_intercept_errors off;
+`;
+
+export function renderEntryConfiguration(env) {
+  const { publicOrigin, port } = readConfiguration(env);
+  const url = new URL(publicOrigin);
+  const certificate = env.RAG_TLS_CERTIFICATE_PATH;
+  const key = env.RAG_TLS_KEY_PATH;
+  for (const path of [certificate, key]) {
+    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_./-]+$/.test(path) || path.includes('/../')) {
+      throw new Error('TLS certificate paths must be explicit absolute paths');
     }
+  }
+  const externalPort = Number(url.port || 443);
+  if (externalPort === port || externalPort === Number(new URL(env.RAG_WEB_BACKEND_ORIGIN ?? 'http://127.0.0.1:18084').port)) {
+    throw new Error('External and internal ports must be distinct');
+  }
+  const proxied = PROXIED.replace('PORT', port);
+  // Include inside the existing nginx http block; no database or Java location is published.
+  return `# Generated external entry; certificate contents are never read by this renderer.
+limit_req_zone $binary_remote_addr zone=knowledge_entry_rate:1m rate=10r/s;
+map $request_method $knowledge_login_client { POST $binary_remote_addr; default ""; }
+limit_req_zone $knowledge_login_client zone=knowledge_login_rate:1m rate=10r/m;
+server {
+    listen ${externalPort} ssl;
+    server_name ${url.hostname};
+    if ($http_host != "${url.host}") { return 444; }
+    ssl_certificate ${certificate};
+    ssl_certificate_key ${key};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log off;
+    error_log /dev/null crit;
+    client_max_body_size 20m;
+    client_body_timeout 30s;
+    # Per-client login POST throttle: one address cannot exhaust Node's shared 20 failed logins per minute.
+    location = /v1/session {
+        limit_req zone=knowledge_entry_rate burst=20 nodelay;
+        limit_req zone=knowledge_login_rate burst=5 nodelay;
+        limit_req_status 429;
+${proxied}    }
+    location / {
+        limit_req zone=knowledge_entry_rate burst=20 nodelay;
+        limit_req_status 429;
+${proxied}    }
 }
 `;
 }

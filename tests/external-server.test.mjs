@@ -679,12 +679,98 @@ test('open agent event streams do not use up the ordinary request capacity', asy
 test('pages opened from links on other sites load, while cross-site API reads stay denied', async t => {
   const { origin } = await fixture(t);
   const navigation = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
-  assert.equal((await raw(origin, '/', { headers: { ...navigation, Cookie: sessionPair } })).status, 200);
-  assert.equal((await raw(origin, '/', { headers: { ...navigation, 'Sec-Fetch-Site': 'same-site', Cookie: sessionPair } })).status, 200);
-  const signedOut = await raw(origin, '/', { headers: navigation });
-  assert.equal(signedOut.status, 303); assert.equal(signedOut.headers.location, '/login');
+  // Browsers withhold the SameSite=Strict session on cross-site navigations, signed in or not.
+  const crossSite = await raw(origin, '/', { headers: navigation });
+  assert.equal(crossSite.status, 303); assert.equal(crossSite.headers.location, '/login');
   assert.equal((await raw(origin, '/login', { headers: navigation })).status, 200);
+  assert.equal((await raw(origin, '/login.mjs', { headers: { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'script' } })).status, 200);
+  // The login page then rechecks same-origin, where the Strict cookie is sent, and enters without a new token.
+  const recheck = await raw(origin, '/v1/session', { headers: { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty', Cookie: sessionPair } });
+  assert.equal(recheck.status, 200); assert.equal(JSON.parse(recheck.body).status, 'authenticated');
+  assert.equal((await raw(origin, '/v1/session', { headers: { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty' } })).status, 401);
+  assert.equal((await raw(origin, '/', { headers: { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document', Cookie: sessionPair } })).status, 200);
+  assert.equal((await raw(origin, '/', { headers: { ...navigation, 'Sec-Fetch-Site': 'same-site', Cookie: sessionPair } })).status, 200);
   assert.equal((await raw(origin, '/v1/documents/doc-one/original', { headers: { ...navigation, Cookie: sessionPair } })).status, 403);
   assert.equal((await raw(origin, '/', { headers: { ...navigation, 'Sec-Fetch-Mode': 'no-cors', Cookie: sessionPair } })).status, 403);
   assert.equal((await raw(origin, '/', { headers: { ...navigation, 'Sec-Fetch-Dest': 'iframe', Cookie: sessionPair } })).status, 403);
+});
+
+test('shared page links keep working with chat or mail tracking queries while modules and APIs still deny queries', async t => {
+  const { origin, seen } = await fixture(t);
+  const navigation = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
+  for (const path of ['/?from=singlemessage&isappinstalled=0', '/?utm_source=mail', '/wiki/?x=1', '/wiki-workspace.html?x=1']) {
+    const page = await raw(origin, path, { headers: { Cookie: sessionPair } });
+    assert.equal(page.status, 200, path); assert.match(page.headers['content-type'], /^text\/html/);
+    const signedOut = await raw(origin, path, { headers: navigation });
+    assert.equal(signedOut.status, 303, path); assert.equal(signedOut.headers.location, '/login');
+  }
+  assert.equal((await raw(origin, '/?x=1', { method: 'HEAD', headers: { Cookie: sessionPair } })).status, 200);
+  const login = await raw(origin, '/login?next=%2F', { headers: navigation });
+  assert.equal(login.status, 200); assert.match(login.body, /登录知识库/);
+  const before = seen.length;
+  for (const path of ['/api.mjs?x=1', '/login.mjs?x=1', '/tag-suggestions.mjs?x=1', '/v1/config?x=1', '/v1/session?x=1']) {
+    assert.equal((await raw(origin, path, { headers: { Cookie: sessionPair } })).status, 400, path);
+  }
+  assert.equal((await raw(origin, '/?x=1', { method: 'POST', headers: { Origin: publicOrigin, Cookie: sessionPair } })).status, 400);
+  assert.equal(seen.length, before);
+});
+
+test('only failed logins use the shared login window, so bogus attempts cannot refuse a valid token until 20 failures', async t => {
+  let exchanges = 0;
+  const { origin } = await fixture(t, {}, (request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      exchanges += 1;
+      if (JSON.parse(Buffer.concat(chunks)).token !== 'valid') { response.statusCode = 401; return response.end('{}'); }
+      response.setHeader('Set-Cookie', `${sessionPair}; Path=/; HttpOnly; Secure; SameSite=Strict`);
+      response.end('{"status":"authenticated"}');
+    });
+  });
+  const login = token => raw(origin, '/v1/session', { method: 'POST', headers: { Origin: publicOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+  for (let index = 0; index < 30; index += 1) assert.equal((await login('valid')).status, 200);
+  for (let index = 0; index < 19; index += 1) assert.equal((await login('wrong')).status, 401);
+  assert.equal((await login('valid')).status, 200);
+  assert.equal((await login('wrong')).status, 401);
+  const refused = await login('valid');
+  assert.equal(refused.status, 429); assert.equal(JSON.parse(refused.body).title, 'login_capacity_reached');
+  assert.equal(exchanges, 51, 'the limit is checked before forwarding');
+  assert.equal((await raw(origin, '/v1/session', { headers: { Cookie: sessionPair } })).status, 200, 'session reads are not login attempts');
+});
+
+test('long model and indexing exchanges have their own slots and cannot starve pages, login or ordinary reads', async t => {
+  const pending = [];
+  const { origin } = await fixture(t, {}, (request, response) => { request.resume(); if (request.url === '/v1/wiki/proposals') pending.push(response); else response.end('{}'); });
+  const agent = new http.Agent({ keepAlive: false, maxSockets: 100 });
+  t.after(() => agent.destroy());
+  const headers = { Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/json' };
+  const send = (path, method = 'GET', body) => new Promise((resolve, reject) => {
+    const request = http.request(`${origin}${path}`, { agent, method, headers: { Host: publicHost, ...headers } }, response => { response.resume(); resolve(response.statusCode); });
+    request.on('error', reject); request.end(body);
+  });
+  const long = Array.from({ length: 8 }, () => send('/v1/wiki/proposals', 'POST', '{}'));
+  while (pending.length < 8) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(await send('/v1/wiki/proposals', 'POST', '{}'), 429);
+  assert.equal(await send('/v1/answers', 'POST', '{}'), 429);
+  for (const path of ['/', '/api.mjs', '/login', '/login.mjs', '/v1/config', '/v1/session']) assert.equal(await send(path), 200, path);
+  for (const response of pending) response.end('{}');
+  assert.deepEqual(await Promise.all(long), Array(8).fill(200));
+  assert.equal(await send('/v1/answers', 'POST', '{}'), 200, 'long slots are released after completion');
+});
+
+test('a session check that outlives the request deadline is a deadline, not an unavailable backend', async t => {
+  let slow = false;
+  const backend = http.createServer((request, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    if (request.url === '/health/entry-policy') return response.end(JSON.stringify({ enabled: true, public_origin: publicOrigin, auth_mode: 'jwt' }));
+    if (request.url === '/v1/config') return response.end(JSON.stringify({ auth_mode: 'jwt' }));
+    if (!slow) response.end('{"status":"authenticated"}');
+  }).listen(0, '127.0.0.1');
+  await once(backend, 'listening');
+  t.after(() => { backend.closeAllConnections(); backend.close(); });
+  const frontend = await startExternalServer({ backendOrigin: `http://127.0.0.1:${backend.address().port}`, publicOrigin, port: 0, deadlineMs: 50 });
+  t.after(() => { frontend.closeAllConnections(); frontend.close(); });
+  slow = true;
+  const response = await raw(`http://127.0.0.1:${frontend.address().port}`, '/v1/config', { headers: { Cookie: sessionPair } });
+  assert.equal(response.status, 504); assert.equal(JSON.parse(response.body).title, 'request_deadline');
 });

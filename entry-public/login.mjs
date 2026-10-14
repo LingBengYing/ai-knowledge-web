@@ -1,6 +1,11 @@
 const form = document.querySelector('#login');
 const input = document.querySelector('#token');
 const status = document.querySelector('#status');
+// SameSite=Strict withholds the cookie on links from other sites; recheck same-origin and keep the deep link hash.
+const enter = () => location.replace('/' + location.hash);
+fetch('/v1/session', { credentials: 'same-origin', signal: AbortSignal.timeout(10_000) })
+  .then(async response => response.status === 200 && (await response.json())?.status === 'authenticated' && enter())
+  .catch(() => {});
 form.addEventListener('submit', async event => {
   event.preventDefault();
   const button = form.querySelector('button');
@@ -12,7 +17,7 @@ form.addEventListener('submit', async event => {
   try {
     const response = await fetch('/v1/session', { method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(10_000) });
-    if (response.status === 200) location.replace('/');
+    if (response.status === 200) enter();
     else status.textContent = response.status === 429 ? '请求较多，请稍后显式重试。' : '登录失败，请确认令牌和有效期。';
   } catch { status.textContent = '暂时无法连接，请稍后显式重试。'; }
   finally { button.disabled = false; }
