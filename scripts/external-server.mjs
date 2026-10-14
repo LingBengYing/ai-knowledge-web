@@ -358,7 +358,7 @@ async function serveAsset(res, asset, publicDirectory, head) {
 async function backendJson(backend, path, headers = {}, signal) {
   const response = await new Promise((resolveResponse, rejectResponse) => {
     const request = http.request(backend, { path, method: 'GET', headers, signal }, resolveResponse);
-    request.once('error', () => rejectResponse(new TransportError(502, 'backend_unavailable')));
+    request.once('error', () => rejectResponse(signal?.aborted ? new TransportError(504, 'request_deadline') : new TransportError(502, 'backend_unavailable')));
     request.end();
   });
   response.on('error', () => {});
@@ -404,9 +404,10 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
   let activeReplacementIndexes = 0;
   let activeAttachments = 0;
   let activeRequests = 0;
+  let activeLongRequests = 0;
   let activeStreams = 0;
   let loginWindow = Date.now();
-  let loginAttempts = 0;
+  let loginFailures = 0;
   const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
     const requestId = randomUUID();
     for (const [name, value] of Object.entries(SAFE_HEADERS)) res.setHeader(name, value);
@@ -428,6 +429,8 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     let reservedReplacementIndex = false;
     let reservedAttachment = false;
     let reservedRequest = false;
+    let reservedLongRequest = false;
+    let reservedLogin = 0;
     let reservedStream = false;
     res.once('close', () => { if (!res.writableEnded) controller.abort(); });
     try {
@@ -435,6 +438,10 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       if (isAgentEventStream(req.method, req.url)) {
         if (activeStreams >= 32) throw new TransportError(429, 'entry_capacity_reached');
         activeStreams += 1; reservedStream = true;
+      } else if (upload || answer || imageVector || audioVector || soundIndex || videoAvIndex || modelTest || retrieval || replacementIndex) {
+        // Long model/indexing exchanges get their own slots so pages, login and ordinary reads stay reachable.
+        if (activeLongRequests >= 8) throw new TransportError(429, 'entry_capacity_reached');
+        activeLongRequests += 1; reservedLongRequest = true;
       } else {
         if (activeRequests >= 8) throw new TransportError(429, 'entry_capacity_reached');
         activeRequests += 1; reservedRequest = true;
@@ -442,13 +449,17 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       const path = req.url.split('?')[0];
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
       const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
-      if (req.url.includes('?') && !wikiQuery && !replacementUpload && !['/v1/documents', '/v1/management/documents', '/v1/management/document-cleanups'].includes(path)) throw new TransportError(400, 'query_denied');
+      // Chat apps and mail append tracking queries to shared page links; HTML pages ignore them, modules and APIs do not.
+      const page = ['GET', 'HEAD'].includes(req.method) && ASSETS.get(path)?.[1].startsWith('text/html');
+      if (req.url.includes('?') && !page && !wikiQuery && !replacementUpload && !['/v1/documents', '/v1/management/documents', '/v1/management/document-cleanups'].includes(path)) throw new TransportError(400, 'query_denied');
       const anonymous = path === '/login' || path === '/login.mjs';
       const sessionRoute = path === '/v1/session';
       const headers = forwardedHeaders(req, backend, origin, requestId);
       if (sessionRoute && req.method === 'POST') {
-        if (Date.now() - loginWindow >= 60_000) { loginWindow = Date.now(); loginAttempts = 0; }
-        if (++loginAttempts > 20) throw new TransportError(429, 'login_capacity_reached');
+        // Only failed logins use the shared window (in-flight ones count until they succeed); per-client limits live in nginx.
+        if (Date.now() - loginWindow >= 60_000) { loginWindow = Date.now(); loginFailures = 0; }
+        if (loginFailures >= 20) throw new TransportError(429, 'login_capacity_reached');
+        loginFailures += 1; reservedLogin = loginWindow;
       }
       const asset = ASSETS.get(path);
       if (!anonymous && !sessionRoute) {
@@ -485,6 +496,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         }
         await proxy(req, res, backend, headers, { requestBytes: (['upload', 'sound-upload', 'video-av-upload'].includes(route[2]) || replacementUpload) ? uploadBytes : route[2] === 'attachment' ? attachmentBytes : requestBytes,
           imageUploadBytes, responseBytes: route[2] === 'media' ? mediaBytes : route[2] === 'content' ? contentBytes : responseBytes }, controller.signal, route[2]);
+        if (reservedLogin && res.statusCode === 200 && reservedLogin === loginWindow) loginFailures -= 1;
       }
     } catch (error) {
       const known = error instanceof TransportError;
@@ -495,7 +507,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           detail: (known && error.detail) || (status >= 500 ? '知识库服务暂不可用。' : '请求未满足访问条件。'), request_id: requestId }));
       }
       req.resume();
-    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedAttachment) activeAttachments -= 1; if (reservedRequest) activeRequests -= 1; if (reservedStream) activeStreams -= 1; }
+    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedAttachment) activeAttachments -= 1; if (reservedRequest) activeRequests -= 1; if (reservedLongRequest) activeLongRequests -= 1; if (reservedStream) activeStreams -= 1; }
   });
   server.maxHeadersCount = 40;
   await new Promise((resolveListening, rejectListening) => {
