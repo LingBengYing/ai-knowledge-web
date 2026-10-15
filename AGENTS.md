@@ -22,9 +22,15 @@
 - **删除要有依据**：删之前用搜索结果确认没有调用方（含其他仓库和生产入口）。删除后跑相关测试，对比改动前后的失败用例，不能新增失败。
 - 历史记录（docs/changes/*）保留不改；它描述的“保留旧功能”只代表当时的决定，不构成继续保留的理由。
 
-2026-10-14 前端后续修复（未部署，分支 review/ui-followups）：两个 Node 入口（dev-server.mjs、external-server.mjs）已删除前端不再调用的旧问答转发：`/v1/answers`、`/v1/visual-answers`、`/v1/audio-answers`、`/v1/video-answers`、`/v1/sound-answers`、`/v1/video-av-answers`、`/v1/attachment-answers`、`/v1/sound-query-answers`、`/v1/video-av-query-answers`，以及对应来源 `/v1/sources/…`、`/v1/visual-sources/…`、`/v1/audio-sources/…`、`/v1/video-sources/…`（含 frame）、`/v1/sound-sources/…`、`/v1/video-av-sources/…`，并去掉只服务这些路由的 `attachmentBytes` 限额与附件并发名额；`/v1/knowledge-answers`、`/v1/knowledge-sources/…`、Agent 与 Wiki 路由不变。**生产入口（定制版 external-server.mjs）须同样删除这些路由**，发布运行文件还须包含新增的 `public/failure-reasons.mjs`（失败代码→中文说明的唯一映射，已加入共享 WIKI_ASSETS）。同批：资料维护表格手机端改为卡片、失败原因中文化并收起任务/版本编号、原始资料与资料详情页对解析/索引失败显示原因并复用处理任务的重试接口。
+## 下次部署须知（前端 #12、#13 与后端 #10–#12 合并后）
 
-2026-10-14 冗余清理（未部署）：`AnswerSession` 只保留真实工作台使用的综合问答 `ask`/`cancel`/`reset`，删除旧经典页遗留的 text/visual/audio/video/sound/video-av 模式、查询附件和 `readSource`，以及 `media-sources.mjs`、`query-attachments.mjs`、`WorkbenchState` 和只测它们的用例；`api.mjs` 二进制读取只允许仍在用的原件/摘要/Wiki来源路径。四个媒体向量/索引会话共用新模块 `public/media-sessions.mjs`。两代理结构未改，只在资源清单中加入 `media-sessions.mjs`、去掉已删除的两个模块（定制生产入口须同样修改，发布运行文件须含新模块）；两代理清单重复仍保留，未做合并；代理仍转发旧的非综合问答接口，是否删除需与后端确认。
+1. 发布运行文件须包含新增的 `public/media-sessions.mjs` 和 `public/failure-reasons.mjs`；`public/media-sources.mjs`、`public/query-attachments.mjs` 已删除，不再发布。
+2. 生产入口是定制版 `external-server.mjs`，不会随本仓库自动更新，须手工同步：资源清单加入上述两个新模块、去掉两个已删模块；删除旧问答与来源转发路由（完整列表见下方 2026-10-14 前端后续修复记录），保留 `/v1/knowledge-answers`、`/v1/knowledge-sources/…`、Agent 与 Wiki 路由。
+3. 后端须设置 `RAG_PDF_OCR_ENABLED=true` 才会解析扫描 PDF；服务器上不需要配置 Key，PDF 识别使用前端「模型配置」里已应用的硅基流动密钥（向量模型一栏）。未配置 `RAG_PDF_OCR_EXECUTABLE` 时默认走硅基流动 `PaddlePaddle/PaddleOCR-VL-1.5`，详见后端仓库 `docs/PDF_OCR.md`「硅基流动 PaddleOCR-VL-1.5（默认后端）」。
+
+2026-10-14 前端后续修复（已合并 main #13，未部署）：两个 Node 入口（dev-server.mjs、external-server.mjs）已删除前端不再调用的旧问答转发：`/v1/answers`、`/v1/visual-answers`、`/v1/audio-answers`、`/v1/video-answers`、`/v1/sound-answers`、`/v1/video-av-answers`、`/v1/attachment-answers`、`/v1/sound-query-answers`、`/v1/video-av-query-answers`，以及对应来源 `/v1/sources/…`、`/v1/visual-sources/…`、`/v1/audio-sources/…`、`/v1/video-sources/…`（含 frame）、`/v1/sound-sources/…`、`/v1/video-av-sources/…`，并去掉只服务这些路由的 `attachmentBytes` 限额与附件并发名额；`/v1/knowledge-answers`、`/v1/knowledge-sources/…`、Agent 与 Wiki 路由不变。**生产入口（定制版 external-server.mjs）须同样删除这些路由**，发布运行文件还须包含新增的 `public/failure-reasons.mjs`（失败代码→中文说明的唯一映射，已加入共享 WIKI_ASSETS）。同批：资料维护表格手机端改为卡片、失败原因中文化并收起任务/版本编号、原始资料与资料详情页对解析/索引失败显示原因并复用处理任务的重试接口。
+
+2026-10-14 冗余清理（未部署）：`AnswerSession` 只保留真实工作台使用的综合问答 `ask`/`cancel`/`reset`，删除旧经典页遗留的 text/visual/audio/video/sound/video-av 模式、查询附件和 `readSource`，以及 `media-sources.mjs`、`query-attachments.mjs`、`WorkbenchState` 和只测它们的用例；`api.mjs` 二进制读取只允许仍在用的原件/摘要/Wiki来源路径。四个媒体向量/索引会话共用新模块 `public/media-sessions.mjs`。两代理结构未改，只在资源清单中加入 `media-sessions.mjs`、去掉已删除的两个模块（定制生产入口须同样修改，发布运行文件须含新模块）；两代理清单重复仍保留，未做合并；代理中的旧非综合问答转发已在随后的 #13 删除。
 
 2026-10-10 删除旧经典管理页：负责人确认不含 DB-GPT 知识问答的旧页面基本无人使用，已删除 public/index.html、app.js、styles.css 及仅被它使用的 preview.mjs、notices.mjs、voice-question.mjs，三处服务入口不再提供 `/classic/`、`/index.html`、`/app.js`、`/styles.css`，并删除 `/v1/voice-questions` 转发和 `RAG_WEB_WIKI_ENTRY` 开关（根路径 `/` 始终为 wiki-workspace.html）。对应只测旧页面的 ui-tests 已删除。下方提到 app.js、`/classic/`、语音提问或本地文件预览的条目均为历史。
 
