@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BatchUploadSession } from '../public/batch-upload.mjs';
-import { createApi } from '../public/api.mjs';
+import { ApiError, createApi } from '../public/api.mjs';
 import { createWikiWorkspaceApi } from '../public/wiki-workspace-api.mjs';
 
 const files = count => Array.from({ length: count }, (_, i) => new File([`Synthetic ${i}`], `source-${i}.txt`));
@@ -51,4 +51,14 @@ test('batch file transport accepts only the exact batch slot and original byte b
   assert.equal(calls[0].url, '/v1/document-batches/batch-1/files/3');
   assert.equal(calls[0].options.body, file); assert.equal(calls[0].options.headers['Content-Type'], 'application/octet-stream');
   await assert.rejects(api('/v1/documents', { method: 'POST', file, batchUpload: { batchId: 'batch-1', ordinal: 3 } }));
+});
+test('busy upload slots are resent with bounded backoff, other failures are not', async () => {
+  const waits = []; let writes = 0;
+  const api = { async createBatch() { return { batch_id: 'batch-1', total: 1 }; },
+    async uploadBatchFile(id, ordinal, file) { if (++writes < 3) throw new ApiError(429, '上传通道繁忙，请稍后继续上传。'); return { task_id: 't', filename: file.name }; },
+    async getBatch() { return { items: [] }; } };
+  await new BatchUploadSession(api, { delay: async ms => { waits.push(ms); } }).start(files(1));
+  assert.equal(writes, 3); assert.deepEqual(waits, [500, 1000]);
+  writes = 0; api.uploadBatchFile = async () => { writes++; throw new ApiError(429, 'busy'); };
+  await assert.rejects(new BatchUploadSession(api, { delay: async () => {} }).start(files(1)), /busy/u); assert.equal(writes, 4);
 });

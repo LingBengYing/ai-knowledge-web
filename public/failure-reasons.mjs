@@ -26,6 +26,12 @@ const taskMessages = Object.freeze({
   indexing_unavailable: '当前索引模型不可用，请检查模型配置后到资料维护中处理。',
   parsing_incomplete: '原文件尚未解析成功，请先在处理任务中检查解析结果。',
   indexing_interrupted: '索引处理已中断，请到资料维护中检查处理状态。',
+  // Batch import (DocumentBatchRepository halted_reason, upload admission)
+  embedding_budget_exhausted: '本批次的嵌入请求额度已用完，后续文件不再继续索引；已完成的资料保持可用。',
+  model_usage_uncertain: '模型请求用量未能完整核对，批次已停止以免超出额度，请联系管理员核对后重新导入剩余文件。',
+  batch_upload_conflict: '批次文件内容或处理状态已改变，请刷新批次后核对。',
+  upload_busy: '上传通道繁忙，请稍后继续上传。',
+  upload_capacity_reached: '上传通道繁忙，请稍后继续上传。',
   // File synopsis (SynopsisLibraryService.ERRORS)
   synopsis_failed: '摘要生成失败，可以稍后重新生成。',
   model_failure: '模型服务调用失败，请检查模型配置或稍后重试。',

@@ -417,7 +417,8 @@ test('at most two upload exchanges remain in flight and released capacity is reu
   const second = raw(origin, '/v1/documents?filename=b.txt', options);
   for (let i = 0; responses.length < 2 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(responses.length, 2);
-  assert.equal((await raw(origin, '/v1/documents?filename=c.txt', options)).status, 429);
+  const refused = await raw(origin, '/v1/documents?filename=c.txt', options);
+  assert.equal(refused.status, 429); assert.equal(JSON.parse(refused.body).detail, '上传通道繁忙，请稍后继续上传。');
   assert.equal(responses.length, 2);
   for (const response of responses) { response.writeHead(202); response.end('{}'); }
   assert.equal((await first).status, 202);

@@ -88,8 +88,10 @@ const SAFE_HEADERS = {
 };
 
 class TransportError extends Error {
-  constructor(status, code) { super(code); this.status = status; this.code = code; }
+  constructor(status, code, detail) { super(code); this.status = status; this.code = code; this.detail = detail; }
 }
+
+const UPLOAD_BUSY_DETAIL = '上传通道繁忙，请稍后继续上传。';
 
 function backendAddress(value) {
   if (typeof value !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(value)) {
@@ -360,7 +362,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         const headers = forwardedHeaders(req, backend, origin, requestId);
         if (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) {
-          if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached');
+          if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached', UPLOAD_BUSY_DETAIL);
           activeUploads += 1;
           reservedUpload = true;
         }
@@ -377,7 +379,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
         const status = known ? error.status : 500;
         res.writeHead(status, { 'Content-Type': 'application/problem+json; charset=utf-8' });
         res.end(JSON.stringify({ type: 'about:blank', title: known ? error.code : 'request_failed', status,
-          detail: status >= 500 ? '开发连接未完成，请确认 Java 服务后重试。' : '开发请求不符合安全约束。', request_id: requestId }));
+          detail: (known && error.detail) || (status >= 500 ? '开发连接未完成，请确认 Java 服务后重试。' : '开发请求不符合安全约束。'), request_id: requestId }));
       }
       req.resume();
     } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; }

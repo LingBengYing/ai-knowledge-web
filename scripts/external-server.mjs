@@ -94,6 +94,7 @@ class TransportError extends Error {
 }
 
 const MAINTENANCE_DETAIL = '资料库正在清理已删除的资料，请稍后重试。';
+const UPLOAD_BUSY_DETAIL = '上传通道繁忙，请稍后继续上传。';
 
 function backendAddress(value) {
   if (typeof value !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(value)) {
@@ -463,7 +464,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         if (!route) throw new TransportError(404, 'route_not_found');
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         if (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) {
-          if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached');
+          if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached', UPLOAD_BUSY_DETAIL);
           activeUploads += 1;
           reservedUpload = true;
         }
