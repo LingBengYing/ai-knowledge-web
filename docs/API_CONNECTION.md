@@ -73,6 +73,7 @@ Java声明`query_attachments`且当前证据模式的answers/sources启用时，
 | `/v1/documents/{id}/index` | POST | 无query/body，确认后建立索引，要求Java显式能力与当前can_index |
 | `/v1/indexings/{id}` | GET | 无query/body，当前授权索引任务 |
 | `/v1/indexings/{id}/cancel`、`/retry` | POST | 无query/body，按服务器权限取消或有界重试 |
+| `/v1/document-batches/{id}/retry-failed`、`/cancel`、`/resume` | POST | 2026-10-17新增批量操作；无query，JSON（resume可选`embedding_request_limit`），返回`{batch_id,action,affected,batch}`；409`batch_action_conflict`表示当前状态不适用。生产定制入口须同样放行 |
 | `/v1/answers` | POST | 0006新增；无query，JSON问题及完整所选范围，独立180秒期限 |
 | `/v1/sources/{answer_id}/{1..32}` | GET | 0006新增；无query/body，当前身份重新校验文本引用 |
 | `/v1/management/documents` | GET | 授权分页、筛选、排序 |

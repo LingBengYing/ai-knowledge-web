@@ -1222,3 +1222,58 @@ test('halted batches explain the reason and per-file failures, and offer no furt
   assert.match(f.html(), /批次已停止：本批次的嵌入请求额度已用完/u); assert.match(f.html(), /文件解析超时/u);
   assert.doesNotMatch(f.html(), /data-action="import"/u); f.workspace.close();
 });
+
+const twoSlots = [{ filename: 'a.txt', size_bytes: 1, source_sha256: 'a'.repeat(64) }, { filename: 'b.txt', size_bytes: 1, source_sha256: 'b'.repeat(64) }];
+test('batch bulk actions appear only when the server offers them and each one re-reads the batch', async () => {
+  const backend = batchBackend({ state: 'halted' });
+  await backend.api.createBatch({ files: twoSlots });
+  Object.assign(backend.slots[0], { state: 'failed', document_id: 'd0', ingestion_task_id: 't0', error_code: 'parser_failed' });
+  Object.assign(backend.slots[1], { state: 'cancelled', document_id: 'd1', ingestion_task_id: 't1' });
+  const calls = [];
+  const f = fixture('#/imports/b1', { ...backend.api,
+    getBatch: async (...args) => ({ ...await backend.api.getBatch(...args), halted_reason: 'embedding_budget_exhausted', retryable_files: 2, available_actions: ['retry_failed', 'resume'] }),
+    retryFailedBatch: async id => { calls.push(['retry', id]); return { batch_id: id, action: 'retry_failed', affected: 2 }; },
+    resumeBatch: async id => { calls.push(['resume', id]); return { batch_id: id, action: 'resume', affected: 1 }; },
+    cancelBatch: async id => { calls.push(['cancel', id]); return { affected: 0 }; } }, batchCapabilities);
+  await f.workspace.start();
+  assert.match(f.html(), /data-action="batch-resume"/u); assert.match(f.html(), /重试失败文件（2）/u);
+  assert.doesNotMatch(f.html(), /data-action="batch-cancel"/u); assert.doesNotMatch(f.html(), /data-action="import"/u);
+  assert.match(f.html(), /调整额度后可以“解除停止并继续”/u);
+  let reads = backend.reads.length;
+  await f.click('batch-retry-failed'); await settle(f);
+  assert.deepEqual(calls, [['retry', 'b1']]); assert.match(f.nodes.get('toast').textContent, /已重新提交 2 份失败文件/u); assert.ok(backend.reads.length > reads);
+  reads = backend.reads.length;
+  await f.click('batch-resume'); await settle(f);
+  assert.deepEqual(calls.at(-1), ['resume', 'b1']); assert.match(f.nodes.get('toast').textContent, /批次已继续，1 份文件重新排队/u); assert.ok(backend.reads.length > reads);
+  f.workspace.close();
+});
+
+test('cancelling a batch asks first and a batch without offered actions shows no bulk buttons', async () => {
+  const backend = batchBackend();
+  await backend.api.createBatch({ files: twoSlots });
+  Object.assign(backend.slots[0], { state: 'queued', document_id: 'd0', ingestion_task_id: 't0' });
+  const plain = fixture('#/imports/b1', backend.api, batchCapabilities);
+  await plain.workspace.start();
+  assert.doesNotMatch(plain.html(), /data-action="batch-(?:cancel|resume|retry-failed)"/u); plain.workspace.close();
+  const calls = [];
+  let offered = ['cancel'], state = 'processing';
+  const f = fixture('#/imports/b1', { ...backend.api,
+    getBatch: async (...args) => ({ ...await backend.api.getBatch(...args), state, halted_reason: state === 'cancelled' ? 'batch_cancelled' : null, retryable_files: 0, available_actions: offered }),
+    cancelBatch: async id => { calls.push(id); offered = ['resume']; state = 'cancelled'; return { batch_id: id, action: 'cancel', affected: 1 }; } }, batchCapabilities);
+  await f.workspace.start();
+  assert.match(f.html(), /data-action="batch-cancel"/u); assert.doesNotMatch(f.html(), /data-action="batch-(?:resume|retry-failed)"/u);
+  const declined = f.click('batch-cancel'); await tick(); await f.click('cancel-operation'); await declined;
+  assert.equal(calls.length, 0);
+  const cancelling = f.click('batch-cancel'); await tick(); await f.click('confirm-operation'); await cancelling; await settle(f);
+  assert.deepEqual(calls, ['b1']); assert.match(f.nodes.get('toast').textContent, /批次已取消，1 个排队任务已停止/u);
+  assert.match(f.html(), /批次已取消：排队中的文件不再处理/u); assert.match(f.html(), /data-action="batch-resume"/u);
+  assert.doesNotMatch(f.html(), /data-action="batch-cancel"|data-action="import"/u);
+  f.workspace.close();
+});
+
+test('resuming uploads refuses a cancelled batch like a halted one', async () => {
+  const api = { async getBatch(id, { offset = 0 } = {}) { return { batch_id: id, state: 'cancelled', total: 1, offset, items: [{ ordinal: 0, filename: 'a.txt', state: 'awaiting_upload' }] }; },
+    async uploadBatchFile() { throw new Error('must not upload'); } };
+  const { BatchUploadSession } = await import('../public/batch-upload.mjs');
+  await assert.rejects(new BatchUploadSession(api).resume('b1', [new File(['a'], 'a.txt')]), /批次已停止/u);
+});

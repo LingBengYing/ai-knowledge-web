@@ -27,8 +27,10 @@ const taskMessages = Object.freeze({
   parsing_incomplete: '原文件尚未解析成功，请先在处理任务中检查解析结果。',
   indexing_interrupted: '索引处理已中断，请到资料维护中检查处理状态。',
   // Batch import (DocumentBatchRepository halted_reason, upload admission)
-  embedding_budget_exhausted: '本批次的嵌入请求额度已用完，后续文件不再继续索引；已完成的资料保持可用。',
-  model_usage_uncertain: '模型请求用量未能完整核对，批次已停止以免超出额度，请联系管理员核对后重新导入剩余文件。',
+  embedding_budget_exhausted: '本批次的嵌入请求额度已用完，后续文件不再继续索引；已完成的资料保持可用。调整额度后可以“解除停止并继续”。',
+  model_usage_uncertain: '模型请求用量未能完整核对，批次已停止以免超出额度；请联系管理员核对用量后再“解除停止并继续”。',
+  batch_cancelled: '批次已取消：排队中的文件不再处理，也不再接收上传；已完成的资料保持可用。可以“解除停止并继续”。',
+  batch_action_conflict: '批次当前状态不能执行该操作，请刷新批次后核对。',
   batch_upload_conflict: '批次文件内容或处理状态已改变，请刷新批次后核对。',
   upload_busy: '上传通道繁忙，请稍后继续上传。',
   upload_capacity_reached: '上传通道繁忙，请稍后继续上传。',
