@@ -1,5 +1,7 @@
 # AI Knowledge Web：智能体工作约定
 
+2026-10-17 批量导入第二阶段“吞吐”（分支feat/batch-throughput，未发布，配套后端同名分支）：网页4路上传，SHA-256改为4MiB分块增量计算（public/sha256-stream.mjs，小文件仍用WebCrypto）；导入窗口新增“重复文件也导入”（发送`include_duplicates:true`），重复槽位显示“已存在（跳过）”并链接已有资料/本批更早文件，继续上传跳过它们。两层Node入口共用scripts/upload-transport.mjs：有Content-Length的上传先判413/空再流式转发，分块请求仍缓冲限额；上传准入改为每登录主体4、合计8，上传不占长请求名额。**生产定制external-server.mjs须同步**：streamUpload流式上传、createUploadAdmission按`/v1/session`的workspace_id+principal_id计数、新静态资源`/sha256-stream.mjs`、批次清单JSON原样透传`include_duplicates`。完整前端479/479。不部署。
+
 2026-10-17 批量导入第一阶段“稳定”（分支feat/batch-resilience，未发布，配套后端同名分支）：#/imports/<id>按`available_actions`显示“重试失败文件/取消批次/解除停止并继续”，新增失败原因中文；两层Node代理（scripts/wiki-transport.mjs共享路由）已加`POST /v1/document-batches/{id}/(retry-failed|cancel|resume)`。**生产使用的定制入口必须同样加入这三条路由**，否则按钮会404。完整前端471/471。不部署。
 
 2026-10-17 Web0059 Git同步：负责人授权仅提交/推送批量导入，按hunk排除图片/问答WIP，原工作树保持；独立快照完整前端461/461，少于整树466是未包含5个图片用例，不是删除既有测试。详见0059 git-integration.md；不部署、不调用真实模型。

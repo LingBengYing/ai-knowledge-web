@@ -260,6 +260,8 @@ dialog.preview-dialog::backdrop { background: #24341c55; backdrop-filter: blur(3
 .drop-zone { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 35px 20px; border: 1px dashed #c7d7b6; border-radius: 7px; background: #f9fcf4; color: #8ba876; text-align: center; font-size: 12px; }
 .drop-zone svg { width: 29px; height: 29px; }
 .drop-zone input { max-width: 100%; font-size: 12px; }
+.check-field { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin: 12px 0 0; font-size: 13px; }
+.check-field .drop-zone-hint { flex-basis: 100%; }
 .upload-list { margin: 15px 0 0; padding: 0; list-style: none; }
 .upload-list li { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid #edf2e5; color: #91aa7c; font-size: 11px; overflow-wrap: anywhere; }
 .toast { position: fixed; z-index: 50; right: 26px; bottom: 26px; max-width: min(550px, 85vw); padding: 12px 19px; background: #344e2c; color: white; border-radius: 7px; font-size: 12px; box-shadow: 0 5px 25px #27471a22; }

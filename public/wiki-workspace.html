@@ -24,6 +24,7 @@
       <div class="dialog-body">
         <div class="field"><label for="upload-kind">上传类型</label><select id="upload-kind"><option value="document">文档 / 图片</option><option value="audio">音频转录</option><option value="video">视频文字</option></select></div>
         <label class="drop-zone" for="workspace-files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6"/></svg><strong>点击选择要导入的原文件</strong><span class="drop-zone-hint">可一次选择多个；单个文件不超过 20 MiB，图片不超过 10 MiB</span><input id="workspace-files" type="file" multiple></label>
+        <label class="check-field" for="include-duplicates"><input id="include-duplicates" type="checkbox"> 重复文件也导入<span class="drop-zone-hint">默认跳过与已有资料内容完全相同（SHA-256 一致）的文件</span></label>
         <div id="upload-list" class="upload-list" aria-live="polite"></div>
       </div>
       <div class="dialog-actions"><button class="button secondary" data-action="close-import">取消</button><button class="button primary" id="confirm-import" data-action="confirm-import" disabled>确认导入</button></div>

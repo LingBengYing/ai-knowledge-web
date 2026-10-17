@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
 import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed } from './wiki-transport.mjs';
 import { isAgentEventStream, validAgentEventStream, forwardAgentEventStream } from './agent-event-stream.mjs';
+import { createUploadAdmission, streamUpload } from './upload-transport.mjs';
 
 const ENTRY_PUBLIC = fileURLToPath(new URL('../entry-public/', import.meta.url));
 const DEFAULT_PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
@@ -284,16 +285,21 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
   } else if (!bodyless && !['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
     throw new TransportError(415, 'json_required');
   }
-  const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
-  if ((['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST') && !body.length) throw new TransportError(400, 'empty_upload');
-  if (bodyless && body.length) throw new TransportError(400, 'request_body_denied');
-  if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
-  headers['Content-Length'] = String(body.length);
-  const response = await new Promise((resolveResponse, rejectResponse) => {
-    const upstream = http.request(backend, { method: req.method, path: req.url, headers, signal }, resolveResponse);
-    upstream.once('error', () => rejectResponse(new TransportError(signal.aborted ? 504 : 502, signal.aborted ? 'request_deadline' : 'backend_unavailable')));
-    upstream.end(body);
-  });
+  const uploadBody = ['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST';
+  // Uploads with a declared length stream through (cap and empty check first); others are buffered.
+  let response = uploadBody ? await streamUpload({ req, backend, headers, limit: limits.requestBytes, signal, Failure: TransportError }) : null;
+  if (!response) {
+    const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
+    if (uploadBody && !body.length) throw new TransportError(400, 'empty_upload');
+    if (bodyless && body.length) throw new TransportError(400, 'request_body_denied');
+    if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
+    headers['Content-Length'] = String(body.length);
+    response = await new Promise((resolveResponse, rejectResponse) => {
+      const upstream = http.request(backend, { method: req.method, path: req.url, headers, signal }, resolveResponse);
+      upstream.once('error', () => rejectResponse(new TransportError(signal.aborted ? 504 : 502, signal.aborted ? 'request_deadline' : 'backend_unavailable')));
+      upstream.end(body);
+    });
+  }
   response.on('error', () => {}); // collect handles active errors; consume late teardown errors safely.
   if (response.statusCode >= 300 && response.statusCode < 400) {
     response.destroy();
@@ -385,7 +391,8 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       throw new TransportError(500, 'backend_entry_policy_mismatch');
     }
   } finally { clearTimeout(startupTimer); }
-  let activeUploads = 0;
+  // Per signed-in client and in total, instead of one global limit of two.
+  const uploads = createUploadAdmission();
   let activeReplacementIndexes = 0;
   let activeRequests = 0;
   let activeLongRequests = 0;
@@ -409,7 +416,8 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
     const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
     const timer = setTimeout(() => controller.abort(), isAgentEventStream(req.method, req.url) ? agentStreamDeadlineMs : modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
-    let reservedUpload = false;
+    let releaseUpload = null;
+    let uploadClient = null;
     let reservedReplacementIndex = false;
     let reservedRequest = false;
     let reservedLongRequest = false;
@@ -421,7 +429,9 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       if (isAgentEventStream(req.method, req.url)) {
         if (activeStreams >= 32) throw new TransportError(429, 'entry_capacity_reached');
         activeStreams += 1; reservedStream = true;
-      } else if (upload || answer || imageVector || audioVector || soundIndex || videoAvIndex || modelTest || retrieval || replacementIndex) {
+      } else if (upload) {
+        // Uploads are bounded by the per-client and total upload admission below, not the long-request pool.
+      } else if (answer || imageVector || audioVector || soundIndex || videoAvIndex || modelTest || retrieval || replacementIndex) {
         // Long model/indexing exchanges get their own slots so pages, login and ordinary reads stay reachable.
         if (activeLongRequests >= 8) throw new TransportError(429, 'entry_capacity_reached');
         activeLongRequests += 1; reservedLongRequest = true;
@@ -454,6 +464,8 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           throw new TransportError(401, 'authentication_required');
         }
         if (identity.body?.status !== 'authenticated') throw new TransportError(502, 'invalid_backend_identity');
+        // Upload slots are counted per signed-in principal of a workspace.
+        uploadClient = `${identity.body.workspace_id ?? ''}\n${identity.body.principal_id ?? ''}`;
       }
       if (asset) {
         if (path === '/tag-suggestions.mjs' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
@@ -464,9 +476,8 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         if (!route) throw new TransportError(404, 'route_not_found');
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         if (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) {
-          if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached', UPLOAD_BUSY_DETAIL);
-          activeUploads += 1;
-          reservedUpload = true;
+          releaseUpload = uploads.enter(uploadClient);
+          if (!releaseUpload) throw new TransportError(429, 'upload_capacity_reached', UPLOAD_BUSY_DETAIL);
         }
         if (route[2] === 'replacement-index') {
           if (activeReplacementIndexes >= 2) throw new TransportError(429, 'replacement_index_capacity_reached');
@@ -485,7 +496,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           detail: (known && error.detail) || (status >= 500 ? '知识库服务暂不可用。' : '请求未满足访问条件。'), request_id: requestId }));
       }
       req.resume();
-    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedRequest) activeRequests -= 1; if (reservedLongRequest) activeLongRequests -= 1; if (reservedStream) activeStreams -= 1; }
+    } finally { clearTimeout(timer); releaseUpload?.(); if (reservedReplacementIndex) activeReplacementIndexes -= 1; if (reservedRequest) activeRequests -= 1; if (reservedLongRequest) activeLongRequests -= 1; if (reservedStream) activeStreams -= 1; }
   });
   server.maxHeadersCount = 40;
   await new Promise((resolveListening, rejectListening) => {

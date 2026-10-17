@@ -158,8 +158,9 @@ async function fixture(t, options = {}, handler) {
       response.setHeader('Content-Type', 'application/problem+json');
       response.end(JSON.stringify({ status: 503, error_code: 'migration_incomplete' }));
     } else if (request.url === '/v1/session' && request.method === 'GET') {
-      response.statusCode = request.headers.cookie === sessionPair ? 200 : 401;
-      response.end(JSON.stringify({ status: response.statusCode === 200 ? 'authenticated' : 'unauthorized' }));
+      const principal = options.sessions?.[request.headers.cookie];
+      response.statusCode = request.headers.cookie === sessionPair || principal ? 200 : 401;
+      response.end(JSON.stringify(response.statusCode === 200 ? { status: 'authenticated', workspace_id: 'org-main', principal_id: principal ?? 'owner' } : { status: 'unauthorized' }));
     } else if (handler) handler(request, response);
     else response.end('{}');
   }).listen(0, '127.0.0.1');
@@ -635,4 +636,30 @@ test('a session check that outlives the request deadline is a deadline, not an u
   slow = true;
   const response = await raw(`http://127.0.0.1:${frontend.address().port}`, '/v1/config', { headers: { Cookie: sessionPair } });
   assert.equal(response.status, 504); assert.equal(JSON.parse(response.body).title, 'request_deadline');
+});
+
+test('uploads stream with four slots per signed-in principal and eight in total, outside the long-request pool', async t => {
+  const pending = [];
+  const sessions = { 'rag_session=alpha': 'alpha', 'rag_session=beta': 'beta', 'rag_session=gamma': 'gamma' };
+  const { origin } = await fixture(t, { sessions }, (request, response) => {
+    if (request.url.startsWith('/v1/documents?')) { request.resume(); pending.push(response); } else { request.resume(); response.end('{}'); }
+  });
+  const agent = new http.Agent({ keepAlive: false, maxSockets: 100 });
+  t.after(() => agent.destroy());
+  const send = (cookie, path = '/v1/documents?filename=a.txt', method = 'POST', body = 'synthetic', type = 'application/octet-stream') => new Promise((resolve, reject) => {
+    const request = http.request(`${origin}${path}`, { agent, method, headers: { Host: publicHost, Origin: publicOrigin, Cookie: cookie, 'Content-Type': type } }, response => { response.resume(); resolve(response.statusCode); });
+    request.on('error', reject); request.end(body);
+  });
+  const waitFor = async count => { for (let i = 0; pending.length < count && i < 400; i++) await new Promise(resolve => setTimeout(resolve, 5)); };
+  const alpha = Array.from({ length: 4 }, () => send('rag_session=alpha'));
+  await waitFor(4); assert.equal(pending.length, 4);
+  assert.equal(await send('rag_session=alpha'), 429, 'the fifth upload of one principal waits');
+  const beta = Array.from({ length: 4 }, () => send('rag_session=beta'));
+  await waitFor(8); assert.equal(pending.length, 8);
+  assert.equal(await send('rag_session=gamma'), 429, 'eight uploads in total');
+  // Uploads do not take the long model/indexing slots.
+  assert.equal(await send('rag_session=gamma', '/v1/knowledge-answers', 'POST', '{}', 'application/json'), 200);
+  for (const response of pending) response.end('{}');
+  assert.deepEqual(await Promise.all([...alpha, ...beta]), Array(8).fill(200));
+  assert.equal(await send('rag_session=alpha', '/v1/documents?filename=a.txt', 'POST', Buffer.alloc(20 * 1024 * 1024 + 1)), 413);
 });

@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
 import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed } from './wiki-transport.mjs';
 import { isAgentEventStream, validAgentEventStream, forwardAgentEventStream } from './agent-event-stream.mjs';
+import { createUploadAdmission, streamUpload } from './upload-transport.mjs';
 
 const DEFAULT_PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const ASSETS = new Map([
@@ -256,16 +257,21 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
   } else if (!bodyless && !['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
     throw new TransportError(415, 'json_required');
   }
-  const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
-  if ((['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST') && !body.length) throw new TransportError(400, 'empty_upload');
-  if (bodyless && body.length) throw new TransportError(400, 'request_body_denied');
-  if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
-  headers['Content-Length'] = String(body.length);
-  const response = await new Promise((resolveResponse, rejectResponse) => {
-    const upstream = http.request(backend, { method: req.method, path: req.url, headers, signal }, resolveResponse);
-    upstream.once('error', () => rejectResponse(new TransportError(signal.aborted ? 504 : 502, signal.aborted ? 'request_deadline' : 'backend_unavailable')));
-    upstream.end(body);
-  });
+  const uploadBody = ['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST';
+  // Uploads with a declared length stream through (cap and empty check first); others are buffered.
+  let response = uploadBody ? await streamUpload({ req, backend, headers, limit: limits.requestBytes, signal, Failure: TransportError }) : null;
+  if (!response) {
+    const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
+    if (uploadBody && !body.length) throw new TransportError(400, 'empty_upload');
+    if (bodyless && body.length) throw new TransportError(400, 'request_body_denied');
+    if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
+    headers['Content-Length'] = String(body.length);
+    response = await new Promise((resolveResponse, rejectResponse) => {
+      const upstream = http.request(backend, { method: req.method, path: req.url, headers, signal }, resolveResponse);
+      upstream.once('error', () => rejectResponse(new TransportError(signal.aborted ? 504 : 502, signal.aborted ? 'request_deadline' : 'backend_unavailable')));
+      upstream.end(body);
+    });
+  }
   response.on('error', () => {}); // collect handles active errors; consume late teardown errors safely.
   if (response.statusCode >= 300 && response.statusCode < 400) {
     response.destroy();
@@ -323,7 +329,8 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
     [imageUploadBytes, 10 * 1024 * 1024], [contentBytes, 10 * 1024 * 1024], [mediaBytes, 20 * 1024 * 1024]]) {
     if (!Number.isInteger(value) || value < 1 || value > max) throw new TransportError(500, 'invalid_limit');
   }
-  let activeUploads = 0;
+  // Per signed-in client and in total, instead of one global limit of two.
+  const uploads = createUploadAdmission();
   let activeReplacementIndexes = 0;
   const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 10_000 }, async (req, res) => {
     const requestId = randomUUID();
@@ -342,7 +349,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
     const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
     const timer = setTimeout(() => controller.abort(), isAgentEventStream(req.method, req.url) ? agentStreamDeadlineMs : modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
-    let reservedUpload = false;
+    let releaseUpload = null;
     let reservedReplacementIndex = false;
     res.once('close', () => { if (!res.writableEnded) controller.abort(); });
     try {
@@ -362,9 +369,8 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         const headers = forwardedHeaders(req, backend, origin, requestId);
         if (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) {
-          if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached', UPLOAD_BUSY_DETAIL);
-          activeUploads += 1;
-          reservedUpload = true;
+          releaseUpload = uploads.enter(headers.Cookie ?? headers['x-principal-id'] ?? 'local');
+          if (!releaseUpload) throw new TransportError(429, 'upload_capacity_reached', UPLOAD_BUSY_DETAIL);
         }
         if (route[2] === 'replacement-index') {
           if (activeReplacementIndexes >= 2) throw new TransportError(429, 'replacement_index_capacity_reached');
@@ -382,7 +388,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
           detail: (known && error.detail) || (status >= 500 ? '开发连接未完成，请确认 Java 服务后重试。' : '开发请求不符合安全约束。'), request_id: requestId }));
       }
       req.resume();
-    } finally { clearTimeout(timer); if (reservedUpload) activeUploads -= 1; if (reservedReplacementIndex) activeReplacementIndexes -= 1; }
+    } finally { clearTimeout(timer); releaseUpload?.(); if (reservedReplacementIndex) activeReplacementIndexes -= 1; }
   });
   server.maxHeadersCount = 40;
   await new Promise((resolveListening, rejectListening) => {
