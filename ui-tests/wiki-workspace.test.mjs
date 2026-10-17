@@ -173,7 +173,7 @@ function fixture(hash = '#/home', overrides = {}, config) {
   const doc = { title: '', getElementById: node, querySelectorAll: () => [], addEventListener: (name, callback) => { events[name] = callback; } };
   class Values { constructor(form) { this.values = form.values; } get(key) { return this.values.find(([name]) => name === key)?.[1] ?? null; } has(key) { return this.values.some(([name]) => name === key); } getAll(key) { return this.values.filter(([name]) => name === key).map(([, value]) => value); } }
   const workspace = createWikiWorkspace({ document: doc, window: win, wiki, config, FormData: Values });
-  return { workspace, nodes, calls, win, doc, events, timers, html: () => node('content').innerHTML,
+  return { workspace, nodes, calls, win, doc, events, windowEvents, timers, html: () => node('content').innerHTML,
     poll: async () => { const [key, fn] = timers.entries().next().value ?? []; if (!fn) throw new Error('No read-only source poll scheduled'); timers.delete(key); await fn(); },
     go: async hash => { win.location.hash = hash; await workspace.load(); },
     submit: (id, values) => events.submit({ target: { id, values }, preventDefault() {} }),
@@ -1302,4 +1302,157 @@ test('duplicate files are skipped with a link to what already exists, and the ch
   assert.equal(again.creates[0].include_duplicates, true);
   assert.deepEqual(again.uploads.sort(), [0, 1, 2]);
   g.workspace.close();
+});
+
+// Phase 3 batch import UX: history, filters, times and speed, leaving the page, budgets, folders and drops.
+const inFolder = (content, path) => { const file = new File([content], path.split('/').at(-1)); Object.defineProperty(file, 'webkitRelativePath', { value: path }); return file; };
+test('import history lists the workspace batches with escaped values and pages on the server', async () => {
+  assert.deepEqual(parseWorkspaceRoute('#/imports'), { view: 'imports' });
+  assert.deepEqual(parseWorkspaceRoute('#/imports/b1'), { view: 'imports', id: 'b1' });
+  assert.deepEqual(parseWorkspaceRoute('#/imports/b1/x'), { view: 'missing' });
+  const pages = [];
+  const items = [
+    { batch_id: 'b2', state: 'halted', total: 3, counts: { indexed: 1, failed: 1, awaiting_upload: 1 }, halted_reason: 'embedding_budget_exhausted', created_at: '2026-10-17T08:00:00Z', updated_at: '2026-10-17T08:05:00.123Z' },
+    { batch_id: 'b1', state: 'completed', total: 2, counts: { indexed: 1, duplicate: 1 }, halted_reason: null, created_at: '<img src=x>', updated_at: null }];
+  const f = fixture('#/imports', { listBatches: async ({ offset = 0, limit = 20 } = {}) => { pages.push([offset, limit]); return { offset, limit, total: 25, items }; } }, batchCapabilities);
+  await f.workspace.start();
+  const html = f.html();
+  assert.match(html, /<h1>导入记录<\/h1>/u); assert.match(html, /共 25 个批次/u);
+  assert.match(html, /href="#\/imports\/b2"/u); assert.match(html, /href="#\/imports\/b1"/u);
+  assert.ok(html.indexOf('#/imports/b2') < html.indexOf('#/imports/b1'), 'newest first, as served');
+  assert.match(html, /已停止/u); assert.match(html, /1 \/ 3 · 失败 1/u); assert.match(html, /2 \/ 2（跳过 1）/u); assert.match(html, /已完成/u);
+  assert.match(html, /data-label="文件数"/u, 'cells carry labels for the mobile cards');
+  assert.doesNotMatch(html, /<img src=x>/u);
+  assert.match(f.nodes.get('sidebar').innerHTML, /href="#\/imports" aria-current="page"[^>]*>|class="nav-item active" href="#\/imports"/u);
+  await f.click('imports-next'); await settle(f);
+  assert.deepEqual(pages, [[0, 20], [20, 20]]);
+  f.workspace.close();
+  const none = fixture('#/imports', { listBatches: async () => ({ offset: 0, limit: 20, total: 0, items: [] }) }, batchCapabilities);
+  await none.workspace.start(); assert.match(none.html(), /还没有导入记录/u); none.workspace.close();
+});
+
+test('the batch page filters by state on the server, shows paths, times and speed, and keeps the filter while polling', async () => {
+  const backend = batchBackend();
+  await backend.api.createBatch({ files: [
+    { filename: 'a.txt', relative_path: '<b>资料</b>/a.txt', size_bytes: 1, source_sha256: 'a'.repeat(64) },
+    { filename: 'b.txt', size_bytes: 1, source_sha256: 'b'.repeat(64) },
+    { filename: 'c.txt', size_bytes: 1, source_sha256: 'c'.repeat(64) }] });
+  Object.assign(backend.slots[0], { state: 'failed', document_id: 'd0', ingestion_task_id: 't0', error_code: 'parser_failed', started_at: '2026-10-17T08:00:00Z', finished_at: '2026-10-17T08:01:00.250Z' });
+  Object.assign(backend.slots[1], { state: 'queued', document_id: 'd1', ingestion_task_id: 't1', started_at: '2026-10-17T08:00:00Z' });
+  const seen = [];
+  const getBatch = async (id, options = {}) => {
+    seen.push(options.states ?? []);
+    const page = await backend.api.getBatch(id, options);
+    const items = options.states ? backend.slots.filter(slot => options.states.includes(slot.state)) : page.items;
+    return { ...page, items, matched: items.length, created_at: '2026-10-17T07:59:00Z', updated_at: '2026-10-17T08:01:00Z', throughput: { window_seconds: 600, finished: 10, measured_at: '2026-10-17T08:09:00Z' } };
+  };
+  const f = fixture('#/imports/b1', { ...backend.api, getBatch }, batchCapabilities);
+  await f.workspace.start();
+  let html = f.html();
+  assert.match(html, /&lt;b&gt;资料&lt;\/b&gt;\/a\.txt/u); assert.doesNotMatch(html, /<b>资料<\/b>/u);
+  assert.match(html, /最近 10 分钟完成 10 份 · 约 1\.0 份\/分钟 · 剩余 1 份预计还需 约 1 分钟（按最近速度估算）/u);
+  assert.match(html, /data-label="开始"/u); assert.match(html, /data-label="完成"/u);
+  assert.match(html, new RegExp(formatTimestamp(Date.parse('2026-10-17T08:01:00.250Z')).replace(/[-:]/gu, '.')));
+  assert.match(html, /失败（1）/u); assert.match(html, /处理中（2）/u); assert.match(html, /已跳过（重复）（0）/u);
+  await f.click('batch-filter', { filter: 'failed' }); await settle(f);
+  assert.deepEqual(seen.at(-1), ['failed', 'cancelled']);
+  html = f.html();
+  assert.match(html, /a\.txt/u); assert.doesNotMatch(html, />b\.txt</u); assert.match(html, /aria-pressed="true">失败/u);
+  assert.equal(f.timers.size, 1, 'still polling while files are active');
+  await f.poll(); assert.deepEqual(seen.at(-1), ['failed', 'cancelled'], 'the silent refresh keeps the filter');
+  await f.click('batch-filter', { filter: 'bogus' }); await settle(f); assert.deepEqual(seen.at(-1), ['failed', 'cancelled']);
+  await f.click('batch-filter', { filter: 'duplicate' }); await settle(f);
+  assert.match(f.html(), /没有符合筛选条件的文件/u);
+  await f.click('batch-filter', { filter: 'all' }); await settle(f); assert.deepEqual(seen.at(-1), []);
+  f.workspace.close();
+});
+
+test('leaving the page asks first only while files are being uploaded', async () => {
+  const backend = batchBackend();
+  let release; const gate = new Promise(resolve => { release = resolve; }); const upload = backend.api.uploadBatchFile;
+  const f = fixture('#/sources', { ...backend.api, uploadBatchFile: async (...args) => { await gate; return upload(...args); } }, batchCapabilities);
+  await f.workspace.start();
+  const idle = { preventDefault() { this.prevented = true; } };
+  f.windowEvents.beforeunload(idle); assert.equal(idle.prevented, undefined); assert.equal(idle.returnValue, undefined);
+  await f.workspace.load();
+  await f.click('import'); f.nodes.get('upload-kind').value = 'document'; chooseFiles(f, [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')]);
+  const done = f.click('confirm-import'); await settle(f);
+  const leaving = { preventDefault() { this.prevented = true; } };
+  const message = f.windowEvents.beforeunload(leaving);
+  assert.equal(leaving.prevented, true); assert.match(leaving.returnValue, /文件仍在上传/u); assert.equal(message, leaving.returnValue);
+  assert.equal(f.timers.size, 0);
+  release(); await done; await settle(f);
+  const after = { preventDefault() { this.prevented = true; } };
+  f.windowEvents.beforeunload(after); assert.equal(after.prevented, undefined);
+  f.workspace.close();
+});
+
+test('resuming a halted batch can raise its embedding budget, and an invalid or too low limit is refused', async () => {
+  const backend = batchBackend({ state: 'halted' });
+  await backend.api.createBatch({ files: twoSlots });
+  const calls = [];
+  const f = fixture('#/imports/b1', { ...backend.api,
+    getBatch: async (...args) => ({ ...await backend.api.getBatch(...args), halted_reason: 'embedding_budget_exhausted', embedding_request_limit: 10, reserved_requests: 10, available_actions: ['resume'] }),
+    resumeBatch: async (...args) => { calls.push(args); return { batch_id: 'b1', action: 'resume', affected: 1 }; } }, batchCapabilities);
+  await f.workspace.start();
+  assert.match(f.html(), /id="batch-resume-limit"/u); assert.match(f.html(), /当前上限 10 次，已预留 10 次/u);
+  f.doc.getElementById('batch-resume-limit').value = 'abc'; await f.click('batch-resume'); await settle(f);
+  assert.equal(calls.length, 0); assert.match(f.nodes.get('toast').textContent, /1–1,000,000/u);
+  f.doc.getElementById('batch-resume-limit').value = '9'; await f.click('batch-resume'); await settle(f);
+  assert.equal(calls.length, 0); assert.match(f.nodes.get('toast').textContent, /不能低于已预留的 10 次/u);
+  f.doc.getElementById('batch-resume-limit').value = '50'; await f.click('batch-resume'); await settle(f);
+  assert.deepEqual(calls, [['b1', { embeddingRequestLimit: 50 }]]);
+  f.doc.getElementById('batch-resume-limit').value = ''; await f.click('batch-resume'); await settle(f);
+  assert.deepEqual(calls.at(-1), ['b1'], 'an empty field keeps the current limit');
+  f.workspace.close();
+});
+
+test('a folder selection skips hidden and unsupported files, shows paths, and sends paths and the typed budget', async () => {
+  const backend = batchBackend({ failCreate: 1 });
+  const f = fixture('#/sources', backend.api, batchCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document';
+  f.doc.getElementById('batch-budget').value = '40';
+  f.events.change({ target: { id: 'workspace-folder', files: [inFolder('a', '项目/<i>章</i>/a.txt'), inFolder('x', '项目/.DS_Store'), inFolder('x', '项目/tool.exe')] } });
+  assert.match(f.nodes.get('upload-skipped').innerHTML, /已跳过 2 个不支持的文件/u);
+  assert.match(f.nodes.get('upload-skipped').innerHTML, /项目\/tool\.exe/u); assert.equal(f.nodes.get('upload-skipped').hidden, false);
+  assert.match(f.nodes.get('upload-list').innerHTML, /项目\/&lt;i&gt;章&lt;\/i&gt;\/a\.txt/u);
+  assert.match(f.nodes.get('budget-estimate').textContent, /预计最多约 1 次嵌入请求（估算/u);
+  f.doc.getElementById('batch-budget').value = '0'; f.events.input({ target: { id: 'batch-budget', value: '0' } });
+  assert.match(f.nodes.get('budget-estimate').textContent, /上限须为/u);
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 0, 'an invalid budget never registers a batch');
+  f.doc.getElementById('batch-budget').value = '40';
+  // A single folder file is still a batch: its path and the budget only exist for batches.
+  await f.click('confirm-import'); await settle(f);
+  assert.match(f.nodes.get('toast').textContent, /连接中断/u);
+  f.doc.getElementById('batch-budget').value = '99';
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 2);
+  assert.equal(backend.creates[0].embedding_request_limit, 40); assert.equal(backend.creates[1].embedding_request_limit, 40, 'a retried registration keeps its budget');
+  assert.equal(backend.creates[0].request_id, backend.creates[1].request_id);
+  assert.equal(backend.creates[0].files[0].relative_path, '项目/<i>章</i>/a.txt'); assert.equal(backend.creates[0].files.length, 1);
+  assert.equal(f.win.location.hash, '#/imports/b1');
+  f.workspace.close();
+});
+
+test('dropping folders onto the drop zone collects nested files with paths', async () => {
+  const backend = batchBackend();
+  const f = fixture('#/sources', backend.api, batchCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document';
+  const entry = (name, children) => children ? { isDirectory: true, isFile: false, name, createReader() { let sent = false; return { readEntries(resolve) { const next = sent ? [] : children; sent = true; resolve(next); } }; } }
+    : { isFile: true, isDirectory: false, name, file: resolve => resolve(new File([name], name)) };
+  const zone = { classList: { add() {}, remove() {} } };
+  let prevented = 0;
+  const target = { closest: selector => selector === '.drop-zone' ? zone : null };
+  f.events.dragover({ target, preventDefault() { prevented++; } });
+  await f.events.drop({ target, preventDefault() { prevented++; }, dataTransfer: { items: [{ kind: 'file', webkitGetAsEntry: () => entry('docs', [entry('a.md'), entry('Thumbs.db'), entry('sub', [entry('b.txt')])]) }] } });
+  assert.equal(prevented, 2);
+  assert.deepEqual(f.workspace.state.pendingFiles.map(file => file.name), ['a.md', 'b.txt']);
+  assert.match(f.nodes.get('upload-list').innerHTML, /docs\/sub\/b\.txt/u);
+  assert.match(f.nodes.get('upload-skipped').innerHTML, /已跳过 1 个不支持的文件/u);
+  await f.click('confirm-import'); await settle(f);
+  assert.deepEqual(backend.creates[0].files.map(file => file.relative_path), ['docs/a.md', 'docs/sub/b.txt']);
+  // Drops elsewhere on the page are left alone.
+  let elsewhere = 0; await f.events.drop({ target: { closest: () => null }, preventDefault() { elsewhere++; } }); assert.equal(elsewhere, 0);
+  f.workspace.close();
 });

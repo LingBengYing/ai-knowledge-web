@@ -255,3 +255,26 @@ article.panel + article.panel, article.panel + section.panel { margin-top: 12px;
   .maintenance-table .data-table tr.maint-empty { display: block; }
   .maintenance-table .data-table tr.maint-empty td { grid-column: 1 / -1; }
 }
+/* Batch import UX (2026-10-17): folder pick, drag-over, skipped list, budget estimate, history and batch filters. */
+.drop-zone.dragging { background: #eaf3df; border-color: var(--green); border-style: solid; }
+.folder-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 12px 0 0; }
+.upload-skipped { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.upload-skipped summary { width: fit-content; cursor: pointer; }
+.upload-skipped ul { max-height: 160px; margin: 8px 0 0; padding-left: 18px; overflow-y: auto; overflow-wrap: anywhere; font-size: 12px; }
+.budget-field { margin-top: 14px; }
+.budget-field input, .batch-resume-limit input { max-width: 220px; }
+.batch-resume-limit { margin: 12px 0; }
+.batch-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 10px; }
+.batch-path { overflow-wrap: anywhere; }
+/* These tables have no checkbox column: the first column is the file or the import time, not a 42px select cell. */
+.imports-table .data-table td:first-child, .batch-table .data-table td:first-child { width: auto; min-width: 200px; }
+.batch-speed { color: var(--green); }
+@media (max-width: 700px) {
+  /* Import history and batch files become one card per row, like the maintenance table. */
+  .imports-table .data-table tbody tr, .batch-table .data-table tbody tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .imports-table .data-table td.maint-cell-title, .batch-table .data-table td.maint-cell-title,
+  .imports-table .data-table td.maint-cell-actions, .batch-table .data-table td.maint-cell-actions { grid-column: 1 / -1; }
+  .imports-table .data-table thead tr, .batch-table .data-table thead tr { display: none; }
+  .imports-table .data-table td:first-child, .batch-table .data-table td:first-child { min-width: 0; }
+  .budget-field input, .batch-resume-limit input { max-width: none; font-size: 16px; }
+}

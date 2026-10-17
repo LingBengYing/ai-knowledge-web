@@ -86,7 +86,12 @@ export function createWikiWorkspaceApi({ api }) {
     deleteDraft: (draftId, expectedVersion, options) => write(`/v1/wiki/drafts/${id(draftId)}?version=${version(expectedVersion)}`, 'DELETE', undefined, options),
     upload: (file, { uploadKind = 'document', signal } = {}) => api(uploadKind === 'sound' ? '/v1/sound-documents' : uploadKind === 'video-av' ? '/v1/video-av-documents' : `/v1/documents?filename=${encodeURIComponent(file?.name ?? '')}`, { method: 'POST', file, uploadKind, signal }),
     createBatch: (command, options) => write('/v1/document-batches', 'POST', command, options),
-    getBatch: (batchId, { offset = 0, limit = 100, signal } = {}) => get(query(`/v1/document-batches/${id(batchId)}`, paging(offset, limit)), { signal }),
+    listBatches: ({ offset = 0, limit = 20, signal } = {}) => get(query('/v1/document-batches', paging(offset, limit)), { signal }),
+    getBatch: (batchId, { offset = 0, limit = 100, states = [], signal } = {}) => {
+      // An optional state filter: known file state names only, sent as one comma-separated value.
+      if (!Array.isArray(states) || states.length > 10 || states.some(state => !/^[a-z_]{1,32}$/u.test(state))) throw invalid();
+      return get(query(`/v1/document-batches/${id(batchId)}`, { ...paging(offset, limit), state: states.join(',') }), { signal });
+    },
     uploadBatchFile: (batchId, ordinal, file, { signal } = {}) => api(`/v1/document-batches/${id(batchId)}/files/${version(ordinal, 0)}`, { method: 'POST', file, signal, batchUpload: { batchId, ordinal } }),
     retryFailedBatch: (batchId, options) => write(`/v1/document-batches/${id(batchId)}/retry-failed`, 'POST', {}, options),
     cancelBatch: (batchId, options) => write(`/v1/document-batches/${id(batchId)}/cancel`, 'POST', {}, options),

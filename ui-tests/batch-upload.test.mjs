@@ -124,3 +124,113 @@ test('resume skips files whose slot was skipped as a duplicate', async () => {
   await new BatchUploadSession(api).resume('batch-1', input);
   assert.deepEqual(writes, [1]);
 });
+
+// Phase 3: folders, drag and drop, paths, resume by path, estimates and throughput.
+const { withRelativePath, relativePathOf, partitionImportable, droppedEntries, collectEntries, estimateEmbeddingRequests, checkedRequestLimit,
+  batchThroughput, formatDuration, displayPath } = await import('../public/batch-upload.mjs');
+const inFolder = (content, path) => { const file = new File([content], path.split('/').at(-1)); Object.defineProperty(file, 'webkitRelativePath', { value: path }); return file; };
+/** A FileSystemEntry tree like Chrome's: readEntries hands out at most `batch` children per call. */
+function entryTree(node, name = node.name, batch = 2) {
+  if (node.content !== undefined) return { isFile: true, isDirectory: false, name, file: (resolve) => resolve(new File([node.content], name)) };
+  return { isFile: false, isDirectory: true, name, createReader() {
+    let index = 0; const children = Object.entries(node.children).map(([child, value]) => entryTree(value, child, batch));
+    return { readEntries(resolve) { const next = children.slice(index, index + batch); index += next.length; setTimeout(() => resolve(next), 0); } };
+  } };
+}
+test('dropped folders are followed recursively with paths, readEntries batches and bounded count and depth', async () => {
+  const tree = { name: '资料', children: { 'a.txt': { content: 'a' }, '.DS_Store': { content: 'x' }, sub: { children: { 'b.md': { content: 'b' }, deeper: { children: { 'c.pdf': { content: 'c' } } }, 'Thumbs.db': { content: 't' } } }, 'x.exe': { content: 'e' } } };
+  const loose = new File(['loose'], 'loose.txt');
+  const transfer = { items: [{ kind: 'file', webkitGetAsEntry: () => entryTree(tree) }, { kind: 'file', webkitGetAsEntry: () => ({ isFile: true, name: 'loose.txt', file: resolve => resolve(loose) }) }, { kind: 'string', webkitGetAsEntry: () => null }] };
+  const entries = droppedEntries(transfer);
+  assert.equal(entries.length, 2, 'entries are taken synchronously, strings ignored');
+  const { files: collected, truncated } = await collectEntries(entries);
+  assert.equal(truncated, false);
+  assert.deepEqual(collected.map(file => relativePathOf(file) || file.name).sort(),
+    ['loose.txt', '资料/.DS_Store', '资料/a.txt', '资料/sub/Thumbs.db', '资料/sub/b.md', '资料/sub/deeper/c.pdf', '资料/x.exe'].sort());
+  const { accepted, skipped } = partitionImportable(collected, '.txt,.md,.pdf');
+  assert.deepEqual(accepted.map(file => relativePathOf(file) || file.name).sort(), ['loose.txt', '资料/a.txt', '资料/sub/b.md', '资料/sub/deeper/c.pdf']);
+  assert.deepEqual(skipped.sort(), ['资料/.DS_Store', '资料/sub/Thumbs.db', '资料/x.exe']);
+  const capped = await collectEntries(droppedEntries(transfer), { maxFiles: 3 });
+  assert.equal(capped.files.length, 3); assert.equal(capped.truncated, true);
+  const shallow = await collectEntries(droppedEntries(transfer), { maxDepth: 1 });
+  assert.equal(shallow.truncated, true); assert.equal(shallow.files.some(file => relativePathOf(file).includes('deeper')), false);
+  // Without the entry API the drop falls back to its plain files.
+  const fallback = await collectEntries(droppedEntries({ items: [], files: [loose] }));
+  assert.deepEqual(fallback.files, [loose]);
+});
+test('hidden folders, system and lock files are skipped from a folder selection', () => {
+  const picked = ['proj/.git/config.txt', 'proj/__MACOSX/a.txt', 'proj/~$draft.docx', 'proj/desktop.ini', 'proj/ok.docx', 'proj/README', 'proj/图.PNG'].map(path => inFolder('x', path));
+  const { accepted, skipped } = partitionImportable(picked, '.docx,.png,.txt');
+  assert.deepEqual(accepted.map(relativePathOf), ['proj/ok.docx', 'proj/图.PNG']);
+  assert.equal(skipped.length, 5);
+});
+test('relative paths follow the server rules and travel only for folder files', async () => {
+  assert.equal(relativePathOf(inFolder('a', 'top/a.txt')), 'top/a.txt');
+  assert.equal(relativePathOf(new File(['a'], 'a.txt')), '', 'a loose file has no path');
+  for (const bad of ['../a.txt', 'x/../a.txt', './a.txt', '/abs/a.txt', 'x//a.txt', 'x\\y/a.txt', 'x/\u0007/a.txt', 'x/b.txt', `${'d/'.repeat(512)}a.txt`])
+    assert.equal(relativePathOf(withRelativePath(new File(['a'], 'a.txt'), bad)), '', bad);
+  assert.equal(relativePathOf(withRelativePath(new File(['a'], 'a.txt'), `${'d/'.repeat(509)}a.txt`)).length, 1023);
+  assert.equal(displayPath({ filename: 'a.txt', relative_path: 'x/a.txt' }), 'x/a.txt'); assert.equal(displayPath({ filename: 'a.txt', relative_path: null }), 'a.txt');
+  let manifest;
+  const api = { async createBatch(command) { manifest = command.files; return { batch_id: 'batch-1', total: command.files.length }; },
+    async uploadBatchFile(id, ordinal, file) { return { task_id: `t${ordinal}`, filename: file.name }; }, async getBatch() { return {}; } };
+  const session = new BatchUploadSession(api);
+  await session.start([inFolder('a', '资料/一/a.txt'), new File(['b'], 'b.txt')], { embeddingRequestLimit: 7 });
+  assert.equal(manifest[0].relative_path, '资料/一/a.txt'); assert.equal('relative_path' in manifest[1], false);
+  assert.equal(session.snapshot().items[0].relativePath, '资料/一/a.txt');
+});
+test('continuing with the same folder matches slots by path, size and SHA and skips files of no slot unhashed', async () => {
+  const sha = file => file.arrayBuffer().then(bytes => createHash('sha256').update(Buffer.from(bytes)).digest('hex'));
+  // Same name and bytes in two folders: each goes to the slot of its own path.
+  const one = inFolder('same', 'root/one/note.txt'), two = inFolder('same', 'root/two/note.txt'), done = inFolder('done', 'root/done.txt');
+  const rows = [
+    { ordinal: 0, filename: 'note.txt', relative_path: 'root/two/note.txt', size_bytes: two.size, source_sha256: await sha(two), state: 'awaiting_upload' },
+    { ordinal: 1, filename: 'note.txt', relative_path: 'root/one/note.txt', size_bytes: one.size, source_sha256: await sha(one), state: 'awaiting_upload' },
+    { ordinal: 2, filename: 'done.txt', relative_path: 'root/done.txt', size_bytes: done.size, source_sha256: await sha(done), state: 'queued', ingestion_task_id: 'old' }];
+  const writes = [], hashed = [];
+  const api = { async getBatch(id, { offset = 0, limit = 100 } = {}) { return { batch_id: id, state: 'processing', total: rows.length, offset, items: rows.slice(offset, offset + limit) }; },
+    async uploadBatchFile(id, ordinal, file) { writes.push([ordinal, relativePathOf(file)]); return { task_id: `t${ordinal}`, filename: file.name }; } };
+  const extra = inFolder('added later', 'root/new.txt');
+  const session = new BatchUploadSession(api, { hash: async file => { hashed.push(relativePathOf(file)); return sha(file); } });
+  await session.resume('batch-1', [one, two, done, extra]);
+  assert.deepEqual(writes.sort(), [[0, 'root/two/note.txt'], [1, 'root/one/note.txt']]);
+  assert.equal(session.unmatched, 1); assert.equal(hashed.includes('root/new.txt'), false, 'a file of no slot is never hashed');
+  await assert.rejects(new BatchUploadSession(api).resume('batch-1', [extra]), /尚未上传的原文件/u);
+});
+test('embedding estimate follows segment windows and 31 segments per request; the budget field is checked', () => {
+  const sized = size => ({ size });
+  assert.equal(estimateEmbeddingRequests([]), 0);
+  assert.equal(estimateEmbeddingRequests([sized(1)]), 1);
+  assert.equal(estimateEmbeddingRequests([sized(1200)]), 1);
+  // 31 segments: 1200 + 30 × 1080 characters fit one request; one more character needs a second.
+  assert.equal(estimateEmbeddingRequests([sized(1200 + 30 * 1080)]), 1);
+  assert.equal(estimateEmbeddingRequests([sized(1200 + 30 * 1080 + 1)]), 2);
+  // Requests are per document: two small files are two requests, not one.
+  assert.equal(estimateEmbeddingRequests([sized(10), sized(10)]), 2);
+  // A document never exceeds the parser's 4096 segments: ceil(4096 / 31) = 133.
+  assert.equal(estimateEmbeddingRequests([sized(20 * 1024 * 1024)]), 133);
+  assert.equal(estimateEmbeddingRequests([{ name: 'scan.JPG', size: 9 * 1024 * 1024 }, { name: 'a.png', size: 5 }]), 2, 'images count one request each');
+  assert.equal(checkedRequestLimit(''), undefined); assert.equal(checkedRequestLimit(' 25 '), 25); assert.equal(checkedRequestLimit('1000000'), 1000000);
+  for (const bad of ['0', '-1', '1.5', '1000001', 'abc', '1e3']) assert.equal(checkedRequestLimit(bad), null, bad);
+});
+test('throughput and ETA come from the recent window and only count uploaded files still in progress', () => {
+  const batch = (finished, windowSeconds, counts) => ({ counts, throughput: { finished, window_seconds: windowSeconds } });
+  assert.deepEqual(batchThroughput(batch(20, 600, { queued: 30, indexing: 10, awaiting_upload: 99, indexed: 20 })), { filesPerMinute: 2, etaSeconds: 1200, remaining: 40 });
+  assert.equal(batchThroughput(batch(0, 600, { queued: 3 })).etaSeconds, null, 'nothing finished yet: no estimate');
+  assert.equal(batchThroughput(batch(5, 10, { queued: 3 })).filesPerMinute, null, 'too short a window: no estimate');
+  assert.equal(batchThroughput(batch(5, 300, {})).etaSeconds, 0);
+  assert.equal(batchThroughput({ counts: { queued: 1 } }).filesPerMinute, null, 'an older server without throughput');
+  assert.equal(batchThroughput(batch(3, 90, { parsing: 1 })).etaSeconds, 30);
+  assert.equal(formatDuration(30), '不到 1 分钟'); assert.equal(formatDuration(1200), '约 20 分钟'); assert.equal(formatDuration(7500), '约 2 小时 5 分钟'); assert.equal(formatDuration(7200), '约 2 小时');
+});
+test('history and filtered batch reads build exact query strings and refuse unknown state names', async () => {
+  const urls = [];
+  const api = createApi({ capabilities: ['ingestions', 'text_upload'] }, 'owner', async url => { urls.push(url); return Response.json({}); });
+  const wiki = createWikiWorkspaceApi({ api });
+  await wiki.listBatches(); await wiki.listBatches({ offset: 40, limit: 20 });
+  await wiki.getBatch('b1', { states: ['failed', 'cancelled'] }); await wiki.getBatch('b1');
+  assert.deepEqual(urls, ['/v1/document-batches?offset=0&limit=20', '/v1/document-batches?offset=40&limit=20',
+    '/v1/document-batches/b1?offset=0&limit=100&state=failed%2Ccancelled', '/v1/document-batches/b1?offset=0&limit=100']);
+  assert.throws(() => wiki.getBatch('b1', { states: ['Failed'] })); assert.throws(() => wiki.getBatch('b1', { states: ['a<b'] }));
+  assert.throws(() => wiki.listBatches({ limit: 101 }));
+});
