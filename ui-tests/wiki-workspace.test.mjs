@@ -1134,3 +1134,91 @@ test('server identities in knowledge, proposal and source links are escaped', as
   assert.match(f.html(), /#\/page-source\/p1&quot;&gt;&lt;img src=x&gt;\/1\/s&quot;1/u);
   await f.go('#/review/proposal'); assert.doesNotMatch(f.html(), /<img src=x>|q"1|s"1/u); assert.match(f.html(), /#\/proposal-source\/q&quot;1\/s&quot;1/u);
 });
+
+const batchCapabilities = { capabilities: ['ingestions', 'text_upload', 'batch_upload', 'image_text_upload'] };
+function batchBackend({ failUpload = new Set(), failCreate = 0, state = 'processing' } = {}) {
+  const slots = [], creates = [], uploads = [], reads = [];
+  const counts = () => slots.reduce((all, slot) => ({ ...all, [slot.state]: (all[slot.state] ?? 0) + 1 }), {});
+  return { slots, creates, uploads, reads, api: {
+    createBatch: async command => {
+      creates.push(command); await tick();
+      if (failCreate-- > 0) throw new ApiError(502, '连接中断');
+      if (!slots.length) command.files.forEach((file, ordinal) => slots.push({ ordinal, ...file, state: 'awaiting_upload', document_id: null, ingestion_task_id: null, error_code: null }));
+      return { batch_id: 'b1', total: slots.length };
+    },
+    uploadBatchFile: async (id, ordinal, file) => {
+      uploads.push(ordinal); await tick();
+      if (failUpload.delete(ordinal)) throw new ApiError(502, '连接中断');
+      Object.assign(slots[ordinal], { state: 'queued', document_id: `d${ordinal}`, ingestion_task_id: `t${ordinal}` });
+      return { task_id: `t${ordinal}`, filename: file.name };
+    },
+    getBatch: async (id, { offset = 0, limit = 100 } = {}) => { reads.push([offset, limit]); return { batch_id: id, state, total: slots.length, offset, limit, counts: counts(), halted_reason: null, items: slots.slice(offset, offset + limit) }; },
+  } };
+}
+const settle = async f => { for (let i = 0; i < 30 || (f?.workspace.state.busy && i < 2000); i++) await tick(); };
+const chooseFiles = (f, files) => f.events.change({ target: { id: 'workspace-files', files } });
+
+test('a failed batch is continued in the same batch, never re-registered as a new one', async () => {
+  const files = ['a', 'b', 'c', 'd'].map(name => new File([name], `${name}.txt`));
+  const backend = batchBackend({ failUpload: new Set([0]) });
+  const f = fixture('#/sources', backend.api, batchCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document'; chooseFiles(f, files);
+  await f.click('confirm-import'); await settle(f);
+  assert.match(f.nodes.get('toast').textContent, /连接中断/u);
+  assert.ok(f.workspace.state.pendingFiles.includes(files[0])); assert.equal(f.nodes.get('confirm-import').disabled, false);
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 1);
+  assert.equal(backend.slots.every(slot => slot.ingestion_task_id), true);
+  assert.equal(backend.uploads.filter(ordinal => ordinal === 0).length, 2);
+  assert.equal(new Set(backend.uploads.filter(ordinal => ordinal !== 0)).size, backend.uploads.filter(ordinal => ordinal !== 0).length);
+  assert.equal(f.win.location.hash, '#/imports/b1'); assert.equal(f.workspace.state.pendingFiles.length, 0); f.workspace.close();
+});
+
+test('a lost batch registration is retried with the same request ID', async () => {
+  const files = ['a', 'b'].map(name => new File([name], `${name}.txt`));
+  const backend = batchBackend({ failCreate: 1 });
+  const f = fixture('#/sources', backend.api, batchCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document'; chooseFiles(f, files);
+  await f.click('confirm-import'); await settle(f); await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 2); assert.equal(backend.creates[0].request_id, backend.creates[1].request_id);
+  assert.equal(f.win.location.hash, '#/imports/b1'); f.workspace.close();
+});
+
+test('invalid files are rejected before hashing or registering a batch', async () => {
+  const files = [new File(['a'], 'a.txt'), new File([new Uint8Array(11 * 1024 * 1024)], 'large.png')];
+  const backend = batchBackend();
+  const f = fixture('#/sources', backend.api, batchCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document'; chooseFiles(f, files);
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 0); assert.match(f.nodes.get('toast').textContent, /图片大小不能超过10MiB/u); f.workspace.close();
+});
+
+test('batch progress polls silently and waits while a resume upload runs', async () => {
+  const files = [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')];
+  const backend = batchBackend(); await backend.api.createBatch({ files: await Promise.all(files.map(async file => ({ filename: file.name, size_bytes: file.size, source_sha256: createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex') }))) });
+  Object.assign(backend.slots[0], { state: 'queued', document_id: 'd0', ingestion_task_id: 't0' });
+  let release; const gate = new Promise(resolve => { release = resolve; }); const upload = backend.api.uploadBatchFile;
+  const f = fixture('#/imports/b1', { ...backend.api, uploadBatchFile: async (...args) => { await gate; return upload(...args); } }, batchCapabilities);
+  await f.workspace.start(); assert.equal(f.timers.size, 1); assert.match(f.html(), /继续上传/u);
+  await f.click('import'); chooseFiles(f, [files[1]]);
+  const done = f.click('confirm-import'); await settle(f);
+  const reads = backend.reads.length; await f.poll();
+  assert.equal(backend.reads.length, reads); assert.equal(f.timers.size, 1);
+  release(); await done; await settle(f);
+  assert.equal(f.nodes.get('import-dialog').open, false); assert.match(f.nodes.get('toast').textContent, /资料已提交/u);
+  const html = []; const content = f.nodes.get('content'); let value = content.innerHTML;
+  Object.defineProperty(content, 'innerHTML', { get: () => value, set: next => { html.push(next); value = next; } });
+  await f.poll(); assert.equal(html.length, 1); assert.doesNotMatch(html[0], /正在加载/u); assert.equal(f.timers.size, 1);
+  Object.assign(backend.slots[0], { state: 'indexed' }); Object.assign(backend.slots[1], { state: 'indexed' });
+  await f.poll(); assert.equal(f.timers.size, 0); f.workspace.close();
+});
+
+test('halted batches explain the reason and per-file failures, and offer no further upload', async () => {
+  const backend = batchBackend({ state: 'halted' });
+  await backend.api.createBatch({ files: [{ filename: 'a.txt', size_bytes: 1, source_sha256: 'a'.repeat(64) }, { filename: 'b.txt', size_bytes: 1, source_sha256: 'b'.repeat(64) }] });
+  Object.assign(backend.slots[0], { state: 'failed', document_id: 'd0', ingestion_task_id: 't0', error_code: 'parser_timeout' });
+  const f = fixture('#/imports/b1', { ...backend.api, getBatch: async (...args) => ({ ...await backend.api.getBatch(...args), halted_reason: 'embedding_budget_exhausted' }) }, batchCapabilities);
+  await f.workspace.start();
+  assert.match(f.html(), /批次已停止：本批次的嵌入请求额度已用完/u); assert.match(f.html(), /文件解析超时/u);
+  assert.doesNotMatch(f.html(), /data-action="import"/u); f.workspace.close();
+});

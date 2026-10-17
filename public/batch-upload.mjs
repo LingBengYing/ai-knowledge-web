@@ -1,16 +1,20 @@
 import { ApiError, sha256Hex } from './api.mjs';
 
+const UPLOAD_ATTEMPTS = 4;
+
 /** Bounded transfers; the durable server batch owns processing and recovery. */
 export class BatchUploadSession {
-  constructor(api, { concurrency = 2, onProgress = () => {} } = {}) {
+  constructor(api, { concurrency = 2, onProgress = () => {}, validate = () => {}, delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new TypeError('Invalid upload concurrency');
-    this.api = api; this.concurrency = concurrency; this.onProgress = onProgress;
-    this.batchId = null; this.progress = []; this.files = []; this.running = false;
+    this.api = api; this.concurrency = concurrency; this.onProgress = onProgress; this.validate = validate; this.delay = delay;
+    this.batchId = null; this.requestId = null; this.progress = []; this.files = []; this.running = false;
   }
   async start(files, { requestId = crypto.randomUUID(), embeddingRequestLimit, signal } = {}) {
     if (this.running || !files.length || files.length > 10000) throw new ApiError(422, '请选择要导入的文件。');
-    this.running = true; this.files = Array.from(files); this.progress = this.files.map(file => ({ filename: file.name, state: 'preparing' }));
+    this.running = true; this.requestId = requestId; this.files = Array.from(files); this.progress = this.files.map(file => ({ filename: file.name, state: 'preparing' }));
     try {
+      // Every slot must be uploadable before the server registers the manifest.
+      for (const file of this.files) this.validate(file);
       const manifest = [];
       for (let ordinal = 0; ordinal < this.files.length; ordinal++) {
         signal?.throwIfAborted(); const file = this.files[ordinal];
@@ -33,7 +37,12 @@ export class BatchUploadSession {
         signal?.throwIfAborted(); const index = next++, ordinal = this.ordinals[index], file = this.files[index];
         this.progress[index].state = 'uploading'; this.onProgress(this.snapshot());
         try {
-          const task = await this.api.uploadBatchFile(this.batchId, ordinal, file, { signal });
+          let task;
+          // 429 means the slot was not admitted, so a bounded resend cannot duplicate it.
+          for (let attempt = 1; ; attempt++) {
+            try { task = await this.api.uploadBatchFile(this.batchId, ordinal, file, { signal }); break; }
+            catch (error) { if (error?.status !== 429 || attempt >= UPLOAD_ATTEMPTS) throw error; await this.delay(500 * 2 ** (attempt - 1)); signal?.throwIfAborted(); }
+          }
           if (typeof task?.task_id !== 'string' || !task.task_id || task.filename !== file.name) throw new ApiError(502, '文件回执无效，请核对批次。');
           this.progress[index] = { filename: file.name, state: 'submitted', taskId: task.task_id };
         } catch (error) {
@@ -56,17 +65,22 @@ export class BatchUploadSession {
     if (this.running) throw new ApiError(409, '上传正在进行。');
     this.running = true;
     try {
-      const pending = []; let total;
+      for (const file of files) this.validate(file);
+      const pending = [], received = []; let total;
       for (let offset = 0; total === undefined || offset < total; offset += 100) {
         const page = await this.api.getBatch(batchId, { offset, limit: 100, signal }); total = page.total;
         if (!Number.isSafeInteger(total) || total < 1 || !Array.isArray(page.items) || page.offset !== offset
             || (page.items.length === 0 && offset < total) || page.state === 'halted') throw new ApiError(409, '批次已停止或状态发生变化。');
         pending.push(...page.items.filter(item => item.state === 'awaiting_upload'));
+        received.push(...page.items.filter(item => item.state !== 'awaiting_upload' && item.ingestion_task_id));
       }
       this.files = []; this.ordinals = [];
       for (const file of files) {
         signal?.throwIfAborted(); const digest = await sha256Hex(new Uint8Array(await file.arrayBuffer()));
-        const index = pending.findIndex(item => item.filename === file.name && item.size_bytes === file.size && item.source_sha256 === digest);
+        const same = item => item.filename === file.name && item.size_bytes === file.size && item.source_sha256 === digest;
+        const index = pending.findIndex(same);
+        // A slot whose earlier response was lost is already received; never send it twice.
+        if (index < 0 && received.some(same)) continue;
         if (index < 0) throw new ApiError(422, '请选择本批次尚未上传的原文件。');
         this.files.push(file); this.ordinals.push(pending.splice(index, 1)[0].ordinal);
       }

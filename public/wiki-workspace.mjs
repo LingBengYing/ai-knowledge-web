@@ -1,4 +1,4 @@
-import { createApi, escapeHtml, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
+import { createApi, escapeHtml, validateUpload, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
 import { createWikiWorkspaceApi } from './wiki-workspace-api.mjs';
 import { AnswerSession } from './answers.mjs';
 import { KnowledgeAgentSession, agentProgressView } from './knowledge-agent.mjs';
@@ -12,6 +12,8 @@ import { failureNotice, failureReason } from './failure-reasons.mjs';
 import { BatchUploadSession, batchFileLabels } from './batch-upload.mjs';
 
 const e = escapeHtml;
+const BATCH_ACTIVE = ['queued', 'parsing', 'parsed', 'indexing'];
+const BATCH_HALTED = '有文件处理失败、已取消或已删除，批次后续文件不再继续处理；已完成的资料保持可用。';
 /** Server timestamps stay milliseconds; presentation uses the browser's local time zone. */
 export function formatTimestamp(milliseconds) {
   if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) return '时间不可用';
@@ -504,7 +506,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function batchView() {
     const batch = state.data;
     if (!batch) return empty('正在读取批次…');
-    return `${heading('IMPORT', '批量导入', '', button('refresh', '刷新') + (batch.counts.awaiting_upload ? button('import', '继续上传', true) : '') + '<a class="button secondary" href="#/tasks">处理任务</a>')}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.state === 'halted' ? ' · 批次已停止' : ''}</div><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>操作</th></tr></thead><tbody>${batch.items.map(item => `<tr><td>${e(item.filename)}</td><td>${e(batchFileLabels[item.state] ?? item.state)}</td><td>${item.document_id ? `<a href="#/sources/${e(item.document_id)}">查看资料</a>` : '—'}</td></tr>`).join('')}</tbody></table></div><div class="pagination">${button('batch-prev', '上一页', false, batch.offset === 0 ? 'disabled' : '')}<span>${batch.offset + 1}–${batch.offset + batch.items.length} / ${batch.total}</span>${button('batch-next', '下一页', false, batch.offset + batch.items.length >= batch.total ? 'disabled' : '')}</div>`;
+    return `${heading('IMPORT', '批量导入', '', button('refresh', '刷新') + (batch.counts.awaiting_upload && batch.state !== 'halted' ? button('import', '继续上传', true) : '') + '<a class="button secondary" href="#/tasks">处理任务</a>')}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.state === 'halted' ? ' · 批次已停止' : ''}</div>${batch.state === 'halted' ? failureNotice(batch.halted_reason, { prefix: '批次已停止：', fallback: BATCH_HALTED }) : ''}<div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>操作</th></tr></thead><tbody>${batch.items.map(item => `<tr><td>${e(item.filename)}</td><td>${e(batchFileLabels[item.state] ?? item.state)}${item.error_code ? `<div class="muted" title="错误代码：${e(item.error_code)}">${e(failureReason(item.error_code))}</div>` : ''}</td><td>${item.document_id ? `<a href="#/sources/${e(item.document_id)}">查看资料</a>` : '—'}</td></tr>`).join('')}</tbody></table></div><div class="pagination">${button('batch-prev', '上一页', false, batch.offset === 0 ? 'disabled' : '')}<span>${batch.offset + 1}–${batch.offset + batch.items.length} / ${batch.total}</span>${button('batch-next', '下一页', false, batch.offset + batch.items.length >= batch.total ? 'disabled' : '')}</div>`;
   }
   async function completeList(method, options = {}, signal) {
     const items = []; let total;
@@ -587,7 +589,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       if (route.view === 'answer-source') { const response = await wiki.getAnswerSource(route.id, route.ordinal, { signal }); data = { metadata: response.citation }; }
       if (!isCurrent(currentEpoch)) return;
       state.data = data; state.loading = false; render();
-      if (route.view === 'imports' && data.state === 'processing') pollTimer = setPollTimer(() => { if (isCurrent(currentEpoch)) load(); }, 2000);
+      if (route.view === 'imports') scheduleBatchPoll(currentEpoch);
       if (route.view === 'sources' && route.id) await openOriginal(data.document, currentEpoch);
       if (['page-source', 'proposal-source'].includes(route.view)) await openWikiSource(data, currentEpoch, signal);
       if (route.view === 'answer-source') await openAnswerSource(data.metadata, currentEpoch, signal);
@@ -660,6 +662,20 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (documents.some(item => taskPending(item.latest_job) || taskPending(item.latest_index_job)
       || ['queued', 'processing'].includes(item.status) || ['queued', 'processing'].includes(item.index_status)
       || ['pending', 'dispatching'].includes(item.auto_index?.state))) pollTimer = setPollTimer(() => refreshSourceStatus(captured), 1500);
+  }
+  /** Silent batch refresh: no loading frame, no epoch change, and never underneath a running write or upload. */
+  function scheduleBatchPoll(captured) {
+    clearPollTimer(pollTimer); pollTimer = null;
+    if (BATCH_ACTIVE.some(name => state.data?.counts?.[name] > 0)) pollTimer = setPollTimer(() => refreshBatch(captured), 2000);
+  }
+  async function refreshBatch(captured) {
+    if (!isCurrent(captured)) return;
+    if (state.busy || batchSession?.running) { pollTimer = setPollTimer(() => refreshBatch(captured), 2000); return; }
+    try {
+      const batch = await wiki.getBatch(state.route.id, { offset: state.batchOffset ?? 0, limit: 100, signal: readController.signal });
+      if (!isCurrent(captured)) return;
+      state.data = batch; render(); scheduleBatchPoll(captured);
+    } catch (error) { if (isCurrent(captured) && error.name !== 'AbortError') notify(`批次状态读取暂停：${errorMessage(error)}。可点击刷新重新读取。`); }
   }
   async function mutate(operation, success) {
     if (state.busy) return; state.busy = true; const captured = epoch;
@@ -760,16 +776,21 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   async function confirmImport() {
     const files = state.pendingFiles.slice(); if (!files.length || state.busy) return;
     const uploadKind = $('upload-kind').value;
-    const useBatch = uploadKind === 'document' && (state.route.view === 'imports' || files.length > 1 && state.config?.capabilities?.includes('batch_upload'));
+    // A failed batch is continued (same batch, same request ID), never re-registered as a new batch.
+    const retry = state.batchRetry;
+    const useBatch = uploadKind === 'document' && (state.route.view === 'imports' || Boolean(retry) || files.length > 1 && state.config?.capabilities?.includes('batch_upload'));
     await mutate(async () => {
       if (useBatch) {
-        batchSession = new BatchUploadSession(wiki, { onProgress: progress => {
+        const batchId = state.route.view === 'imports' ? state.route.id : retry?.batchId, requestId = retry?.requestId ?? crypto.randomUUID();
+        const session = new BatchUploadSession(wiki, { validate: file => validateUpload(file, state.config, 'document'), onProgress: progress => {
           state.batchProgress = progress;
-          state.pendingFiles = files.filter((_, index) => progress.items[index]?.state !== 'submitted');
+          state.pendingFiles = session.files.filter((_, index) => progress.items[index]?.state !== 'submitted');
           updateUploadList();
         } });
-        if (state.route.view === 'imports') await batchSession.resume(state.route.id, files);
-        else await batchSession.start(files);
+        batchSession = session;
+        try { if (batchId) await session.resume(batchId, files); else await session.start(files, { requestId }); }
+        catch (error) { state.batchRetry = { requestId, batchId: session.batchId ?? batchId ?? null }; throw error; }
+        state.batchRetry = null; state.pendingFiles = [];
       } else {
         let next = 0, failure;
         const upload = async () => { while (!failure && next < files.length) { const file = files[next++]; try { await wiki.upload(file, { uploadKind }); state.pendingFiles = state.pendingFiles.filter(item => item !== file); updateUploadList(); } catch (error) { failure = error; } } };
@@ -837,8 +858,8 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (target.id === 'source-kind') { state.sourceKind = target.value; state.offset = 0; load(); }
     if (target.id === 'page-kind') { state.pageKind = target.value; render(); }
     if (target.id === 'review-status') { state.reviewStatus = target.value; load(); }
-    if (target.id === 'workspace-files') { state.batchProgress = null; state.pendingFiles = Array.from(target.files); updateUploadList(); }
-    if (target.id === 'upload-kind') { state.pendingFiles = []; $('workspace-files').value = ''; updateUploadList(); updateUploadAccept(); }
+    if (target.id === 'workspace-files') { state.batchProgress = null; state.batchRetry = null; state.pendingFiles = Array.from(target.files); updateUploadList(); }
+    if (target.id === 'upload-kind') { state.batchRetry = null; state.pendingFiles = []; $('workspace-files').value = ''; updateUploadList(); updateUploadAccept(); }
     if (target.id === 'threshold-enabled') $('score-threshold').disabled = !target.checked;
     if (['ranking-mode', 'search-method'].includes(target.id)) $('threshold-help').textContent = retrievalThresholdHelp({ ranking_mode: $('ranking-mode').value, search_method: $('search-method').value });
   });
