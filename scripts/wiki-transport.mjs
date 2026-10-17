@@ -16,7 +16,7 @@ export const WIKI_ASSETS = [
 ];
 
 export const WIKI_ROUTES = [
-  [/^\/v1\/document-batches$/, ['POST'], 'wiki-batch'],
+  [/^\/v1\/document-batches$/, ['GET', 'POST'], 'wiki-batch'],
   [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'wiki-batch'],
   [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/, ['POST'], 'batch-upload'],
   [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/(?:retry-failed|cancel|resume)$/, ['POST'], 'wiki-batch'],
@@ -52,7 +52,12 @@ export function wikiQueryAllowed(target, method) {
   if (!target.includes('?')) return true;
   let allowed = [];
   if (method === 'GET') {
-    if (/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) allowed = ['offset', 'limit'];
+    if (url.pathname === '/v1/document-batches') allowed = ['offset', 'limit'];
+    // A batch page may be filtered by file state: lowercase names, comma-separated.
+    if (/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) {
+      allowed = ['offset', 'limit', 'state'];
+      if (url.searchParams.has('state') && !/^[a-z_]{1,32}(?:,[a-z_]{1,32}){0,9}$/u.test(url.searchParams.get('state'))) return false;
+    }
     if (/^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(url.pathname)) allowed = ['offset', 'limit'];
     if (url.pathname === '/v1/wiki/catalog') allowed = ['offset', 'limit', 'q', 'kind'];
     if (url.pathname === '/v1/wiki/pages') allowed = ['offset', 'limit', 'q', 'state'];

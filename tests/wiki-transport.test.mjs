@@ -33,6 +33,24 @@ test('batch manifests and raw slots cross both real proxies with bounded upload 
   }
 });
 
+test('the import history and state-filtered batch pages cross both real proxies with only known query fields', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { seen.push([req.method, req.url]); res.end('{}'); }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    for (const path of ['/v1/document-batches', '/v1/document-batches?offset=20&limit=20', '/v1/document-batches/batch-one?state=failed%2Ccancelled&offset=0&limit=100', '/v1/document-batches/batch-one?state=duplicate']) {
+      assert.equal((await raw(origin, path, { headers })).status, 200, `${external} ${path}`);
+      assert.deepEqual(seen.at(-1), ['GET', path]);
+    }
+    const before = seen.length;
+    for (const path of ['/v1/document-batches?state=failed', '/v1/document-batches?offset=0&offset=1', '/v1/document-batches/batch-one?state=FAILED', '/v1/document-batches/batch-one?state=failed%3Cx%3E',
+      '/v1/document-batches/batch-one?state=a,b,c,d,e,f,g,h,i,j,k', '/v1/document-batches/batch-one?state=failed&state=cancelled'])
+      assert.equal((await raw(origin, path, { headers })).status, 400, `${external} ${path}`);
+    assert.equal((await raw(origin, '/v1/document-batches', { method: 'DELETE', headers })).status, 405);
+    assert.equal(seen.length, before, 'refused reads never reach Java');
+  }
+});
+
 test('batch bulk actions cross both real proxies as JSON POSTs and nothing else', async t => {
   for (const external of [false, true]) {
     const seen = [];

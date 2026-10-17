@@ -441,7 +441,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       }
       const path = req.url.split('?')[0];
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
-      const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/u.test(path) || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
+      const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/document-batches(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path) || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
       // Chat apps and mail append tracking queries to shared page links; HTML pages ignore them, modules and APIs do not.
       const page = ['GET', 'HEAD'].includes(req.method) && ASSETS.get(path)?.[1].startsWith('text/html');
       if (req.url.includes('?') && !page && !wikiQuery && !replacementUpload && !['/v1/documents', '/v1/management/documents', '/v1/management/document-cleanups'].includes(path)) throw new TransportError(400, 'query_denied');
