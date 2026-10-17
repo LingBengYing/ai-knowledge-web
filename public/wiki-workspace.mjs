@@ -9,7 +9,7 @@ import { ModelConfigurationSession, modelConfigurationEnabled } from './model-co
 import { ModelRebuildSession, modelRebuildEnabled, modelRebuildPending, modelRebuildReason } from './model-rebuild.mjs';
 import { documentStatusLabel, indexTaskLabel, taskPending, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
 import { failureNotice, failureReason } from './failure-reasons.mjs';
-import { BatchUploadSession, batchFileLabels } from './batch-upload.mjs';
+import { BatchUploadSession, batchFileLabels, uploadSettled } from './batch-upload.mjs';
 
 const e = escapeHtml;
 const BATCH_ACTIVE = ['queued', 'parsing', 'parsed', 'indexing'];
@@ -504,6 +504,13 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     $('content').innerHTML = (views[state.route.view] || (() => empty('找不到这个页面', '请从左侧导航重新进入。')))();
     if (state.route.view === 'models') updateModelControls();
   }
+  function batchFileLink(item) {
+    if (item.document_id) return `<a href="#/sources/${e(item.document_id)}">查看资料</a>`;
+    // A skipped duplicate links the document it repeats (or names the earlier file of this batch).
+    if (item.state === 'duplicate' && ident.test(item.duplicate_of_document_id ?? '')) return `<a href="#/sources/${e(item.duplicate_of_document_id)}">查看已有资料</a>`;
+    if (item.state === 'duplicate' && Number.isSafeInteger(item.duplicate_of_ordinal)) return `同本批第 ${item.duplicate_of_ordinal + 1} 个文件`;
+    return '—';
+  }
   function batchView() {
     const batch = state.data;
     if (!batch) return empty('正在读取批次…');
@@ -513,7 +520,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       + (actions.includes('resume') ? button('batch-resume', '解除停止并继续', true) : '')
       + (actions.includes('retry_failed') ? button('batch-retry-failed', `重试失败文件（${Number(batch.retryable_files) || 0}）`) : '')
       + (actions.includes('cancel') ? button('batch-cancel', '取消批次') : '') + '<a class="button secondary" href="#/tasks">处理任务</a>';
-    return `${heading('IMPORT', '批量导入', '', tools)}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.counts.failed ? ` · 失败 ${batch.counts.failed} 份` : ''}${BATCH_SUMMARY[batch.state] ?? ''}</div>${stopped ? failureNotice(batch.halted_reason, { prefix: batch.state === 'cancelled' ? '' : '批次已停止：', fallback: BATCH_HALTED }) : ''}<div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>操作</th></tr></thead><tbody>${batch.items.map(item => `<tr><td>${e(item.filename)}</td><td>${e(batchFileLabels[item.state] ?? item.state)}${item.error_code ? `<div class="muted" title="错误代码：${e(item.error_code)}">${e(failureReason(item.error_code))}</div>` : ''}</td><td>${item.document_id ? `<a href="#/sources/${e(item.document_id)}">查看资料</a>` : '—'}</td></tr>`).join('')}</tbody></table></div><div class="pagination">${button('batch-prev', '上一页', false, batch.offset === 0 ? 'disabled' : '')}<span>${batch.offset + 1}–${batch.offset + batch.items.length} / ${batch.total}</span>${button('batch-next', '下一页', false, batch.offset + batch.items.length >= batch.total ? 'disabled' : '')}</div>`;
+    return `${heading('IMPORT', '批量导入', '', tools)}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.counts.duplicate ? ` · 已存在跳过 ${batch.counts.duplicate} 份` : ''}${batch.counts.failed ? ` · 失败 ${batch.counts.failed} 份` : ''}${BATCH_SUMMARY[batch.state] ?? ''}</div>${stopped ? failureNotice(batch.halted_reason, { prefix: batch.state === 'cancelled' ? '' : '批次已停止：', fallback: BATCH_HALTED }) : ''}<div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>操作</th></tr></thead><tbody>${batch.items.map(item => `<tr><td>${e(item.filename)}</td><td>${e(batchFileLabels[item.state] ?? item.state)}${item.error_code ? `<div class="muted" title="错误代码：${e(item.error_code)}">${e(failureReason(item.error_code))}</div>` : ''}</td><td>${batchFileLink(item)}</td></tr>`).join('')}</tbody></table></div><div class="pagination">${button('batch-prev', '上一页', false, batch.offset === 0 ? 'disabled' : '')}<span>${batch.offset + 1}–${batch.offset + batch.items.length} / ${batch.total}</span>${button('batch-next', '下一页', false, batch.offset + batch.items.length >= batch.total ? 'disabled' : '')}</div>`;
   }
   async function completeList(method, options = {}, signal) {
     const items = []; let total;
@@ -802,14 +809,16 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     await mutate(async () => {
       if (useBatch) {
         const batchId = state.route.view === 'imports' ? state.route.id : retry?.batchId, requestId = retry?.requestId ?? crypto.randomUUID();
+        // A retried registration reuses its request ID, so it must also keep its duplicate choice.
+        const includeDuplicates = retry ? retry.includeDuplicates === true : $('include-duplicates').checked === true;
         const session = new BatchUploadSession(wiki, { validate: file => validateUpload(file, state.config, 'document'), onProgress: progress => {
           state.batchProgress = progress;
-          state.pendingFiles = session.files.filter((_, index) => progress.items[index]?.state !== 'submitted');
+          state.pendingFiles = session.files.filter((_, index) => !uploadSettled(progress.items[index]?.state));
           updateUploadList();
         } });
         batchSession = session;
-        try { if (batchId) await session.resume(batchId, files); else await session.start(files, { requestId }); }
-        catch (error) { state.batchRetry = { requestId, batchId: session.batchId ?? batchId ?? null }; throw error; }
+        try { if (batchId) await session.resume(batchId, files); else await session.start(files, { requestId, includeDuplicates }); }
+        catch (error) { state.batchRetry = { requestId, includeDuplicates, batchId: session.batchId ?? batchId ?? null }; throw error; }
         state.batchRetry = null; state.pendingFiles = [];
       } else {
         let next = 0, failure;
@@ -823,10 +832,11 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function updateUploadList() {
     const progress = state.batchProgress;
     if (progress) {
-      const done = progress.items.filter(item => item.state === 'submitted').length;
-      const first = progress.items.findIndex(item => item.state !== 'submitted');
+      const done = progress.items.filter(item => uploadSettled(item.state)).length;
+      const skipped = progress.items.filter(item => item.state === 'duplicate').length;
+      const first = progress.items.findIndex(item => !uploadSettled(item.state));
       const start = Math.max(0, (first < 0 ? progress.items.length : first) - 5);
-      $('upload-list').innerHTML = `<div class="result-count">已提交 ${done} / ${progress.items.length} 份</div>${progress.batchId ? `<a class="text-link" href="#/imports/${e(progress.batchId)}">查看批次处理进度</a>` : ''}${progress.items.slice(start, start + 50).map(item => `<div class="upload-item"><strong>${e(item.filename)}</strong><span>${e(batchFileLabels[item.state] ?? item.state)}</span></div>`).join('')}`;
+      $('upload-list').innerHTML = `<div class="result-count">已提交 ${done} / ${progress.items.length} 份${skipped ? `（其中 ${skipped} 份已存在，跳过）` : ''}</div>${progress.batchId ? `<a class="text-link" href="#/imports/${e(progress.batchId)}">查看批次处理进度</a>` : ''}${progress.items.slice(start, start + 50).map(item => `<div class="upload-item"><strong>${e(item.filename)}</strong><span>${e(batchFileLabels[item.state] ?? item.state)}</span></div>`).join('')}`;
     } else {
       $('upload-list').innerHTML = `<div class="result-count">已选择 ${state.pendingFiles.length} 份</div>` + state.pendingFiles.slice(0, 50).map(file => `<div class="upload-item"><strong>${e(file.name)}</strong><span>${(file.size / 1024).toFixed(1)} KiB · 待上传</span></div>`).join('');
     }

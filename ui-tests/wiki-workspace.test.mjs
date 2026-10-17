@@ -1136,15 +1136,16 @@ test('server identities in knowledge, proposal and source links are escaped', as
 });
 
 const batchCapabilities = { capabilities: ['ingestions', 'text_upload', 'batch_upload', 'image_text_upload'] };
-function batchBackend({ failUpload = new Set(), failCreate = 0, state = 'processing' } = {}) {
+function batchBackend({ failUpload = new Set(), failCreate = 0, state = 'processing', duplicates = new Map() } = {}) {
   const slots = [], creates = [], uploads = [], reads = [];
   const counts = () => slots.reduce((all, slot) => ({ ...all, [slot.state]: (all[slot.state] ?? 0) + 1 }), {});
   return { slots, creates, uploads, reads, api: {
     createBatch: async command => {
       creates.push(command); await tick();
       if (failCreate-- > 0) throw new ApiError(502, '连接中断');
-      if (!slots.length) command.files.forEach((file, ordinal) => slots.push({ ordinal, ...file, state: 'awaiting_upload', document_id: null, ingestion_task_id: null, error_code: null }));
-      return { batch_id: 'b1', total: slots.length };
+      if (!slots.length) command.files.forEach((file, ordinal) => slots.push({ ordinal, ...file, state: 'awaiting_upload', document_id: null, ingestion_task_id: null, error_code: null,
+        ...(duplicates.has(ordinal) && !command.include_duplicates ? { state: 'duplicate', ...duplicates.get(ordinal) } : {}) }));
+      return { batch_id: 'b1', total: slots.length, counts: counts(), items: slots.slice(0, 100) };
     },
     uploadBatchFile: async (id, ordinal, file) => {
       uploads.push(ordinal); await tick();
@@ -1276,4 +1277,29 @@ test('resuming uploads refuses a cancelled batch like a halted one', async () =>
     async uploadBatchFile() { throw new Error('must not upload'); } };
   const { BatchUploadSession } = await import('../public/batch-upload.mjs');
   await assert.rejects(new BatchUploadSession(api).resume('b1', [new File(['a'], 'a.txt')]), /批次已停止/u);
+});
+
+test('duplicate files are skipped with a link to what already exists, and the checkbox imports them anyway', async () => {
+  const files = ['a', 'b', 'c'].map(name => new File([name], `${name}.txt`));
+  const duplicates = new Map([[1, { duplicate_of_document_id: 'doc-old', duplicate_of_ordinal: null }], [2, { duplicate_of_document_id: null, duplicate_of_ordinal: 0 }]]);
+  const backend = batchBackend({ duplicates });
+  const f = fixture('#/sources', backend.api, batchCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document'; f.nodes.set('include-duplicates', { checked: false }); chooseFiles(f, files);
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates[0].include_duplicates, undefined);
+  assert.deepEqual(backend.uploads, [0], 'skipped duplicates are never sent');
+  assert.equal(f.workspace.state.pendingFiles.length, 0);
+  assert.equal(f.win.location.hash, '#/imports/b1'); await f.go('#/imports/b1');
+  const html = f.html();
+  assert.match(html, /已存在（跳过）/u); assert.match(html, /href="#\/sources\/doc-old">查看已有资料/u); assert.match(html, /同本批第 1 个文件/u);
+  assert.match(html, /已存在跳过 2 份/u);
+  f.workspace.close();
+
+  const again = batchBackend({ duplicates });
+  const g = fixture('#/sources', again.api, batchCapabilities);
+  await g.workspace.start(); await g.click('import'); g.nodes.get('upload-kind').value = 'document'; g.nodes.set('include-duplicates', { checked: true }); chooseFiles(g, files);
+  await g.click('confirm-import'); await settle(g);
+  assert.equal(again.creates[0].include_duplicates, true);
+  assert.deepEqual(again.uploads.sort(), [0, 1, 2]);
+  g.workspace.close();
 });

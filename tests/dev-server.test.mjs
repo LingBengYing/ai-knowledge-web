@@ -409,25 +409,70 @@ test('task GET and bodyless cancel/retry POST are precise routes, never broad AP
   assert.equal(seen.length, 3);
 });
 
-test('at most two upload exchanges remain in flight and released capacity is reusable', async t => {
+test('uploads are admitted four per client and eight in total, and released capacity is reusable', async t => {
   const responses = [];
   const { origin } = await fixture(t, (req, res) => { req.resume(); responses.push(res); });
-  const options = { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream' }, body: 'synthetic' };
-  const first = raw(origin, '/v1/documents?filename=a.txt', options);
-  const second = raw(origin, '/v1/documents?filename=b.txt', options);
-  for (let i = 0; responses.length < 2 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(responses.length, 2);
-  const refused = await raw(origin, '/v1/documents?filename=c.txt', options);
+  const options = principal => ({ method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream', 'X-Principal-Id': principal }, body: 'synthetic' });
+  const waitFor = async count => { for (let i = 0; responses.length < count && i < 200; i++) await new Promise(resolve => setTimeout(resolve, 5)); };
+  const first = ['a', 'b', 'c', 'd'].map(name => raw(origin, `/v1/documents?filename=${name}.txt`, options('owner')));
+  await waitFor(4); assert.equal(responses.length, 4);
+  const refused = await raw(origin, '/v1/documents?filename=e.txt', options('owner'));
   assert.equal(refused.status, 429); assert.equal(JSON.parse(refused.body).detail, '上传通道繁忙，请稍后继续上传。');
-  assert.equal(responses.length, 2);
+  // Another client still gets its own four slots, up to eight in total.
+  const others = ['f', 'g', 'h', 'i'].map(name => raw(origin, `/v1/documents?filename=${name}.txt`, options('reader')));
+  await waitFor(8); assert.equal(responses.length, 8);
+  assert.equal((await raw(origin, '/v1/documents?filename=j.txt', options('third'))).status, 429, 'the total cap holds');
+  assert.equal(responses.length, 8);
   for (const response of responses) { response.writeHead(202); response.end('{}'); }
-  assert.equal((await first).status, 202);
-  assert.equal((await second).status, 202);
-  const next = raw(origin, '/v1/documents?filename=d.txt', options);
-  for (let i = 0; responses.length < 3 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(responses.length, 3);
-  responses[2].writeHead(202); responses[2].end('{}');
+  for (const result of await Promise.all([...first, ...others])) assert.equal(result.status, 202);
+  const next = raw(origin, '/v1/documents?filename=k.txt', options('owner'));
+  await waitFor(9); assert.equal(responses.length, 9);
+  responses[8].writeHead(202); responses[8].end('{}');
   assert.equal((await next).status, 202);
+});
+
+test('a declared-length upload streams to Java before the browser finishes, keeping the cap and the empty check', async t => {
+  let calls = 0, firstChunk; const received = [];
+  const arrived = new Promise(resolve => { firstChunk = resolve; });
+  const { origin } = await fixture(t, (req, res) => {
+    calls++;
+    req.on('data', chunk => { received.push(chunk); firstChunk(); });
+    req.on('end', () => { res.writeHead(202, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ length: Buffer.concat(received).length, header: req.headers['content-length'] })); });
+  }, { uploadBytes: 64 * 1024 });
+  const half = Buffer.alloc(16 * 1024, 'a');
+  const result = new Promise((resolve, reject) => {
+    const req = http.request(origin, { path: '/v1/documents?filename=a.txt', method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream', 'Content-Length': String(half.length * 2) } }, res => {
+      const chunks = []; res.on('data', chunk => chunks.push(chunk)); res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
+    req.on('error', reject);
+    req.write(half);
+    // The second half is sent only after Java has already seen bytes: the entry did not buffer the body.
+    arrived.then(() => req.end(half));
+  });
+  const response = await result;
+  assert.equal(response.status, 202);
+  assert.deepEqual(JSON.parse(response.body), { length: half.length * 2, header: String(half.length * 2) });
+  // Over the cap or empty by declaration: refused before Java sees anything.
+  const before = calls;
+  const headers = { Origin: origin, 'Content-Type': 'application/octet-stream' };
+  assert.equal((await raw(origin, '/v1/documents?filename=b.txt', { method: 'POST', headers, body: Buffer.alloc(64 * 1024 + 1) })).status, 413);
+  assert.equal((await raw(origin, '/v1/documents?filename=b.txt', { method: 'POST', headers: { ...headers, 'Content-Length': '0' } })).status, 400);
+  assert.equal(calls, before);
+});
+
+test('a chunked upload without a declared length is still capped while it is read', async t => {
+  let calls = 0;
+  const { origin } = await fixture(t, (req, res) => { calls++; req.resume(); req.on('end', () => { res.writeHead(202); res.end('{}'); }); }, { uploadBytes: 32 });
+  const send = chunks => new Promise((resolve, reject) => {
+    const req = http.request(origin, { path: '/v1/documents?filename=a.txt', method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream', 'Transfer-Encoding': 'chunked' } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    req.on('error', reject);
+    for (const chunk of chunks) req.write(chunk);
+    req.end();
+  });
+  assert.equal(await send(['x'.repeat(20), 'x'.repeat(20)]), 413);
+  assert.equal(calls, 0);
+  assert.equal(await send(['x'.repeat(10), 'x'.repeat(10)]), 202);
+  assert.equal(calls, 1);
 });
 
 test('index creation and task routes forward exact bodyless requests without changing identity', async t => {

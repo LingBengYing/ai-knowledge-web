@@ -1,6 +1,7 @@
 /** Exact shared Wiki transport surface; Java remains the authority for identities and versions. */
 export const WIKI_ASSETS = [
   ['/batch-upload.mjs', ['batch-upload.mjs', 'text/javascript; charset=utf-8']],
+  ['/sha256-stream.mjs', ['sha256-stream.mjs', 'text/javascript; charset=utf-8']],
   ['/wiki/', ['wiki-workspace.html', 'text/html; charset=utf-8']],
   ['/wiki-workspace.html', ['wiki-workspace.html', 'text/html; charset=utf-8']],
   ['/wiki-workspace.mjs', ['wiki-workspace.mjs', 'text/javascript; charset=utf-8']],

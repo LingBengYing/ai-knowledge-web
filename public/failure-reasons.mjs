@@ -32,6 +32,7 @@ const taskMessages = Object.freeze({
   batch_cancelled: '批次已取消：排队中的文件不再处理，也不再接收上传；已完成的资料保持可用。可以“解除停止并继续”。',
   batch_action_conflict: '批次当前状态不能执行该操作，请刷新批次后核对。',
   batch_upload_conflict: '批次文件内容或处理状态已改变，请刷新批次后核对。',
+  batch_file_duplicate: '该文件与已有资料内容相同，已跳过，无需上传。',
   upload_busy: '上传通道繁忙，请稍后继续上传。',
   upload_capacity_reached: '上传通道繁忙，请稍后继续上传。',
   // File synopsis (SynopsisLibraryService.ERRORS)
