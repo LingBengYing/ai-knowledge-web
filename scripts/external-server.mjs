@@ -256,6 +256,7 @@ function validateVideoAvFilename(encoded) {
 
 async function proxy(req, res, backend, headers, limits, signal, kind) {
   if (kind?.startsWith('wiki-') && !wikiQueryAllowed(req.url, req.method)) throw new TransportError(400, 'query_denied');
+  if (req.url === '/v1/document-batches' && req.method === 'POST') limits.requestBytes = 4 * 1024 * 1024;
   if (kind === 'wiki-agent-events') headers.Accept = 'text/event-stream';
   if ((kind === 'wiki-draft' && req.method === 'PUT') || (req.url === '/v1/wiki/drafts' && req.method === 'POST')) limits.requestBytes = 512 * 1024;
   if (kind === 'cleanup-list') {
@@ -269,7 +270,9 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
   const bodyless = ['wiki-draft', 'wiki-page', 'wiki-conversation'].includes(kind) && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
   if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'replacement' && req.method === 'GET' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
-  if (['sound-upload', 'video-av-upload'].includes(kind)) {
+  if (kind === 'batch-upload') {
+    if (req.url.includes('?') || headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
+  } else if (['sound-upload', 'video-av-upload'].includes(kind)) {
     if (kind === 'sound-upload') validateSoundFilename(headers['X-Filename']);
     else validateVideoAvFilename(headers['X-Filename']);
     if (headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
@@ -281,7 +284,7 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
     throw new TransportError(415, 'json_required');
   }
   const body = await collect(req, limits.requestBytes, signal, new TransportError(413, 'request_too_large'));
-  if ((['upload', 'sound-upload', 'video-av-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST') && !body.length) throw new TransportError(400, 'empty_upload');
+  if ((['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST') && !body.length) throw new TransportError(400, 'empty_upload');
   if (bodyless && body.length) throw new TransportError(400, 'request_body_denied');
   if (req.method === 'GET' && body.length) throw new TransportError(400, 'get_body_denied');
   headers['Content-Length'] = String(body.length);
@@ -396,7 +399,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     req.on('error', () => controller.abort());
     const replacementUpload = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/.test(req.url.split('?')[0]);
     const replacementIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/.test(req.url);
-    const upload = replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
+    const upload = /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/u.test(req.url) && req.method === 'POST' || replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
     const answer = req.method === 'POST' && ['/v1/wiki/proposals', '/v1/knowledge-answers'].includes(req.url);
     const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
     const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
@@ -427,7 +430,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       }
       const path = req.url.split('?')[0];
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
-      const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
+      const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/u.test(path) || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
       // Chat apps and mail append tracking queries to shared page links; HTML pages ignore them, modules and APIs do not.
       const page = ['GET', 'HEAD'].includes(req.method) && ASSETS.get(path)?.[1].startsWith('text/html');
       if (req.url.includes('?') && !page && !wikiQuery && !replacementUpload && !['/v1/documents', '/v1/management/documents', '/v1/management/document-cleanups'].includes(path)) throw new TransportError(400, 'query_denied');
@@ -459,7 +462,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         const route = ROUTES.find(([pattern]) => pattern.test(path));
         if (!route) throw new TransportError(404, 'route_not_found');
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
-        if (['upload', 'sound-upload', 'video-av-upload'].includes(route[2]) || replacementUpload) {
+        if (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) {
           if (activeUploads >= 2) throw new TransportError(429, 'upload_capacity_reached');
           activeUploads += 1;
           reservedUpload = true;
@@ -468,7 +471,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           if (activeReplacementIndexes >= 2) throw new TransportError(429, 'replacement_index_capacity_reached');
           activeReplacementIndexes += 1; reservedReplacementIndex = true;
         }
-        await proxy(req, res, backend, headers, { requestBytes: (['upload', 'sound-upload', 'video-av-upload'].includes(route[2]) || replacementUpload) ? uploadBytes : requestBytes,
+        await proxy(req, res, backend, headers, { requestBytes: (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) ? uploadBytes : requestBytes,
           imageUploadBytes, responseBytes: route[2] === 'media' ? mediaBytes : route[2] === 'content' ? contentBytes : responseBytes }, controller.signal, route[2]);
         if (reservedLogin && res.statusCode === 200 && reservedLogin === loginWindow) loginFailures -= 1;
       }

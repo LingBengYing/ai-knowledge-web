@@ -80,7 +80,7 @@ function pause(milliseconds, signal) {
 
 /** Cookies remain browser-owned; this client never stores a token. */
 export function createApi(config, principal, fetcher = globalThis.fetch) {
-  return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document', replacement, onEvent } = {}) {
+  return async function request(path, { method = 'GET', body, file, signal, binary = false, uploadKind = 'document', replacement, batchUpload, onEvent } = {}) {
     if (!path.startsWith('/v1/')) throw new Error('仅允许同源 API 请求。');
     if (onEvent !== undefined && (typeof onEvent !== 'function' || method !== 'GET' || body !== undefined
       || file !== undefined || binary || !/^\/v1\/knowledge-agent\/runs\/[A-Za-z0-9_-]{1,128}\/events$/u.test(path))) {
@@ -96,7 +96,13 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
       headers['X-Workspace-Id'] = config.workspace_id;
       headers['X-Principal-Id'] = principal();
     }
-    if (file !== undefined && replacement !== undefined) {
+    if (file !== undefined && batchUpload !== undefined) {
+      validateUpload(file, config, 'document');
+      if (replacement !== undefined || method !== 'POST' || body !== undefined
+        || !/^[A-Za-z0-9_-]{1,128}$/u.test(batchUpload?.batchId ?? '') || !Number.isSafeInteger(batchUpload?.ordinal) || batchUpload.ordinal < 0
+        || path !== `/v1/document-batches/${batchUpload.batchId}/files/${batchUpload.ordinal}`) throw new ApiError(422, '批次上传参数无效。');
+      headers['Content-Type'] = 'application/octet-stream';
+    } else if (file !== undefined && replacement !== undefined) {
       validateReplacementUpload(file, replacement.documentType);
       const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
       if (!config?.capabilities?.includes('document_replacements') || !validId(replacement.documentId) || !validId(replacement.baseRevisionId)

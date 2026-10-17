@@ -14,6 +14,25 @@ const sessionPair = 'rag_session=REPLACE_ME';
 const body = JSON.stringify({ title: '合成知识', body: '原样保留', version: 2 });
 const close = server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
 
+test('batch manifests and raw slots cross both real proxies with bounded upload paths', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => { seen.push({ path: req.url, body: Buffer.concat(chunks) }); res.statusCode = req.method === 'POST' ? 202 : 200; res.end('{}'); }); }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    const manifest = JSON.stringify({ request_id: 'batch', files: [{ filename: 'synthetic.xml', size_bytes: 2, source_sha256: 'a'.repeat(64) }], padding: 'x'.repeat(140000) });
+    assert.equal((await raw(origin, '/v1/document-batches', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: manifest })).status, 202);
+    const payload = 'x'.repeat(140000);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/files/0', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream' }, body: payload })).status, 202);
+    const status = await raw(origin, '/v1/document-batches/batch-one?offset=0&limit=100', { headers });
+    assert.equal(status.status, 200, JSON.stringify({ external, status }));
+    assert.equal(seen[0].body.toString(), manifest); assert.equal(seen[1].body.toString(), payload);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/files/0?extra=1', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream' }, body: 'x' })).status, external ? 400 : 415);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/files/00', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream' }, body: 'x' })).status, 404);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one?unexpected=1', { headers })).status, 400);
+    assert.equal((await raw(origin, '/batch-upload.mjs', { headers })).status, 200);
+  }
+});
+
 test('conversation management forwards CRUD and pagination on both transports without unknown fields', async t => {
   for (const external of [false, true]) {
     const seen = [];

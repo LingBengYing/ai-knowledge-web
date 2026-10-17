@@ -1,5 +1,6 @@
 /** Exact shared Wiki transport surface; Java remains the authority for identities and versions. */
 export const WIKI_ASSETS = [
+  ['/batch-upload.mjs', ['batch-upload.mjs', 'text/javascript; charset=utf-8']],
   ['/wiki/', ['wiki-workspace.html', 'text/html; charset=utf-8']],
   ['/wiki-workspace.html', ['wiki-workspace.html', 'text/html; charset=utf-8']],
   ['/wiki-workspace.mjs', ['wiki-workspace.mjs', 'text/javascript; charset=utf-8']],
@@ -14,6 +15,9 @@ export const WIKI_ASSETS = [
 ];
 
 export const WIKI_ROUTES = [
+  [/^\/v1\/document-batches$/, ['POST'], 'wiki-batch'],
+  [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'wiki-batch'],
+  [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/, ['POST'], 'batch-upload'],
   [/^\/v1\/knowledge-conversations$/, ['GET', 'POST'], 'wiki-conversation'],
   [/^\/v1\/knowledge-conversations\/[A-Za-z0-9_-]{1,128}$/, ['GET', 'PATCH', 'DELETE'], 'wiki-conversation'],
   [/^\/v1\/knowledge-agent\/config$/, ['GET'], 'wiki-agent'],
@@ -46,6 +50,7 @@ export function wikiQueryAllowed(target, method) {
   if (!target.includes('?')) return true;
   let allowed = [];
   if (method === 'GET') {
+    if (/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) allowed = ['offset', 'limit'];
     if (/^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(url.pathname)) allowed = ['offset', 'limit'];
     if (url.pathname === '/v1/wiki/catalog') allowed = ['offset', 'limit', 'q', 'kind'];
     if (url.pathname === '/v1/wiki/pages') allowed = ['offset', 'limit', 'q', 'state'];
