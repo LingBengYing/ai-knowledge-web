@@ -13,7 +13,8 @@ import { BatchUploadSession, batchFileLabels } from './batch-upload.mjs';
 
 const e = escapeHtml;
 const BATCH_ACTIVE = ['queued', 'parsing', 'parsed', 'indexing'];
-const BATCH_HALTED = '有文件处理失败、已取消或已删除，批次后续文件不再继续处理；已完成的资料保持可用。';
+const BATCH_HALTED = '批次已停止，后续文件不再继续处理；已完成的资料保持可用。';
+const BATCH_SUMMARY = Object.freeze({ halted: ' · 批次已停止', cancelled: ' · 批次已取消', completed_with_failures: ' · 处理结束，部分文件未完成' });
 /** Server timestamps stay milliseconds; presentation uses the browser's local time zone. */
 export function formatTimestamp(milliseconds) {
   if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) return '时间不可用';
@@ -506,7 +507,13 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function batchView() {
     const batch = state.data;
     if (!batch) return empty('正在读取批次…');
-    return `${heading('IMPORT', '批量导入', '', button('refresh', '刷新') + (batch.counts.awaiting_upload && batch.state !== 'halted' ? button('import', '继续上传', true) : '') + '<a class="button secondary" href="#/tasks">处理任务</a>')}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.state === 'halted' ? ' · 批次已停止' : ''}</div>${batch.state === 'halted' ? failureNotice(batch.halted_reason, { prefix: '批次已停止：', fallback: BATCH_HALTED }) : ''}<div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>操作</th></tr></thead><tbody>${batch.items.map(item => `<tr><td>${e(item.filename)}</td><td>${e(batchFileLabels[item.state] ?? item.state)}${item.error_code ? `<div class="muted" title="错误代码：${e(item.error_code)}">${e(failureReason(item.error_code))}</div>` : ''}</td><td>${item.document_id ? `<a href="#/sources/${e(item.document_id)}">查看资料</a>` : '—'}</td></tr>`).join('')}</tbody></table></div><div class="pagination">${button('batch-prev', '上一页', false, batch.offset === 0 ? 'disabled' : '')}<span>${batch.offset + 1}–${batch.offset + batch.items.length} / ${batch.total}</span>${button('batch-next', '下一页', false, batch.offset + batch.items.length >= batch.total ? 'disabled' : '')}</div>`;
+    const actions = Array.isArray(batch.available_actions) ? batch.available_actions : [], stopped = ['halted', 'cancelled'].includes(batch.state);
+    // Bulk actions appear only when the server says they apply to this batch now.
+    const tools = button('refresh', '刷新') + (batch.counts.awaiting_upload && !stopped ? button('import', '继续上传', true) : '')
+      + (actions.includes('resume') ? button('batch-resume', '解除停止并继续', true) : '')
+      + (actions.includes('retry_failed') ? button('batch-retry-failed', `重试失败文件（${Number(batch.retryable_files) || 0}）`) : '')
+      + (actions.includes('cancel') ? button('batch-cancel', '取消批次') : '') + '<a class="button secondary" href="#/tasks">处理任务</a>';
+    return `${heading('IMPORT', '批量导入', '', tools)}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.counts.failed ? ` · 失败 ${batch.counts.failed} 份` : ''}${BATCH_SUMMARY[batch.state] ?? ''}</div>${stopped ? failureNotice(batch.halted_reason, { prefix: batch.state === 'cancelled' ? '' : '批次已停止：', fallback: BATCH_HALTED }) : ''}<div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>操作</th></tr></thead><tbody>${batch.items.map(item => `<tr><td>${e(item.filename)}</td><td>${e(batchFileLabels[item.state] ?? item.state)}${item.error_code ? `<div class="muted" title="错误代码：${e(item.error_code)}">${e(failureReason(item.error_code))}</div>` : ''}</td><td>${item.document_id ? `<a href="#/sources/${e(item.document_id)}">查看资料</a>` : '—'}</td></tr>`).join('')}</tbody></table></div><div class="pagination">${button('batch-prev', '上一页', false, batch.offset === 0 ? 'disabled' : '')}<span>${batch.offset + 1}–${batch.offset + batch.items.length} / ${batch.total}</span>${button('batch-next', '下一页', false, batch.offset + batch.items.length >= batch.total ? 'disabled' : '')}</div>`;
   }
   async function completeList(method, options = {}, signal) {
     const items = []; let total;
@@ -662,6 +669,19 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (documents.some(item => taskPending(item.latest_job) || taskPending(item.latest_index_job)
       || ['queued', 'processing'].includes(item.status) || ['queued', 'processing'].includes(item.index_status)
       || ['pending', 'dispatching'].includes(item.auto_index?.state))) pollTimer = setPollTimer(() => refreshSourceStatus(captured), 1500);
+  }
+  /** One bulk batch action; the server decides which files it applies to and returns the count. */
+  async function batchAction(action) {
+    const batchId = state.route.view === 'imports' ? state.route.id : null;
+    if (!batchId || state.busy || batchSession?.running) return;
+    if (action === 'batch-cancel' && !await confirmOperation('取消批次', '取消后排队中的文件不再处理，也不再接收上传；正在处理的文件会处理完，已完成的资料保持可用。之后可以“解除停止并继续”。')) return;
+    const operation = action === 'batch-retry-failed' ? () => wiki.retryFailedBatch(batchId) : action === 'batch-cancel' ? () => wiki.cancelBatch(batchId) : () => wiki.resumeBatch(batchId);
+    await mutate(operation, async result => {
+      const affected = Number(result?.affected) || 0;
+      notify(action === 'batch-retry-failed' ? (affected ? `已重新提交 ${affected} 份失败文件。` : '没有可以重试的文件（可能已达到三次尝试上限）。')
+        : action === 'batch-cancel' ? `批次已取消，${affected} 个排队任务已停止。` : `批次已继续，${affected} 份文件重新排队。`);
+      await load();
+    });
   }
   /** Silent batch refresh: no loading frame, no epoch change, and never underneath a running write or upload. */
   function scheduleBatchPoll(captured) {
@@ -876,6 +896,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (action === 'back-reader') { event.preventDefault(); const route = state.route; navigate(route.view === 'page-source' ? `#/knowledge/${route.id}/${route.version}` : route.view === 'proposal-source' ? `#/review/${route.id}` : state.conversation ? `#/ask/${state.conversation.id}` : '#/ask'); }
     if (action === 'refresh-conversation' && state.conversation) navigate(`#/ask/${state.conversation.id}`);
     if (action === 'retry-source-task') { await retrySourceTask(target); return; }
+    if (['batch-retry-failed', 'batch-cancel', 'batch-resume'].includes(action)) { await batchAction(action); return; }
     if (action === 'batch-prev' || action === 'batch-next') { state.batchOffset = Math.max(0, (state.batchOffset ?? 0) + (action === 'batch-prev' ? -100 : 100)); load(); }
     if (action === 'import') { state.batchProgress = null; $('upload-kind').disabled = state.route.view === 'imports'; if (state.route.view === 'imports') $('upload-kind').value = 'document'; updateUploadAccept(); $('import-dialog').showModal(); }
     if (action === 'close-import') $('import-dialog').close();

@@ -33,6 +33,25 @@ test('batch manifests and raw slots cross both real proxies with bounded upload 
   }
 });
 
+test('batch bulk actions cross both real proxies as JSON POSTs and nothing else', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => { seen.push([req.url, req.method, Buffer.concat(chunks).toString()]); res.end('{}'); }); }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    const json = { ...headers, 'Content-Type': 'application/json' };
+    for (const action of ['retry-failed', 'cancel', 'resume']) {
+      const path = `/v1/document-batches/batch-one/${action}`, payload = action === 'resume' ? '{"embedding_request_limit":2000}' : '{}';
+      assert.equal((await raw(origin, path, { method: 'POST', headers: json, body: payload })).status, 200, `${external} ${action}`);
+      assert.deepEqual(seen.at(-1), [path, 'POST', payload]);
+      assert.equal((await raw(origin, path, { headers })).status, 405, `${external} GET ${action}`);
+      assert.equal((await raw(origin, `${path}?force=1`, { method: 'POST', headers: json, body: '{}' })).status, 400);
+      assert.equal((await raw(origin, path, { method: 'POST', headers: { ...headers, 'Content-Type': 'text/plain' }, body: '{}' })).status, 415);
+    }
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/restart', { method: 'POST', headers: json, body: '{}' })).status, 404);
+    assert.equal(seen.length, 3);
+  }
+});
+
 test('conversation management forwards CRUD and pagination on both transports without unknown fields', async t => {
   for (const external of [false, true]) {
     const seen = [];

@@ -18,6 +18,7 @@ export const WIKI_ROUTES = [
   [/^\/v1\/document-batches$/, ['POST'], 'wiki-batch'],
   [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'wiki-batch'],
   [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/, ['POST'], 'batch-upload'],
+  [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/(?:retry-failed|cancel|resume)$/, ['POST'], 'wiki-batch'],
   [/^\/v1\/knowledge-conversations$/, ['GET', 'POST'], 'wiki-conversation'],
   [/^\/v1\/knowledge-conversations\/[A-Za-z0-9_-]{1,128}$/, ['GET', 'PATCH', 'DELETE'], 'wiki-conversation'],
   [/^\/v1\/knowledge-agent\/config$/, ['GET'], 'wiki-agent'],

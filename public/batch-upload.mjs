@@ -70,7 +70,7 @@ export class BatchUploadSession {
       for (let offset = 0; total === undefined || offset < total; offset += 100) {
         const page = await this.api.getBatch(batchId, { offset, limit: 100, signal }); total = page.total;
         if (!Number.isSafeInteger(total) || total < 1 || !Array.isArray(page.items) || page.offset !== offset
-            || (page.items.length === 0 && offset < total) || page.state === 'halted') throw new ApiError(409, '批次已停止或状态发生变化。');
+            || (page.items.length === 0 && offset < total) || ['halted', 'cancelled'].includes(page.state)) throw new ApiError(409, '批次已停止或状态发生变化。');
         pending.push(...page.items.filter(item => item.state === 'awaiting_upload'));
         received.push(...page.items.filter(item => item.state !== 'awaiting_upload' && item.ingestion_task_id));
       }
