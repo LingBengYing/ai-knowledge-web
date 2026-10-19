@@ -872,6 +872,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     const batchCapable = state.config?.capabilities?.includes('batch_upload');
     const useBatch = uploadKind === 'document' && (resuming || Boolean(retry) || batchCapable && (files.length > 1 || budget !== undefined || files.some(file => relativePathOf(file))));
     let unmatched = 0;
+    state.importError = '';
     await mutate(async () => {
       state.uploading = true;
       try {
@@ -887,7 +888,13 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
         } });
         batchSession = session;
         try { if (batchId) { await session.resume(batchId, files); unmatched = session.unmatched ?? 0; } else await session.start(files, { requestId, includeDuplicates, ...(embeddingRequestLimit === undefined ? {} : { embeddingRequestLimit }) }); }
-        catch (error) { state.batchRetry = { requestId, includeDuplicates, embeddingRequestLimit, batchId: session.batchId ?? batchId ?? null }; throw error; }
+        catch (error) {
+          state.batchRetry = { requestId, includeDuplicates, embeddingRequestLimit, batchId: session.batchId ?? batchId ?? null };
+          // Nothing was registered: show the selection again (not a frozen "preparing" count) with the reason.
+          if (!session.batchId && !batchId) { state.batchProgress = null; state.pendingFiles = files; }
+          state.importError = `${errorMessage(error)}`;
+          throw error;
+        }
         state.batchRetry = null; state.pendingFiles = [];
       } else {
         let next = 0, failure;
@@ -902,14 +909,19 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function updateUploadList() {
     const progress = state.batchProgress;
     const label = item => e(item.relativePath || relativePathOf(item) || item.filename || item.name);
-    if (progress) {
+    const failure = state.importError ? notice(`导入未完成：${state.importError}`, true) : '';
+    if (progress?.phase === 'preparing' || progress?.phase === 'registering') {
+      // Hashing thousands of files takes a while; the count (throttled by the session) shows it is moving.
+      $('upload-list').innerHTML = `<div class="result-count" role="status">${progress.phase === 'preparing' ? `正在校验文件 ${progress.prepared} / ${progress.total}…` : `正在登记批次（${progress.total} 份文件）…`}</div>`
+        + `<div class="field-hint">${progress.phase === 'preparing' ? '正在计算文件指纹以识别重复资料，完成后开始上传。' : '校验完成，正在向服务器登记，完成后开始上传。'}</div>`;
+    } else if (progress) {
       const done = progress.items.filter(item => uploadSettled(item.state)).length;
       const skipped = progress.items.filter(item => item.state === 'duplicate').length;
       const first = progress.items.findIndex(item => !uploadSettled(item.state));
       const start = Math.max(0, (first < 0 ? progress.items.length : first) - 5);
-      $('upload-list').innerHTML = `<div class="result-count">已提交 ${done} / ${progress.items.length} 份${skipped ? `（其中 ${skipped} 份已存在，跳过）` : ''}</div>${progress.batchId ? `<a class="text-link" href="#/imports/${e(progress.batchId)}">查看批次处理进度</a>` : ''}${progress.items.slice(start, start + 50).map(item => `<div class="upload-item"><strong>${label(item)}</strong><span>${e(batchFileLabels[item.state] ?? item.state)}</span></div>`).join('')}`;
+      $('upload-list').innerHTML = failure + `<div class="result-count">已提交 ${done} / ${progress.items.length} 份${skipped ? `（其中 ${skipped} 份已存在，跳过）` : ''}</div>${progress.batchId ? `<a class="text-link" href="#/imports/${e(progress.batchId)}">查看批次处理进度</a>` : ''}${progress.items.slice(start, start + 50).map(item => `<div class="upload-item"><strong>${label(item)}</strong><span>${e(batchFileLabels[item.state] ?? item.state)}</span></div>`).join('')}`;
     } else {
-      $('upload-list').innerHTML = `<div class="result-count">已选择 ${state.pendingFiles.length} 份</div>` + state.pendingFiles.slice(0, 50).map(file => `<div class="upload-item"><strong>${label(file)}</strong><span>${(file.size / 1024).toFixed(1)} KiB · 待上传</span></div>`).join('')
+      $('upload-list').innerHTML = failure + `<div class="result-count">已选择 ${state.pendingFiles.length} 份</div>` + state.pendingFiles.slice(0, 50).map(file => `<div class="upload-item"><strong>${label(file)}</strong><span>${(file.size / 1024).toFixed(1)} KiB · 待上传</span></div>`).join('')
         + (state.pendingFiles.length > 50 ? `<div class="result-count">另有 ${state.pendingFiles.length - 50} 份未逐一列出</div>` : '');
     }
     // Silently skipped hidden/system/unsupported files of a folder or drop, listed on demand.
@@ -936,7 +948,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   /** A folder selection or a drop: hidden, system and unsupported files are skipped and listed. */
   function selectCollected(files, truncated) {
     const { accepted, skipped } = partitionImportable(files, $('workspace-files').accept);
-    state.batchProgress = null; state.batchRetry = null; state.pendingFiles = accepted; state.skippedFiles = skipped; state.collectTruncated = truncated;
+    state.batchProgress = null; state.batchRetry = null; state.importError = ''; state.pendingFiles = accepted; state.skippedFiles = skipped; state.collectTruncated = truncated;
     updateUploadList();
   }
   function updateUploadAccept() { $('workspace-files').accept = ['audio', 'sound'].includes($('upload-kind').value) ? '.wav,.mp3,.flac,.ogg,.m4a,.mp4,.webm' : ['video', 'video-av'].includes($('upload-kind').value) ? '.mp4,.mov,.webm,.mkv' : `${DOCUMENT_ACCEPT},.png,.jpg,.jpeg`; updateBudgetEstimate(); }
@@ -987,9 +999,9 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (target.id === 'source-kind') { state.sourceKind = target.value; state.offset = 0; load(); }
     if (target.id === 'page-kind') { state.pageKind = target.value; render(); }
     if (target.id === 'review-status') { state.reviewStatus = target.value; load(); }
-    if (target.id === 'workspace-files') { state.batchProgress = null; state.batchRetry = null; state.skippedFiles = []; state.collectTruncated = false; state.pendingFiles = Array.from(target.files); updateUploadList(); }
+    if (target.id === 'workspace-files') { state.batchProgress = null; state.batchRetry = null; state.importError = ''; state.skippedFiles = []; state.collectTruncated = false; state.pendingFiles = Array.from(target.files); updateUploadList(); }
     if (target.id === 'workspace-folder') { const files = Array.from(target.files ?? []); selectCollected(files.slice(0, MAX_COLLECTED_FILES), files.length > MAX_COLLECTED_FILES); }
-    if (target.id === 'upload-kind') { state.batchRetry = null; state.pendingFiles = []; state.skippedFiles = []; state.collectTruncated = false; $('workspace-files').value = ''; updateUploadList(); updateUploadAccept(); }
+    if (target.id === 'upload-kind') { state.batchRetry = null; state.importError = ''; state.pendingFiles = []; state.skippedFiles = []; state.collectTruncated = false; $('workspace-files').value = ''; updateUploadList(); updateUploadAccept(); }
     if (target.id === 'threshold-enabled') $('score-threshold').disabled = !target.checked;
     if (['ranking-mode', 'search-method'].includes(target.id)) $('threshold-help').textContent = retrievalThresholdHelp({ ranking_mode: $('ranking-mode').value, search_method: $('search-method').value });
   });
@@ -1011,7 +1023,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (action === 'batch-filter' && BATCH_FILTERS.some(([id]) => id === target.dataset.filter)) { state.batchFilter = target.dataset.filter; state.batchOffset = 0; load(); }
     if (action === 'imports-prev' || action === 'imports-next') { state.importsOffset = Math.max(0, (state.importsOffset ?? 0) + (action === 'imports-prev' ? -20 : 20)); load(); }
     if (action === 'choose-folder' && !state.busy) $('workspace-folder')?.click?.();
-    if (action === 'import') { state.batchProgress = null; state.skippedFiles = []; state.collectTruncated = false; $('upload-kind').disabled = state.route.view === 'imports'; if (state.route.view === 'imports') $('upload-kind').value = 'document'; updateUploadAccept(); $('import-dialog').showModal(); }
+    if (action === 'import') { state.batchProgress = null; state.importError = ''; state.skippedFiles = []; state.collectTruncated = false; $('upload-kind').disabled = state.route.view === 'imports'; if (state.route.view === 'imports') $('upload-kind').value = 'document'; updateUploadAccept(); $('import-dialog').showModal(); }
     if (action === 'close-import') $('import-dialog').close();
     if (action === 'confirm-import') confirmImport();
     if (action === 'prev-catalog') { state.offset = Math.max(0, state.offset - 20); load(); }

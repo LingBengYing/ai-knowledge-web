@@ -1456,3 +1456,23 @@ test('dropping folders onto the drop zone collects nested files with paths', asy
   let elsewhere = 0; await f.events.drop({ target: { closest: () => null }, preventDefault() { elsewhere++; } }); assert.equal(elsewhere, 0);
   f.workspace.close();
 });
+
+test('batch preparation shows its progress and a failed registration leaves the dialog usable with the reason', async () => {
+  const files = Array.from({ length: 30 }, (_, i) => new File([`<doc>${i}</doc>`], `ted2020-${i}.xml`));
+  const backend = batchBackend({ failCreate: 1 });
+  let release; const gate = new Promise(resolve => { release = resolve; }); const create = backend.api.createBatch;
+  const f = fixture('#/sources', { ...backend.api, createBatch: async command => { await gate; return create(command); } }, batchCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document'; chooseFiles(f, files);
+  const seen = []; const list = f.nodes.get('upload-list'); let html = list.innerHTML;
+  Object.defineProperty(list, 'innerHTML', { configurable: true, get: () => html, set: value => { html = value; seen.push(value); } });
+  f.click('confirm-import'); for (let i = 0; i < 200 && !/正在登记/u.test(html); i++) await tick();
+  assert.ok(seen.some(value => /正在校验文件 0 \/ 30/u.test(value)), 'preparation starts visibly');
+  assert.match(html, /正在登记批次（30 份文件）/u); assert.equal(f.nodes.get('confirm-import').disabled, true);
+  release(); await settle(f);
+  assert.equal(f.workspace.state.busy, false); assert.equal(f.workspace.state.batchProgress, null);
+  assert.match(html, /导入未完成：30 份文件的批次登记未完成/u); assert.match(html, /已选择 30 份/u);
+  assert.equal(f.nodes.get('confirm-import').disabled, false);
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 2); assert.equal(backend.creates[0].request_id, backend.creates[1].request_id);
+  assert.equal(f.win.location.hash, '#/imports/b1'); f.workspace.close();
+});

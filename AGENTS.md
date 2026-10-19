@@ -1,5 +1,7 @@
 # AI Knowledge Web：智能体工作约定
 
+2026-10-19 批量准备卡住修复（分支fix/batch-prepare-progress）：确认导入后先以4路并行计算SHA-256，导入窗口显示“正在校验文件 N / 总数”（每100毫秒至多刷新一次）与“正在登记批次”；读文件失败或登记中断/超时给出中文原因并常驻窗口，回到可重试状态（同一request_id）。两层Node入口的`POST /v1/document-batches`改用上传时限（30秒），原10秒在慢速上行下传不完约650KiB清单即504。**生产定制external-server.mjs须同步**：该请求的计时器用uploadDeadlineMs。不部署。
+
 2026-10-17 批量导入第三阶段“体验”（分支feat/batch-ux，未发布，配套后端同名分支v41）：导入窗口新增“选择文件夹”（webkitdirectory）与真正的拖放（DataTransferItem.webkitGetAsEntry递归，最多10,000文件/32层），隐藏/系统/不支持的文件静默跳过并可展开“已跳过 N 个不支持的文件”，文件夹相对路径作为清单`relative_path`发送并在批次页显示；新增`#/imports`导入记录页（导航“导入记录”，表格/手机卡片）；批次页按状态筛选（服务端`state`分页）、每文件开始/完成时间、最近窗口速度与预计剩余；上传中`beforeunload`提示，“继续上传”重新选同一文件夹按路径+大小+SHA匹配、不属于本批的文件跳过不哈希；导入窗口可填本批嵌入请求上限并显示估算（字符≈字节、1200字段、每请求31段，图片按1次），停止批次继续时可提高上限。两层Node入口（scripts/wiki-transport.mjs）已放行`GET /v1/document-batches`（仅offset/limit）及批次详情`state`查询（`^[a-z_]{1,32}(,[a-z_]{1,32}){0,9}$`）。**生产定制external-server.mjs须同步**：WIKI_ROUTES里`/v1/document-batches`加GET、wikiQueryAllowed加上述两条规则、wikiQuery路径正则覆盖`/v1/document-batches`本身；无新增静态资源。完整前端见本次提交说明。不部署。
 
 2026-10-17 批量导入第二阶段“吞吐”（分支feat/batch-throughput，未发布，配套后端同名分支）：网页4路上传，SHA-256改为4MiB分块增量计算（public/sha256-stream.mjs，小文件仍用WebCrypto）；导入窗口新增“重复文件也导入”（发送`include_duplicates:true`），重复槽位显示“已存在（跳过）”并链接已有资料/本批更早文件，继续上传跳过它们。两层Node入口共用scripts/upload-transport.mjs：有Content-Length的上传先判413/空再流式转发，分块请求仍缓冲限额；上传准入改为每登录主体4、合计8，上传不占长请求名额。**生产定制external-server.mjs须同步**：streamUpload流式上传、createUploadAdmission按`/v1/session`的workspace_id+principal_id计数、新静态资源`/sha256-stream.mjs`、批次清单JSON原样透传`include_duplicates`。完整前端479/479。不部署。

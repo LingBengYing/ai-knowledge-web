@@ -234,3 +234,34 @@ test('history and filtered batch reads build exact query strings and refuse unkn
   assert.throws(() => wiki.getBatch('b1', { states: ['Failed'] })); assert.throws(() => wiki.getBatch('b1', { states: ['a<b'] }));
   assert.throws(() => wiki.listBatches({ limit: 101 }));
 });
+
+test('a large manifest is hashed four files at a time, in order, with throttled preparation progress', async () => {
+  const input = Array.from({ length: 3827 }, (_, i) => new File([`<doc>${i}</doc>`], `ted2020-${i}.xml`));
+  let inFlight = 0, peak = 0, clock = 0, manifest;
+  const reports = [];
+  const hash = async file => { inFlight++; peak = Math.max(peak, inFlight); clock += 1; await new Promise(resolve => setTimeout(resolve, Number(file.name.match(/\d+/u)[0]) % 3)); inFlight--; return createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex'); };
+  const api = { async createBatch(command) { manifest = command.files; return { batch_id: 'batch-1', total: command.files.length }; },
+    async uploadBatchFile(id, ordinal, file) { return { task_id: `task-${ordinal}`, filename: file.name }; }, async getBatch() { return {}; } };
+  const session = new BatchUploadSession(api, { hash, now: () => clock, onProgress: progress => { if (progress.phase) reports.push([progress.phase, progress.prepared, progress.total]); } });
+  await session.start(input);
+  assert.equal(peak, 4);
+  assert.deepEqual(manifest.map(item => item.filename), input.map(file => file.name));
+  assert.equal(manifest[3826].source_sha256, createHash('sha256').update('<doc>3826</doc>').digest('hex'));
+  const preparing = reports.filter(([phase]) => phase === 'preparing');
+  assert.deepEqual(preparing[0], ['preparing', 0, 3827]); assert.deepEqual(preparing.at(-1), ['preparing', 3827, 3827]);
+  assert.ok(preparing.length > 10 && preparing.length < 60, `throttled: ${preparing.length} reports`);
+  assert.ok(preparing.every((report, i) => i === 0 || report[1] >= preparing[i - 1][1]));
+  assert.deepEqual(reports.find(([phase]) => phase === 'registering'), ['registering', 3827, 3827]);
+});
+test('an unreadable file or a lost registration fails preparation with a clear message', async () => {
+  let creates = 0;
+  const api = { async createBatch() { creates++; throw new ApiError(504, '知识库服务暂不可用。'); } };
+  const unreadable = new BatchUploadSession(api, { hash: async file => { if (file.name === 'source-2.txt') throw new DOMException('A requested file could not be read', 'NotReadableError'); return 'a'.repeat(64); } });
+  await assert.rejects(unreadable.start(files(5)), error => error instanceof ApiError && /无法读取文件“source-2\.txt”/u.test(error.message));
+  assert.equal(creates, 0); assert.equal(unreadable.running, false);
+  const lost = new BatchUploadSession(api, { hash: async () => 'a'.repeat(64) });
+  await assert.rejects(lost.start(files(3)), error => error.status === 504 && /3 份文件的批次登记未完成/u.test(error.message) && /确认导入/u.test(error.message));
+  assert.equal(creates, 1); assert.equal(lost.batchId, null);
+  const refused = new BatchUploadSession({ async createBatch() { throw new ApiError(422, '清单无效。'); } }, { hash: async () => 'a'.repeat(64) });
+  await assert.rejects(refused.start(files(1)), /^ApiError: 清单无效。$|清单无效。/u);
+});
