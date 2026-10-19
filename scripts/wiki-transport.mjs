@@ -19,7 +19,9 @@ export const WIKI_ROUTES = [
   [/^\/v1\/document-batches$/, ['GET', 'POST'], 'wiki-batch'],
   [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}$/, ['GET'], 'wiki-batch'],
   [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/, ['POST'], 'batch-upload'],
-  [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/(?:retry-failed|cancel|resume)$/, ['POST'], 'wiki-batch'],
+  // Open batches: manifest entries appended while files upload, then the manifest is sealed.
+  [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files$/, ['POST'], 'wiki-batch'],
+  [/^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/(?:retry-failed|cancel|resume|seal)$/, ['POST'], 'wiki-batch'],
   [/^\/v1\/knowledge-conversations$/, ['GET', 'POST'], 'wiki-conversation'],
   [/^\/v1\/knowledge-conversations\/[A-Za-z0-9_-]{1,128}$/, ['GET', 'PATCH', 'DELETE'], 'wiki-conversation'],
   [/^\/v1\/knowledge-agent\/config$/, ['GET'], 'wiki-agent'],
@@ -67,4 +69,8 @@ export function wikiQueryAllowed(target, method) {
   if (method === 'DELETE' && /^\/v1\/wiki\/drafts\/[A-Za-z0-9_-]{1,128}$/.test(url.pathname)) allowed = ['version'];
   if (!allowed.length) return false;
   return [...url.searchParams].every(([key]) => allowed.includes(key) && url.searchParams.getAll(key).length === 1);
+}
+/** A batch manifest or an appended manifest chunk: up to 4 MiB of JSON, sent within the upload deadline. */
+export function batchManifestRequest(method, target) {
+  return method === 'POST' && (target === '/v1/document-batches' || /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files$/u.test(target));
 }

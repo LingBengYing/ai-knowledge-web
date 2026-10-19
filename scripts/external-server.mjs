@@ -7,7 +7,7 @@ import { constants } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
-import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed } from './wiki-transport.mjs';
+import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed, batchManifestRequest } from './wiki-transport.mjs';
 import { isAgentEventStream, validAgentEventStream, forwardAgentEventStream } from './agent-event-stream.mjs';
 import { createUploadAdmission, streamUpload } from './upload-transport.mjs';
 
@@ -258,7 +258,7 @@ function validateVideoAvFilename(encoded) {
 
 async function proxy(req, res, backend, headers, limits, signal, kind) {
   if (kind?.startsWith('wiki-') && !wikiQueryAllowed(req.url, req.method)) throw new TransportError(400, 'query_denied');
-  if (req.url === '/v1/document-batches' && req.method === 'POST') limits.requestBytes = 4 * 1024 * 1024;
+  if (batchManifestRequest(req.method, req.url)) limits.requestBytes = 4 * 1024 * 1024;
   if (kind === 'wiki-agent-events') headers.Accept = 'text/event-stream';
   if ((kind === 'wiki-draft' && req.method === 'PUT') || (req.url === '/v1/wiki/drafts' && req.method === 'POST')) limits.requestBytes = 512 * 1024;
   if (kind === 'cleanup-list') {
@@ -415,8 +415,9 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     const videoAvIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/.test(req.url);
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
     const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
-    // A batch manifest (up to 4 MiB, ~650 KiB for 3,800 files) must arrive within the deadline too, so it gets the upload deadline.
-    const manifest = req.method === 'POST' && req.url === '/v1/document-batches';
+    // A batch manifest (up to 4 MiB, ~650 KiB for 3,800 files) or an appended chunk of an open batch
+    // must arrive within the deadline too, so it gets the upload deadline.
+    const manifest = batchManifestRequest(req.method, req.url);
     const timer = setTimeout(() => controller.abort(), isAgentEventStream(req.method, req.url) ? agentStreamDeadlineMs : modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload || manifest ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
     let releaseUpload = null;
     let uploadClient = null;

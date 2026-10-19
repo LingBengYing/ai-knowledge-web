@@ -92,6 +92,12 @@ export function createWikiWorkspaceApi({ api }) {
       if (!Array.isArray(states) || states.length > 10 || states.some(state => !/^[a-z_]{1,32}$/u.test(state))) throw invalid();
       return get(query(`/v1/document-batches/${id(batchId)}`, { ...paging(offset, limit), state: states.join(',') }), { signal });
     },
+    /** Open batches: manifest entries with explicit consecutive ordinals, appended while files upload; then sealed. */
+    appendBatchFiles: (batchId, files, options) => {
+      if (!Array.isArray(files) || !files.length || files.length > 1000 || files.some((entry, index) => !Number.isSafeInteger(entry?.ordinal) || entry.ordinal < 0 || entry.ordinal !== files[0].ordinal + index)) throw invalid();
+      return write(`/v1/document-batches/${id(batchId)}/files`, 'POST', { files }, options);
+    },
+    sealBatch: (batchId, options) => write(`/v1/document-batches/${id(batchId)}/seal`, 'POST', {}, options),
     uploadBatchFile: (batchId, ordinal, file, { signal } = {}) => api(`/v1/document-batches/${id(batchId)}/files/${version(ordinal, 0)}`, { method: 'POST', file, signal, batchUpload: { batchId, ordinal } }),
     retryFailedBatch: (batchId, options) => write(`/v1/document-batches/${id(batchId)}/retry-failed`, 'POST', {}, options),
     cancelBatch: (batchId, options) => write(`/v1/document-batches/${id(batchId)}/cancel`, 'POST', {}, options),

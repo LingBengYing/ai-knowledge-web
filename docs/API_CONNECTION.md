@@ -77,6 +77,8 @@ Java声明`query_attachments`且当前证据模式的answers/sources启用时，
 | `/v1/document-batches` | GET | 2026-10-17导入记录；query仅`offset`、`limit`（1–100，默认20），返回本工作区批次`{offset,limit,total,items:[{batch_id,state,total,counts,halted_reason,created_at,updated_at}]}`，最新在前。生产定制入口须同样放行GET |
 | `/v1/document-batches/{id}` | GET | query仅`offset`、`limit`、`state`；`state`为逗号分隔的文件状态（小写字母/下划线，最多10个），服务端分页，`matched`为符合筛选的文件数；文件行另有`relative_path`、`started_at`、`finished_at`，批次另有`created_at`、`updated_at`、`throughput{window_seconds,finished,measured_at}` |
 | `/v1/document-batches/{id}/retry-failed`、`/cancel`、`/resume` | POST | 2026-10-17新增批量操作；无query，JSON（resume可选`embedding_request_limit`），返回`{batch_id,action,affected,batch}`；409`batch_action_conflict`表示当前状态不适用。生产定制入口须同样放行 |
+| `/v1/document-batches/{id}/files` | POST | 2026-10-19开放批次追加清单条目（后端v42，能力`batch_streaming_upload`）：JSON`{files:[{ordinal,filename,size_bytes,source_sha256,relative_path?}]}`，1–1,000条、ordinal连续；与`/files/{ordinal}`上传路由不同。同条目重放成功，不同条目409。与批次清单一样请求体上限4MiB、使用上传时限`uploadDeadlineMs`。生产定制入口须同样放行 |
+| `/v1/document-batches/{id}/seal` | POST | 2026-10-19结束开放批次登记（可少于`expected_total`），重复调用无害；无query、JSON`{}`，普通时限。生产定制入口须在批量操作路由中加入`seal` |
 | `/v1/answers` | POST | 0006新增；无query，JSON问题及完整所选范围，独立180秒期限 |
 | `/v1/sources/{answer_id}/{1..32}` | GET | 0006新增；无query/body，当前身份重新校验文本引用 |
 | `/v1/management/documents` | GET | 授权分页、筛选、排序 |
