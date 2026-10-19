@@ -265,3 +265,208 @@ test('an unreadable file or a lost registration fails preparation with a clear m
   const refused = new BatchUploadSession({ async createBatch() { throw new ApiError(422, '清单无效。'); } }, { hash: async () => 'a'.repeat(64) });
   await assert.rejects(refused.start(files(1)), /^ApiError: 清单无效。$|清单无效。/u);
 });
+
+// Streaming: open batches register in chunks while files upload, then are sealed.
+const { FIRST_CHUNK, PROGRESS_MS, formatEta, formatBytes } = await import('../public/batch-upload.mjs');
+const { uploadProgressHtml } = await import('../public/wiki-workspace.mjs');
+const shaHex = async file => createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex');
+/** An in-memory open-batch server with the Java service's append rules (replay, conflict, gap, seal, dedupe). */
+function openServer({ registered = [], expected = 0, sealedAlready = false } = {}) {
+  const entries = registered.map(entry => ({ ...entry })), calls = [], uploads = [];
+  const server = { entries, calls, uploads, sealed: sealedAlready, expected, failAppend: [], uploadClock: null };
+  server.api = {
+    async createBatch(command) {
+      calls.push(['create', command]);
+      if (command.open !== true) throw new Error('streaming sessions open their batch');
+      server.expected = command.expected_total;
+      return { batch_id: 'open-1', open: true, expected_total: command.expected_total, state: 'awaiting_upload', total: entries.length, counts: {}, items: [] };
+    },
+    async appendBatchFiles(id, files) {
+      calls.push(['append', files[0].ordinal, files.length]);
+      const failure = server.failAppend.shift(); if (failure) throw failure;
+      if (files[0].ordinal > entries.length) throw new ApiError(409, '登记顺序不连续', { errorCode: 'batch_manifest_gap' });
+      for (const file of files) {
+        const known = entries[file.ordinal];
+        if (known) { if (known.filename !== file.filename || known.size_bytes !== file.size_bytes || known.source_sha256 !== file.source_sha256 || (known.relative_path ?? null) !== (file.relative_path ?? null)) throw new ApiError(409, '批次文件内容或处理状态已改变，请刷新批次。', { errorCode: 'batch_upload_conflict' }); continue; }
+        if (server.sealed) throw new ApiError(409, '批次已结束登记，不能再追加文件。', { errorCode: 'batch_sealed' });
+        if (file.ordinal >= server.expected) throw new ApiError(422, '请求字段、长度或取值无效。');
+        const first = entries.find(entry => entry.source_sha256 === file.source_sha256 && entry.state !== 'duplicate');
+        entries.push({ ...file, relative_path: file.relative_path ?? null, state: first ? 'duplicate' : 'awaiting_upload', duplicate_of_ordinal: first ? first.ordinal : null, ingestion_task_id: null });
+      }
+      return { batch_id: id, registered: entries.length, expected_total: server.expected, open: !server.sealed,
+        items: files.map(file => ({ ordinal: file.ordinal, state: entries[file.ordinal].state, duplicate_of_document_id: null, duplicate_of_ordinal: entries[file.ordinal].duplicate_of_ordinal })) };
+    },
+    async sealBatch(id) { calls.push(['seal']); server.sealed = true; return { batch_id: id, action: 'seal', affected: 1 }; },
+    async cancelBatch(id) { calls.push(['cancel', id]); return { batch_id: id, action: 'cancel', affected: 0 }; },
+    async uploadBatchFile(id, ordinal, file) {
+      calls.push(['upload', ordinal]); uploads.push(ordinal); await server.uploadClock?.(ordinal);
+      const entry = entries[ordinal];
+      if (!entry || entry.state !== 'awaiting_upload' && !entry.ingestion_task_id) throw new ApiError(409, '已存在', { errorCode: 'batch_file_duplicate' });
+      Object.assign(entry, { state: 'queued', ingestion_task_id: `t${ordinal}` });
+      return { task_id: `t${ordinal}`, filename: file.name };
+    },
+    async getBatch(id, { offset = 0, limit = 100 } = {}) {
+      return { batch_id: id, state: 'awaiting_upload', open: !server.sealed, expected_total: server.expected, total: entries.length, offset, items: entries.slice(offset, offset + limit) };
+    },
+  };
+  return server;
+}
+const tedFiles = count => Array.from({ length: count }, (_, i) => inFolder(`<doc>${i}</doc>`, `zh_cn/ted2020-${i}.xml`));
+
+test('3827 files: the first upload starts after one chunk is hashed, not after all of them', async () => {
+  const input = tedFiles(3827), server = openServer();
+  let hashed = 0, hashedAtFirstUpload = null, registeredAtFirstUpload = null;
+  const hash = async file => { await new Promise(resolve => setTimeout(resolve, 1)); hashed++; return shaHex(file); };
+  const upload = server.api.uploadBatchFile;
+  server.api.uploadBatchFile = async (...args) => { if (hashedAtFirstUpload === null) { hashedAtFirstUpload = hashed; registeredAtFirstUpload = server.entries.length; } return upload(...args); };
+  const session = new BatchUploadSession(server.api, { streaming: true, hash });
+  await session.start(input);
+  assert.ok(hashedAtFirstUpload <= FIRST_CHUNK + session.hashConcurrency, `hashed before the first upload: ${hashedAtFirstUpload}`);
+  assert.equal(registeredAtFirstUpload, FIRST_CHUNK, 'the first chunk is registered on its own');
+  const appends = server.calls.filter(([kind]) => kind === 'append');
+  assert.deepEqual(appends[0], ['append', 0, FIRST_CHUNK]);
+  assert.ok(appends.length > 2, 'the manifest grows in several chunks');
+  assert.ok(appends.every(([, , count]) => count <= 500));
+  // Consecutive ordinals in selection order, every file once, sealed once after the last chunk.
+  assert.deepEqual(server.entries.map(entry => entry.ordinal), input.map((_, i) => i));
+  assert.deepEqual(server.entries.map(entry => entry.relative_path), input.map(file => relativePathOf(file)));
+  assert.deepEqual([...server.uploads].sort((a, b) => a - b), input.map((_, i) => i));
+  const kinds = server.calls.map(([kind]) => kind);
+  assert.equal(kinds.filter(kind => kind === 'seal').length, 1);
+  assert.ok(kinds.indexOf('seal') > kinds.lastIndexOf('append'));
+  assert.ok(kinds.indexOf('upload') < kinds.lastIndexOf('append'), 'uploads overlap registration');
+  assert.equal(server.calls[0][1].expected_total, 3827); assert.equal('files' in server.calls[0][1], false);
+  const view = session.view();
+  assert.equal(view.counts.submitted, 3827); assert.equal(view.percent, 100); assert.equal(view.registered, 3827);
+  assert.equal(session.sealed, true);
+});
+
+test('an open batch is sealed only after its last chunk; a refused chunk stops registration without sealing', async () => {
+  const input = tedFiles(120), server = openServer();
+  server.failAppend.push(undefined, new ApiError(409, '批次文件内容或处理状态已改变，请刷新批次。', { errorCode: 'batch_upload_conflict' }));
+  const session = new BatchUploadSession(server.api, { streaming: true, hash: shaHex });
+  await assert.rejects(session.start(input), error => error.status === 409 && /已改变/u.test(error.message));
+  assert.equal(server.calls.some(([kind]) => kind === 'seal'), false, 'never sealed after a refused chunk');
+  assert.equal(server.entries.length, FIRST_CHUNK);
+  assert.ok(server.uploads.every(ordinal => ordinal < FIRST_CHUNK));
+  // What is left to send after the failure: everything not received, for "确认导入" to continue with.
+  const left = session.unsettledFiles();
+  assert.equal(left.length, input.length - server.uploads.length);
+});
+
+test('appends are repeated after a lost reply and replays are idempotent; a retried import never re-registers or re-sends', async () => {
+  const input = tedFiles(80), server = openServer(), waits = [];
+  // The second chunk's reply is lost after the server recorded it: the repeat is a replay.
+  const append = server.api.appendBatchFiles;
+  let lost = false;
+  server.api.appendBatchFiles = async (id, files, options) => { const result = await append(id, files, options); if (files[0].ordinal > 0 && !lost) { lost = true; throw new ApiError(504, '知识库服务暂不可用。'); } return result; };
+  const session = new BatchUploadSession(server.api, { streaming: true, hash: shaHex, delay: async ms => { waits.push(ms); } });
+  await session.start(input, { requestId: 'same-request' });
+  assert.deepEqual(waits, [500]);
+  assert.equal(server.entries.length, 80); assert.equal(new Set(server.uploads).size, 80); assert.equal(server.uploads.length, 80);
+  // The whole import again with the same request ID: the open batch is returned, chunks replay, nothing is re-sent.
+  server.sealed = false; const before = server.uploads.length;
+  server.api.createBatch = async command => ({ batch_id: 'open-1', open: true, expected_total: command.expected_total, total: server.entries.length, items: [] });
+  await new BatchUploadSession(server.api, { streaming: true, hash: shaHex }).start(input, { requestId: 'same-request' });
+  assert.equal(server.uploads.length, before, 'received files are never sent twice');
+  assert.equal(server.entries.length, 80);
+  // A different entry at a registered ordinal is a conflict, not a silent overwrite.
+  const changed = [...input]; changed[3] = inFolder('<doc>changed</doc>', 'zh_cn/ted2020-3.xml');
+  await assert.rejects(new BatchUploadSession(server.api, { streaming: true, hash: shaHex }).start(changed, { requestId: 'same-request' }), error => error.errorCode === 'batch_upload_conflict');
+});
+
+test('duplicates found while appending are skipped and never uploaded', async () => {
+  const input = [inFolder('same', 'a/1.txt'), inFolder('same', 'b/2.txt'), inFolder('other', 'a/3.txt')], server = openServer();
+  const session = new BatchUploadSession(server.api, { streaming: true, hash: shaHex });
+  await session.start(input);
+  assert.deepEqual(server.uploads.sort(), [0, 2]);
+  assert.equal(session.snapshot().items[1].state, 'duplicate'); assert.equal(session.snapshot().items[1].duplicateOrdinal, 0);
+  assert.equal(session.view().counts.duplicate, 1); assert.equal(session.view().percent, 100);
+});
+
+test('an entry server without the append route falls back to one manifest under a new request ID', async () => {
+  const input = tedFiles(5), server = openServer(), creates = [];
+  server.api.appendBatchFiles = async () => { throw new ApiError(404, '开发请求不符合安全约束。'); };
+  server.api.createBatch = async command => { creates.push(command); return command.open ? { batch_id: 'open-1', open: true, expected_total: command.expected_total, total: 0, items: [] } : { batch_id: 'legacy-1', total: command.files.length, counts: {}, items: [] }; };
+  const session = new BatchUploadSession(server.api, { streaming: true, hash: shaHex });
+  await session.start(input, { requestId: 'first' });
+  assert.equal(creates.length, 2); assert.equal(creates[0].open, true); assert.equal(creates[1].files.length, 5);
+  assert.notEqual(creates[1].request_id, 'first'); assert.equal(session.requestId, creates[1].request_id);
+  assert.deepEqual(server.calls.filter(([kind]) => kind === 'cancel'), [['cancel', 'open-1']]);
+  assert.equal(session.batchId, 'legacy-1'); assert.equal(session.streaming, false); assert.equal(server.uploads.length, 5);
+  // A refusal by the service itself (with its error code) is not a missing route.
+  const strict = openServer(); strict.api.appendBatchFiles = async () => { throw new ApiError(404, '资源不存在。', { errorCode: 'not_found' }); };
+  await assert.rejects(new BatchUploadSession(strict.api, { streaming: true, hash: shaHex }).start(input), /资源不存在/u);
+});
+
+test('resume of a partly registered open batch uploads the registered rest, appends the unregistered files and seals', async () => {
+  const input = tedFiles(20), registered = [];
+  for (let ordinal = 0; ordinal < 10; ordinal++) registered.push({ ordinal, filename: input[ordinal].name, size_bytes: input[ordinal].size, source_sha256: await shaHex(input[ordinal]),
+    relative_path: relativePathOf(input[ordinal]), state: ordinal < 4 ? 'queued' : 'awaiting_upload', ingestion_task_id: ordinal < 4 ? `old-${ordinal}` : null });
+  const server = openServer({ registered, expected: 20 });
+  const session = new BatchUploadSession(server.api, { hash: shaHex });
+  await session.resume('open-1', input);
+  assert.deepEqual([...server.uploads].sort((a, b) => a - b), Array.from({ length: 16 }, (_, i) => i + 4), 'received files are not sent again');
+  assert.deepEqual(server.calls.filter(([kind]) => kind === 'append').map(([, ordinal]) => ordinal), [10], 'the rest continues right after the registered entries');
+  assert.deepEqual(server.entries.map(entry => entry.relative_path), input.map(file => relativePathOf(file)));
+  assert.equal(server.sealed, true); assert.equal(session.unmatched, 0);
+  // Only up to the announced count is appended; the rest is reported as not belonging.
+  const fuller = openServer({ registered: registered.map(entry => ({ ...entry })), expected: 12 });
+  const capped = new BatchUploadSession(fuller.api, { hash: shaHex });
+  await capped.resume('open-1', input);
+  assert.equal(fuller.entries.length, 12); assert.equal(capped.unmatched, 8);
+  // A folder that has nothing to do with the batch is refused and the batch stays open.
+  const untouched = openServer({ registered: registered.map(entry => ({ ...entry })), expected: 10 });
+  await assert.rejects(new BatchUploadSession(untouched.api, { hash: shaHex }).resume('open-1', [new File(['unrelated'], 'other.txt')]), /尚未上传的原文件/u);
+  assert.equal(untouched.sealed, false);
+  // A changed file at a registered path is skipped, never appended a second time.
+  const changed = openServer({ registered: registered.map(entry => ({ ...entry })), expected: 20 });
+  const edited = [...input]; edited[5] = inFolder('<doc>5!</doc>', 'zh_cn/ted2020-5.xml');
+  const result = new BatchUploadSession(changed.api, { hash: shaHex });
+  await result.resume('open-1', edited);
+  assert.equal(changed.uploads.includes(5), false); assert.equal(changed.entries.length, 20); assert.equal(result.unmatched, 1);
+});
+
+test('progress reports are throttled to five a second and carry counters and a few rows, never every file', async () => {
+  const input = tedFiles(600), server = openServer(), reports = [];
+  let clock = 0;
+  const session = new BatchUploadSession(server.api, { streaming: true, now: () => clock,
+    // Trailing reports never fire here, so only the throttle decides what is sent.
+    timers: { set: () => 1, clear: () => {} },
+    hash: async file => { clock += 3; return shaHex(file); }, onProgress: progress => reports.push(progress) });
+  server.uploadClock = async () => { clock += 5; };
+  await session.start(input);
+  // Phase changes and the end are always reported; everything else at most once per PROGRESS_MS.
+  assert.ok(reports.length <= Math.ceil(clock / PROGRESS_MS) + 6, `${reports.length} reports over ${clock} ms`);
+  assert.ok(reports.length >= 5);
+  for (const report of reports) {
+    assert.equal('items' in report, false);
+    assert.ok(report.active.length <= 8 && report.recent.length <= 8);
+  }
+  assert.equal(reports.at(-1).counts.submitted, 600);
+});
+
+test('the progress bar shows uploaded / total, stage counts, speed and the estimate', async () => {
+  const input = Array.from({ length: 10 }, (_, i) => new File([new Uint8Array(1000).fill(i)], `f${i}.bin`)), server = openServer();
+  let clock = 0, seen = null, html = '';
+  server.uploadClock = async ordinal => { if (ordinal === 4) seen = session.view(); clock += 500; };
+  const session = new BatchUploadSession(server.api, { streaming: true, concurrency: 1, hashConcurrency: 1, now: () => clock, hash: shaHex, onProgress: () => {} });
+  await session.start(input);
+  // Four files finished at 0.5 s intervals within the first two seconds of uploading.
+  assert.equal(seen.settled, 4); assert.equal(seen.percent, 40); assert.equal(seen.total, 10);
+  assert.equal(seen.counts.submitted, 4); assert.equal(seen.counts.uploading, 1); assert.equal(seen.counts.awaiting_upload, 5); assert.equal(seen.counts.preparing, 0);
+  assert.equal(seen.filesPerSecond, 2); assert.equal(seen.bytesPerSecond, 2000); assert.equal(seen.etaSeconds, 3);
+  assert.equal(seen.active[0].state, 'uploading'); assert.equal(seen.recent[0].label, 'f3.bin');
+  html = uploadProgressHtml({ ...seen, batchId: 'open-1' });
+  assert.match(html, /已上传 4 \/ 10 份（40%）/u);
+  assert.match(html, /<progress class="upload-progress" max="100" value="40"/u);
+  assert.match(html, /校验中 0<\/span><span>待上传 5<\/span><span>上传中 1<\/span><span>已提交 4<\/span><span>跳过 0<\/span><span>失败 0/u);
+  assert.match(html, /速度 2\.0 份\/秒 · 2\.0 KB\/秒/u); assert.match(html, /预计剩余 约 3 秒/u);
+  assert.match(html, /href="#\/imports\/open-1">查看批次处理进度/u);
+  const done = uploadProgressHtml({ ...session.view(), phase: 'done' });
+  assert.match(done, /上传完成 10 \/ 10 份（100%）/u); assert.match(done, /上传完成，正在后台解析和索引 → <a class="text-link" href="#\/imports\/open-1">查看批次进度/u);
+  // Names are escaped; no estimate before anything finished.
+  const early = uploadProgressHtml({ phase: 'uploading', streaming: true, total: 3, settled: 0, percent: 0, counts: { preparing: 3 }, filesPerSecond: null, etaSeconds: null, active: [{ label: '<b>x</b>.txt', state: 'hashing' }], recent: [] });
+  assert.match(early, /&lt;b&gt;x&lt;\/b&gt;\.txt/u); assert.match(early, /速度统计中/u); assert.doesNotMatch(early, /预计剩余/u);
+  assert.equal(formatEta(3), '约 3 秒'); assert.equal(formatEta(125), '约 2 分钟'); assert.equal(formatBytes(1536), '1.5 KB'); assert.equal(formatBytes(5 * 1024 * 1024), '5.0 MB');
+});

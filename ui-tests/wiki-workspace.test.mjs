@@ -1476,3 +1476,62 @@ test('batch preparation shows its progress and a failed registration leaves the 
   assert.equal(backend.creates.length, 2); assert.equal(backend.creates[0].request_id, backend.creates[1].request_id);
   assert.equal(f.win.location.hash, '#/imports/b1'); f.workspace.close();
 });
+
+// Streaming upload: open batches register in chunks while files upload, with one progress bar.
+const streamingCapabilities = { capabilities: [...batchCapabilities.capabilities, 'batch_streaming_upload'] };
+function openBackend() {
+  const entries = [], calls = []; let expected = 0, sealed = false;
+  const counts = () => entries.reduce((all, entry) => ({ ...all, [entry.state]: (all[entry.state] ?? 0) + 1 }), {});
+  const batch = (id, offset = 0, limit = 100) => ({ batch_id: id, state: sealed ? 'processing' : 'awaiting_upload', open: !sealed, expected_total: expected, total: entries.length, offset, limit, counts: counts(),
+    halted_reason: null, available_actions: sealed ? ['cancel'] : ['cancel', 'seal'], items: entries.slice(offset, offset + limit) });
+  return { entries, calls, get sealed() { return sealed; }, api: {
+    createBatch: async command => { calls.push(['create', command]); expected = command.expected_total; return batch('s1'); },
+    appendBatchFiles: async (id, files) => { calls.push(['append', files[0].ordinal, files.length]); await tick();
+      for (const file of files) if (!entries[file.ordinal]) entries.push({ ...file, state: 'awaiting_upload', document_id: null, ingestion_task_id: null, error_code: null });
+      return { batch_id: id, registered: entries.length, expected_total: expected, open: !sealed, items: files.map(file => ({ ordinal: file.ordinal, state: entries[file.ordinal].state })) }; },
+    sealBatch: async id => { calls.push(['seal']); sealed = true; return { batch_id: id, action: 'seal', affected: 1, batch: batch(id) }; },
+    uploadBatchFile: async (id, ordinal, file) => { calls.push(['upload', ordinal]); await tick(); Object.assign(entries[ordinal], { state: 'queued', document_id: `d${ordinal}`, ingestion_task_id: `t${ordinal}` }); return { task_id: `t${ordinal}`, filename: file.name }; },
+    getBatch: async (id, { offset = 0, limit = 100 } = {}) => batch(id, offset, limit),
+  } };
+}
+
+test('with streaming offered the dialog opens a batch, uploads while registering, shows one progress bar and hands over to the batch page', async () => {
+  const files = Array.from({ length: 60 }, (_, i) => inFolder(`<doc>${i}</doc>`, `ted/ted2020-${i}.xml`));
+  const backend = openBackend();
+  const f = fixture('#/sources', backend.api, streamingCapabilities);
+  await f.workspace.start(); await f.click('import'); f.nodes.get('upload-kind').value = 'document'; chooseFiles(f, files);
+  const seen = []; const list = f.nodes.get('upload-list'); let html = list.innerHTML;
+  Object.defineProperty(list, 'innerHTML', { configurable: true, get: () => html, set: value => { html = value; seen.push(value); } });
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.calls[0][1].open, true); assert.equal(backend.calls[0][1].expected_total, 60);
+  const kinds = backend.calls.map(([kind]) => kind);
+  assert.ok(kinds.indexOf('upload') < kinds.lastIndexOf('append'), 'the first files upload before the last chunk is registered');
+  assert.equal(kinds.filter(kind => kind === 'seal').length, 1); assert.equal(backend.sealed, true);
+  assert.ok(seen.some(value => /<progress class="upload-progress"/u.test(value) && /已上传 \d+ \/ 60 份/u.test(value)), 'one bar with uploaded / total');
+  assert.ok(seen.some(value => /校验中 \d+<\/span><span>待上传 \d+<\/span><span>上传中 \d+<\/span><span>已提交 \d+/u.test(value)));
+  assert.ok(seen.length < 60, `rendered ${seen.length} times for 60 files`);
+  assert.equal(f.nodes.get('import-dialog').open, false); assert.equal(f.win.location.hash, '#/imports/s1');
+  assert.match(f.nodes.get('toast').textContent, /上传完成：已提交 60 份。资料已提交，正在后台解析和索引，已打开批次进度页/u);
+  f.workspace.close();
+});
+
+test('an open batch left mid-registration offers to continue the upload or seal it as it stands', async () => {
+  const backend = openBackend();
+  await backend.api.createBatch({ open: true, expected_total: 5 });
+  await backend.api.appendBatchFiles('s1', [{ ordinal: 0, filename: 'a.txt', size_bytes: 1, source_sha256: 'a'.repeat(64) }, { ordinal: 1, filename: 'b.txt', size_bytes: 1, source_sha256: 'b'.repeat(64) }]);
+  backend.entries[0].state = 'indexed';
+  const f = fixture('#/imports/s1', backend.api, streamingCapabilities);
+  await f.workspace.start();
+  assert.match(f.html(), /批次登记未完成：已登记 2 \/ 5 份文件/u);
+  assert.match(f.html(), /data-action="import"[^>]*>继续上传/u); assert.match(f.html(), /data-action="batch-seal"/u);
+  const declined = f.click('batch-seal'); await tick(); await f.click('cancel-operation'); await declined;
+  assert.equal(backend.sealed, false);
+  const sealing = f.click('batch-seal'); await tick(); await f.click('confirm-operation'); await sealing; await settle(f);
+  assert.equal(backend.sealed, true); assert.match(f.nodes.get('toast').textContent, /已结束登记，批次共 2 份文件/u);
+  assert.doesNotMatch(f.html(), /批次登记未完成|data-action="batch-seal"/u);
+  f.workspace.close();
+  const history = fixture('#/imports', { listBatches: async () => ({ offset: 0, limit: 20, total: 1, items: [{ batch_id: 's2', state: 'awaiting_upload', open: true, expected_total: 9, total: 4, counts: { awaiting_upload: 4 }, halted_reason: null, created_at: '2026-10-19T00:00:00Z', updated_at: '2026-10-19T00:00:00Z' }] }) }, streamingCapabilities);
+  await history.workspace.start();
+  assert.match(history.html(), /登记未完成/u); assert.match(history.html(), /已登记 4 \/ 9/u);
+  history.workspace.close();
+});

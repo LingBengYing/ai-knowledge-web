@@ -57,7 +57,7 @@ test('batch bulk actions cross both real proxies as JSON POSTs and nothing else'
     const { origin } = await fixture(t, (req, res) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => { seen.push([req.url, req.method, Buffer.concat(chunks).toString()]); res.end('{}'); }); }, {}, external);
     const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
     const json = { ...headers, 'Content-Type': 'application/json' };
-    for (const action of ['retry-failed', 'cancel', 'resume']) {
+    for (const action of ['retry-failed', 'cancel', 'resume', 'seal']) {
       const path = `/v1/document-batches/batch-one/${action}`, payload = action === 'resume' ? '{"embedding_request_limit":2000}' : '{}';
       assert.equal((await raw(origin, path, { method: 'POST', headers: json, body: payload })).status, 200, `${external} ${action}`);
       assert.deepEqual(seen.at(-1), [path, 'POST', payload]);
@@ -66,7 +66,7 @@ test('batch bulk actions cross both real proxies as JSON POSTs and nothing else'
       assert.equal((await raw(origin, path, { method: 'POST', headers: { ...headers, 'Content-Type': 'text/plain' }, body: '{}' })).status, 415);
     }
     assert.equal((await raw(origin, '/v1/document-batches/batch-one/restart', { method: 'POST', headers: json, body: '{}' })).status, 404);
-    assert.equal(seen.length, 3);
+    assert.equal(seen.length, 4);
   }
 });
 
@@ -514,5 +514,25 @@ test('a batch manifest gets the upload deadline on both proxies while batch read
     const manifest = JSON.stringify({ request_id: 'batch', files: Array.from({ length: 3827 }, (_, i) => ({ filename: `ted2020-${i}.xml`, size_bytes: 12345, source_sha256: 'a'.repeat(64), relative_path: `zh_cn/ted2020-${i}.xml` })) });
     assert.equal((await raw(origin, '/v1/document-batches', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: manifest })).status, 202, external ? 'external' : 'dev');
     assert.equal((await raw(origin, '/v1/document-batches', { headers })).status, 504);
+  }
+});
+
+test('appending open-batch entries crosses both proxies as JSON with the manifest size and the upload deadline', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => setTimeout(() => { seen.push([req.url, req.method, Buffer.concat(chunks).length]); res.end('{}'); }, 150)); },
+      { deadlineMs: 50, uploadDeadlineMs: 2000 }, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    const json = { ...headers, 'Content-Type': 'application/json' };
+    // 1000 entries with long folder paths: well above the ordinary 1 MiB JSON limit, under 4 MiB.
+    const chunk = JSON.stringify({ files: Array.from({ length: 1000 }, (_, i) => ({ ordinal: i, filename: `ted2020-${i}.xml`, size_bytes: 12345, source_sha256: 'a'.repeat(64), relative_path: `${'目录/'.repeat(300)}ted2020-${i}.xml` })) });
+    assert.ok(chunk.length > 1024 * 1024);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/files', { method: 'POST', headers: json, body: chunk })).status, 200, `${external} append`);
+    assert.deepEqual(seen.at(-1), ['/v1/document-batches/batch-one/files', 'POST', Buffer.byteLength(chunk)]);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/files?x=1', { method: 'POST', headers: json, body: '{}' })).status, 400);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/files', { headers })).status, 405);
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/files', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream' }, body: '{}' })).status, 415);
+    // The seal is an ordinary action and keeps the ordinary deadline.
+    assert.equal((await raw(origin, '/v1/document-batches/batch-one/seal', { method: 'POST', headers: json, body: '{}' })).status, 504);
   }
 });
