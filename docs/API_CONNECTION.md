@@ -73,6 +73,7 @@ Java声明`query_attachments`且当前证据模式的answers/sources启用时，
 | `/v1/documents/{id}/index` | POST | 无query/body，确认后建立索引，要求Java显式能力与当前can_index |
 | `/v1/indexings/{id}` | GET | 无query/body，当前授权索引任务 |
 | `/v1/indexings/{id}/cancel`、`/retry` | POST | 无query/body，按服务器权限取消或有界重试 |
+| `/v1/document-batches` | POST | 2026-10-19批次清单（JSON，≤4MiB；3,827个文件约650KiB）使用上传时限`uploadDeadlineMs`（默认30秒）而非普通10秒：清单上传本身计入时限，慢速上行（低于约65KB/s）在10秒内传不完会被504。生产定制入口须同样调整 |
 | `/v1/document-batches` | GET | 2026-10-17导入记录；query仅`offset`、`limit`（1–100，默认20），返回本工作区批次`{offset,limit,total,items:[{batch_id,state,total,counts,halted_reason,created_at,updated_at}]}`，最新在前。生产定制入口须同样放行GET |
 | `/v1/document-batches/{id}` | GET | query仅`offset`、`limit`、`state`；`state`为逗号分隔的文件状态（小写字母/下划线，最多10个），服务端分页，`matched`为符合筛选的文件数；文件行另有`relative_path`、`started_at`、`finished_at`，批次另有`created_at`、`updated_at`、`throughput{window_seconds,finished,measured_at}` |
 | `/v1/document-batches/{id}/retry-failed`、`/cancel`、`/resume` | POST | 2026-10-17新增批量操作；无query，JSON（resume可选`embedding_request_limit`），返回`{batch_id,action,affected,batch}`；409`batch_action_conflict`表示当前状态不适用。生产定制入口须同样放行 |

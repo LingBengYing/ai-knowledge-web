@@ -131,13 +131,19 @@ export function formatDuration(seconds) {
 
 /** Bounded transfers; the durable server batch owns processing and recovery. */
 export const DEFAULT_UPLOAD_CONCURRENCY = 4;
+/** Files hashed at once while preparing a manifest; small files are dominated by read latency. */
+export const DEFAULT_HASH_CONCURRENCY = 4;
+/** The most often preparation progress is reported. */
+export const PREPARE_PROGRESS_MS = 100;
 /** A slot that needs no further transfer: received by the server, or skipped as a duplicate. */
 export const uploadSettled = state => state === 'submitted' || state === 'duplicate';
 
 export class BatchUploadSession {
-  constructor(api, { concurrency = DEFAULT_UPLOAD_CONCURRENCY, hash = fileSha256Hex, onProgress = () => {}, validate = () => {}, delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
+  constructor(api, { concurrency = DEFAULT_UPLOAD_CONCURRENCY, hashConcurrency = DEFAULT_HASH_CONCURRENCY, hash = fileSha256Hex, onProgress = () => {}, validate = () => {},
+    delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)), now = () => Date.now() } = {}) {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new TypeError('Invalid upload concurrency');
-    this.api = api; this.concurrency = concurrency; this.hash = hash; this.onProgress = onProgress; this.validate = validate; this.delay = delay;
+    if (!Number.isSafeInteger(hashConcurrency) || hashConcurrency < 1 || hashConcurrency > 8) throw new TypeError('Invalid hash concurrency');
+    this.api = api; this.concurrency = concurrency; this.hashConcurrency = hashConcurrency; this.hash = hash; this.onProgress = onProgress; this.validate = validate; this.delay = delay; this.now = now;
     this.batchId = null; this.requestId = null; this.progress = []; this.files = []; this.running = false;
   }
   async start(files, { requestId = crypto.randomUUID(), embeddingRequestLimit, includeDuplicates = false, signal } = {}) {
@@ -146,18 +152,20 @@ export class BatchUploadSession {
     try {
       // Every slot must be uploadable before the server registers the manifest.
       for (const file of this.files) this.validate(file);
-      const manifest = [];
-      for (let ordinal = 0; ordinal < this.files.length; ordinal++) {
-        signal?.throwIfAborted(); const file = this.files[ordinal];
-        // Hashed in bounded slices: one chunk of one file is in memory at a time.
-        const path = relativePathOf(file);
-        manifest.push({ filename: file.name, size_bytes: file.size, source_sha256: await this.hash(file, { signal }), ...(path ? { relative_path: path } : {}) });
-        this.progress[ordinal].state = 'awaiting_upload';
+      const manifest = await this.prepare(signal);
+      this.onProgress(this.snapshot({ phase: 'registering', prepared: manifest.length, total: manifest.length }));
+      let batch;
+      try {
+        batch = await this.api.createBatch({ request_id: requestId, files: manifest,
+          ...(embeddingRequestLimit === undefined ? {} : { embedding_request_limit: embeddingRequestLimit }),
+          // Sent only to opt out of skipping, so the default manifest is unchanged for older servers.
+          ...(includeDuplicates === true ? { include_duplicates: true } : {}) }, { signal });
+      } catch (error) {
+        // A lost or timed-out registration may still have been recorded: the retry reuses the request ID.
+        if (error?.name !== 'AbortError' && (!(error instanceof ApiError) || error.status >= 500))
+          throw new ApiError(error?.status ?? 0, `${manifest.length} 份文件的批次登记未完成（连接中断或超时）。请检查网络后再次点击“确认导入”继续，不会重复登记。`, { errorCode: error?.errorCode });
+        throw error;
       }
-      const batch = await this.api.createBatch({ request_id: requestId, files: manifest,
-        ...(embeddingRequestLimit === undefined ? {} : { embedding_request_limit: embeddingRequestLimit }),
-        // Sent only to opt out of skipping, so the default manifest is unchanged for older servers.
-        ...(includeDuplicates === true ? { include_duplicates: true } : {}) }, { signal });
       if (typeof batch?.batch_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/u.test(batch.batch_id) || batch.total !== files.length) throw new ApiError(502, '批次回执无效，请刷新后核对。');
       this.batchId = batch.batch_id;
       this.ordinals = this.files.map((_, i) => i);
@@ -169,6 +177,43 @@ export class BatchUploadSession {
       await this.transfer(signal);
       return await this.api.getBatch(this.batchId, { signal });
     } finally { this.running = false; }
+  }
+  /**
+   * Manifest entries in ordinal order, hashed hashConcurrency files at a time (each in bounded
+   * slices). Reports {phase: 'preparing', prepared, total} at the start, at most once per
+   * PREPARE_PROGRESS_MS and at the end, so thousands of small files never render per file.
+   */
+  async prepare(signal) {
+    const total = this.files.length, manifest = new Array(total);
+    let next = 0, prepared = 0, failure, reported = -Infinity;
+    const report = force => {
+      const time = this.now();
+      if (!force && time - reported < PREPARE_PROGRESS_MS) return;
+      reported = time; this.onProgress(this.snapshot({ phase: 'preparing', prepared, total }));
+    };
+    report(true);
+    const worker = async () => {
+      while (!failure && next < total) {
+        const ordinal = next++, file = this.files[ordinal];
+        try {
+          signal?.throwIfAborted();
+          let digest;
+          try { digest = await this.hash(file, { signal }); }
+          catch (error) {
+            if (error?.name === 'AbortError' || error instanceof ApiError) throw error;
+            throw new ApiError(422, `无法读取文件“${displayPath({ relativePath: relativePathOf(file), filename: file.name })}”，请确认它仍在原位置且未被其他程序占用后重新选择。`);
+          }
+          const path = relativePathOf(file);
+          manifest[ordinal] = { filename: file.name, size_bytes: file.size, source_sha256: digest, ...(path ? { relative_path: path } : {}) };
+          this.progress[ordinal].state = 'awaiting_upload'; prepared++;
+          report(false);
+        } catch (error) { failure ??= error; }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(this.hashConcurrency, total) }, worker));
+    if (failure) throw failure;
+    report(true);
+    return manifest;
   }
   duplicate(item) {
     return { filename: item.filename, state: 'duplicate', documentId: typeof item.duplicate_of_document_id === 'string' ? item.duplicate_of_document_id : null,
@@ -218,7 +263,7 @@ export class BatchUploadSession {
     await Promise.all(Array.from({ length: Math.min(this.concurrency, this.files.length) }, worker));
     if (failure) throw failure;
   }
-  snapshot() { return { batchId: this.batchId, items: this.progress.map(item => ({ ...item })) }; }
+  snapshot(extra = {}) { return { batchId: this.batchId, ...extra, items: this.progress.map(item => ({ ...item })) }; }
   /**
    * Continues a batch with re-selected originals (single files or the same folder again). A file goes
    * to a not-yet-uploaded slot with the same name, size and SHA-256, preferring the slot with the same

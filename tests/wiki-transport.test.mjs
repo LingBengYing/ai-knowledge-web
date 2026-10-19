@@ -505,3 +505,14 @@ test('both entries serve exactly the browser modules that exist and every module
     for (const [, imported] of source.matchAll(/(?:from|import\()\s*'\.\/([^']+)'/gu)) assert.ok(modules.includes(imported), `${name} imports missing ${imported}`);
   }
 });
+
+test('a batch manifest gets the upload deadline on both proxies while batch reads keep the ordinary one', async t => {
+  for (const external of [false, true]) {
+    const { origin } = await fixture(t, (req, res) => { req.resume(); req.on('end', () => setTimeout(() => { res.statusCode = req.method === 'POST' ? 202 : 200; res.end('{}'); }, 150)); },
+      { deadlineMs: 50, uploadDeadlineMs: 2000 }, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    const manifest = JSON.stringify({ request_id: 'batch', files: Array.from({ length: 3827 }, (_, i) => ({ filename: `ted2020-${i}.xml`, size_bytes: 12345, source_sha256: 'a'.repeat(64), relative_path: `zh_cn/ted2020-${i}.xml` })) });
+    assert.equal((await raw(origin, '/v1/document-batches', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: manifest })).status, 202, external ? 'external' : 'dev');
+    assert.equal((await raw(origin, '/v1/document-batches', { headers })).status, 504);
+  }
+});
