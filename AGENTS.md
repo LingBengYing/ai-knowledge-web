@@ -1,5 +1,7 @@
 # AI Knowledge Web：智能体工作约定
 
+2026-10-25 0094/Web0062知识建设：负责人已授权本版推送Git、配套Java/Web生产发布与新合成资料真实模型验收。批次归档/选源提案、来源变化局部修订、规则质量待办，schema43增加批次归档设置。旧图片/OCR/问答WIP不纳入本提交；生产Milvus0093、Agent/OCR和配置保持。发布状态与边界以docs/changes/0062-knowledge-construction/deployment-plan.md及后续deployment-verification.md为准，不把本地验证称为真实生产验收。
+
 2026-10-19 批量导入边传边登记（分支feat/batch-streaming-upload，未发布，配套后端同名分支v42）：后端报告`batch_streaming_upload`时，导入窗口先登记开放批次（`open:true`+`expected_total`），每算完一小批指纹（首批50个，之后至多500个/1秒/上传路空闲）就`POST /v1/document-batches/{id}/files`追加并立即上传，最后一段后`seal`；3,827个文件第一个上传约0.2秒开始（模拟每文件读取5ms、往返40ms；原来约5.7秒）。导入窗口改为一条进度条：已上传 N / 总数与百分比、校验中/待上传/上传中/已提交/跳过/失败计数、速度（份/秒、KB/MB每秒）与预计剩余，逐文件只列在途与最近8个；会话进度每200毫秒至多发送一次、只含计数与少量行，不再每个事件复制全部文件（原onProgress每次还过滤全部文件，3,827个文件为O(n²)）。上传完成提示“正在后台解析和索引”并打开批次页。批次页对未结束登记的批次显示“批次登记未完成：已登记 N / M 份”，可“继续上传”（重选文件夹：上传已登记未上传的文件，并追加登记其余文件后结束登记）或“按已登记的文件结束登记”；导入记录显示“登记未完成”。入口不认识追加路由（404/405无服务错误码）时取消空开放批次并退回一次性清单。两层Node入口（scripts/wiki-transport.mjs）新增`POST /v1/document-batches/{id}/files`（`wiki-batch`，4MiB，上传时限，`batchManifestRequest`）与`seal`。**生产定制external-server.mjs须同步**：WIKI_ROUTES加`^/v1/document-batches/[A-Za-z0-9_-]{1,128}/files$`（POST）、批量操作正则加`seal`、该追加请求与清单一样用4MiB上限和uploadDeadlineMs；无新增静态资源。不部署。
 
 2026-10-19 批量准备卡住修复（分支fix/batch-prepare-progress）：确认导入后先以4路并行计算SHA-256，导入窗口显示“正在校验文件 N / 总数”（每100毫秒至多刷新一次）与“正在登记批次”；读文件失败或登记中断/超时给出中文原因并常驻窗口，回到可重试状态（同一request_id）。两层Node入口的`POST /v1/document-batches`改用上传时限（30秒），原10秒在慢速上行下传不完约650KiB清单即504。**生产定制external-server.mjs须同步**：该请求的计时器用uploadDeadlineMs。不部署。

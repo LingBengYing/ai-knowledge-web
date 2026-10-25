@@ -1535,3 +1535,43 @@ test('an open batch left mid-registration offers to continue the upload or seal 
   assert.match(history.html(), /登记未完成/u); assert.match(history.html(), /已登记 4 \/ 9/u);
   history.workspace.close();
 });
+
+test('construction routes are native and old backend capability hides their entry points', async () => {
+  assert.deepEqual(parseWorkspaceRoute('#/build/b1'), { view: 'build', id: 'b1' });
+  assert.deepEqual(parseWorkspaceRoute('#/knowledge-updates/p1'), { view: 'knowledge-updates', id: 'p1' });
+  assert.deepEqual(parseWorkspaceRoute('#/quality'), { view: 'quality' });
+  assert.equal(parseWorkspaceRoute('#/build').view, 'missing'); assert.equal(parseWorkspaceRoute('#/quality/no').view, 'missing');
+  const old = fixture('#/build/b1'); await old.workspace.start(); assert.match(old.html(), /尚未启用/u); assert.deepEqual(old.calls, []); old.workspace.close();
+  const current = fixture('#/knowledge', {}, { capabilities: ['wiki_maintenance'] }); await current.workspace.start(); assert.match(current.html(), /href="#\/knowledge-updates"/u); current.workspace.close();
+});
+
+test('batch construction route mounts separately and cancels pending read on navigation', async () => {
+  let finish, signal;
+  const f = fixture('#/build/b1', { listBatchSources: (_id, options) => { signal = options.signal; return new Promise(resolve => { finish = resolve; }); } }, { capabilities: ['batch_sources'] });
+  const pending = f.workspace.start(); for (let i = 0; i < 40 && !finish; i++) await tick();
+  assert.equal(typeof finish, 'function'); await f.go('#/knowledge'); assert.equal(signal.aborted, true);
+  finish({ batch_id: 'b1', offset: 0, limit: 50, total: 0, items: [], folders: [] }); await pending;
+  assert.match(f.html(), /真实知识页/u); f.workspace.close();
+});
+
+test('import directory choice makes a single file a batch and a failed registration keeps original placement', async () => {
+  const backend = batchBackend({ failCreate: 1 });
+  const f = fixture('#/sources', { ...backend.api, listFolders: async () => ({ items: [{ folder_id: 'folder-one', name: '<资料目录>' }] }) }, { capabilities: [...batchCapabilities.capabilities, 'batch_organization'] });
+  await f.workspace.start(); await f.click('import'); assert.match(f.nodes.get('import-target-folder').innerHTML, /&lt;资料目录&gt;/u);
+  f.nodes.get('upload-kind').value = 'document'; f.nodes.get('import-target-folder').value = 'folder-one'; f.doc.getElementById('import-preserve-paths').checked = true;
+  chooseFiles(f, [new File(['synthetic'], 'one.txt')]); await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 1); assert.equal(backend.creates[0].target_folder_id, 'folder-one'); assert.equal(backend.creates[0].preserve_paths, true);
+  f.nodes.get('import-target-folder').value = 'other-folder'; f.doc.getElementById('import-preserve-paths').checked = false;
+  await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates[1].target_folder_id, 'folder-one'); assert.equal(backend.creates[1].preserve_paths, true);
+  assert.equal(backend.creates[1].request_id, backend.creates[0].request_id); f.workspace.close();
+});
+
+test('batch detail reads its saved destination and path policy without offering a silent change on resume', async () => {
+  const batch = { batch_id: 'b1', total: 1, offset: 0, limit: 100, counts: { awaiting_upload: 1 }, state: 'awaiting_upload', available_actions: [], items: [], target_folder_id: 'folder-one', target_folder_name: '<教材>', preserve_paths: true };
+  const f = fixture('#/imports/b1', { getBatch: async () => batch }, batchCapabilities); await f.workspace.start();
+  assert.match(f.html(), /目录：&lt;教材&gt; · 保留文件夹路径/u); assert.doesNotMatch(f.html(), /目录：<教材>/u);
+  await f.click('import'); assert.equal(f.nodes.get('import-organization').hidden, true); f.workspace.close();
+  const plain = fixture('#/imports/b1', { getBatch: async () => ({ ...batch, target_folder_id: null, target_folder_name: null, preserve_paths: false }) }, batchCapabilities); await plain.workspace.start();
+  assert.doesNotMatch(plain.html(), /目录：|保留文件夹路径/u); plain.workspace.close();
+});

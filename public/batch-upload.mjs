@@ -254,12 +254,14 @@ export class BatchUploadSession {
   /** Files that still need a transfer after a failure, for "确认导入" to continue with. */
   unsettledFiles() { return this.files.filter((_, index) => !uploadSettled(this.progress[index].state) && this.progress[index].state !== 'skipped'); }
 
-  async start(files, { requestId = crypto.randomUUID(), embeddingRequestLimit, includeDuplicates = false, signal } = {}) {
+  async start(files, { requestId = crypto.randomUUID(), embeddingRequestLimit, includeDuplicates = false, targetFolderId = null, preservePaths = false, signal } = {}) {
     if (this.running || !files.length || files.length > 10000) throw new ApiError(422, '请选择要导入的文件。');
     this.running = true; this.requestId = requestId; this.batchId = null; this.unmatched = 0; this.reset(files);
     const options = { ...(embeddingRequestLimit === undefined ? {} : { embedding_request_limit: embeddingRequestLimit }),
       // Sent only to opt out of skipping, so the default manifest is unchanged for older servers.
-      ...(includeDuplicates === true ? { include_duplicates: true } : {}) };
+      ...(includeDuplicates === true ? { include_duplicates: true } : {}),
+      ...(targetFolderId ? { target_folder_id: targetFolderId } : {}),
+      ...(preservePaths === true ? { preserve_paths: true } : {}) };
     try {
       // Every slot must be uploadable before the server registers anything.
       for (const file of this.files) this.validate(file);

@@ -7,7 +7,7 @@ import { constants } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
-import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed, batchManifestRequest } from './wiki-transport.mjs';
+import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed, batchManifestRequest, wikiCompilationRequest } from './wiki-transport.mjs';
 import { isAgentEventStream, validAgentEventStream, forwardAgentEventStream } from './agent-event-stream.mjs';
 import { createUploadAdmission, streamUpload } from './upload-transport.mjs';
 
@@ -408,7 +408,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     const replacementUpload = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/.test(req.url.split('?')[0]);
     const replacementIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/.test(req.url);
     const upload = /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/u.test(req.url) && req.method === 'POST' || replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
-    const answer = req.method === 'POST' && ['/v1/wiki/proposals', '/v1/knowledge-answers'].includes(req.url);
+    const answer = wikiCompilationRequest(req.method, req.url) || req.method === 'POST' && req.url === '/v1/knowledge-answers';
     const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
     const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
     const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);
@@ -444,7 +444,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
       }
       const path = req.url.split('?')[0];
       if (!req.url.startsWith('/') || /[\\#\x00-\x20]/.test(req.url)) throw new TransportError(404, 'route_not_found');
-      const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/document-batches(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path) || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
+      const wikiQuery = (path.startsWith('/v1/wiki/') || /^\/v1\/document-batches(?:\/[A-Za-z0-9_-]{1,128}(?:\/sources)?)?$/u.test(path) || /^\/v1\/knowledge-conversations(?:\/[A-Za-z0-9_-]{1,128})?$/u.test(path)) && wikiQueryAllowed(req.url, req.method);
       // Chat apps and mail append tracking queries to shared page links; HTML pages ignore them, modules and APIs do not.
       const page = ['GET', 'HEAD'].includes(req.method) && ASSETS.get(path)?.[1].startsWith('text/html');
       if (req.url.includes('?') && !page && !wikiQuery && !replacementUpload && !['/v1/documents', '/v1/management/documents', '/v1/management/document-cleanups'].includes(path)) throw new TransportError(400, 'query_denied');

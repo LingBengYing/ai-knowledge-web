@@ -14,6 +14,44 @@ const sessionPair = 'rag_session=REPLACE_ME';
 const body = JSON.stringify({ title: '合成知识', body: '原样保留', version: 2 });
 const close = server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
 
+test('knowledge construction routes cross both proxies with exact queries and version-bound refresh bodies', async t => {
+  for (const external of [false, true]) {
+    const seen = [];
+    const { origin } = await fixture(t, (req, res) => {
+      const chunks = []; req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => { seen.push([req.method, req.url, Buffer.concat(chunks).toString()]); res.end('{}'); });
+    }, {}, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    for (const path of ['/v1/document-batches/batch-one/sources?offset=0&limit=20&q=manual&folder=guides', '/v1/wiki/maintenance?offset=0&limit=20&kind=stale_knowledge', '/v1/wiki/pages/page-one/source-changes']) {
+      assert.equal((await raw(origin, path, { headers })).status, 200, `${external} ${path}`);
+      assert.deepEqual(seen.at(-1), ['GET', path, '']);
+    }
+    const path = '/v1/wiki/pages/page-one/refresh-proposal';
+    const payload = JSON.stringify({ base_version: 2, generation_method: 'model', source_versions: [{ document_id: 'doc-one', publication_id: 'pub-two' }] });
+    assert.equal((await raw(origin, path, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: payload })).status, 200);
+    assert.deepEqual(seen.at(-1), ['POST', path, payload]);
+    const count = seen.length;
+    for (const target of ['/v1/wiki/maintenance?kind=all&kind=empty_text', '/v1/document-batches/batch-one/sources?token=x', '/v1/wiki/pages/page-one/source-changes?include_body=1'])
+      assert.equal((await raw(origin, target, { headers })).status, 400, target);
+    assert.equal((await raw(origin, path, { headers })).status, 405);
+    assert.equal((await raw(origin, `${path}?force=1`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: payload })).status, 400);
+    assert.equal(seen.length, count);
+  }
+});
+
+test('incremental knowledge compilation gets the existing long deadline without extending maintenance reads', async t => {
+  for (const external of [false, true]) {
+    let count = 0;
+    const { origin } = await fixture(t, (req, res) => {
+      count++; req.resume(); req.on('end', () => setTimeout(() => res.end('{}'), 200));
+    }, { deadlineMs: 50, answerDeadlineMs: 2000 }, external);
+    const headers = external ? { Host: new URL(publicOrigin).host, Origin: publicOrigin, Cookie: sessionPair } : { Origin: origin };
+    assert.equal((await raw(origin, '/v1/wiki/pages/page-one/refresh-proposal', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{}' })).status, 200);
+    assert.equal((await raw(origin, '/v1/wiki/maintenance', { headers })).status, 504);
+    assert.equal(count, 2, 'no automatic retry');
+  }
+});
+
 test('batch manifests and raw slots cross both real proxies with bounded upload paths', async t => {
   for (const external of [false, true]) {
     const seen = [];

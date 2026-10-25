@@ -4,6 +4,24 @@ import { createHash } from 'node:crypto';
 import { createApi } from '../public/api.mjs';
 import { createWikiWorkspaceApi, wikiSourcePath } from '../public/wiki-workspace-api.mjs';
 
+test('construction APIs preserve source selections, exact publication expectations and read-only paging', async () => {
+  const calls = [], api = createWikiWorkspaceApi({ api: async (path, options) => { calls.push([path, options]); return {}; } });
+  await api.listBatchSources('batch-one', { offset: 50, limit: 50, q: '标题 & 文件', folder: '教材/第一章' });
+  await api.listMaintenance({ kind: 'stale_knowledge', offset: 20 });
+  await api.getSourceChanges('page-one');
+  const command = { base_version: 3, generation_method: 'model', source_versions: [{ document_id: 'doc-one', publication_id: 'pub-one' }] };
+  await api.refreshProposal('page-one', command); await api.listFolders();
+  const url = new URL(calls[0][0], 'http://localhost');
+  assert.equal(url.pathname, '/v1/document-batches/batch-one/sources');
+  assert.equal(url.searchParams.get('folder'), '教材/第一章'); assert.equal(url.searchParams.get('q'), '标题 & 文件');
+  assert.equal(calls[1][0], '/v1/wiki/maintenance?offset=20&limit=20&kind=stale_knowledge');
+  assert.equal(calls[2][0], '/v1/wiki/pages/page-one/source-changes');
+  assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/v1/wiki/pages/page-one/refresh-proposal', 'POST', command]);
+  assert.equal(calls[4][0], '/v1/management/folders');
+  assert.throws(() => api.listBatchSources('../invalid'), error => error.status === 422);
+  assert.throws(() => api.listMaintenance({ kind: 'anything' }), error => error.status === 422); assert.equal(calls.length, 5);
+});
+
 const sha = value => createHash('sha256').update(value).digest('hex');
 const pageContext = { page_id: 'page-one', version: 2, source_id: 'source-one' };
 const proposalContext = { proposal_id: 'proposal-one', source_id: 'source-one' };

@@ -7,7 +7,7 @@ import { constants } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import pdfBundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
-import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed, batchManifestRequest } from './wiki-transport.mjs';
+import { WIKI_ASSETS, WIKI_ROUTES, wikiQueryAllowed, batchManifestRequest, wikiCompilationRequest } from './wiki-transport.mjs';
 import { isAgentEventStream, validAgentEventStream, forwardAgentEventStream } from './agent-event-stream.mjs';
 import { createUploadAdmission, streamUpload } from './upload-transport.mjs';
 
@@ -341,7 +341,7 @@ export async function startDevServer({ backendOrigin = 'http://127.0.0.1:18084',
     const replacementUpload = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/.test(req.url.split('?')[0]);
     const replacementIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/.test(req.url);
     const upload = /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/u.test(req.url) && req.method === 'POST' || replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
-    const answer = req.method === 'POST' && ['/v1/wiki/proposals', '/v1/knowledge-answers'].includes(req.url);
+    const answer = wikiCompilationRequest(req.method, req.url) || req.method === 'POST' && req.url === '/v1/knowledge-answers';
     const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
     const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
     const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);

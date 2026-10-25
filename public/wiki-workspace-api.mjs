@@ -86,6 +86,15 @@ export function createWikiWorkspaceApi({ api }) {
     deleteDraft: (draftId, expectedVersion, options) => write(`/v1/wiki/drafts/${id(draftId)}?version=${version(expectedVersion)}`, 'DELETE', undefined, options),
     upload: (file, { uploadKind = 'document', signal } = {}) => api(uploadKind === 'sound' ? '/v1/sound-documents' : uploadKind === 'video-av' ? '/v1/video-av-documents' : `/v1/documents?filename=${encodeURIComponent(file?.name ?? '')}`, { method: 'POST', file, uploadKind, signal }),
     createBatch: (command, options) => write('/v1/document-batches', 'POST', command, options),
+    listFolders: options => get('/v1/management/folders', options),
+    listBatchSources: (batchId, { offset = 0, limit = 50, q = '', folder = '', signal } = {}) =>
+      get(query(`/v1/document-batches/${id(batchId)}/sources`, { ...paging(offset, limit), q, folder }), { signal }),
+    listMaintenance: ({ offset = 0, limit = 20, kind = 'all', signal } = {}) => {
+      if (!['all', 'parse_failed', 'index_failed', 'empty_text', 'duplicate_source', 'stale_knowledge'].includes(kind)) throw invalid();
+      return get(query('/v1/wiki/maintenance', { ...paging(offset, limit), kind }), { signal });
+    },
+    getSourceChanges: (pageId, options) => get(`/v1/wiki/pages/${id(pageId)}/source-changes`, options),
+    refreshProposal: (pageId, command, options) => write(`/v1/wiki/pages/${id(pageId)}/refresh-proposal`, 'POST', command, options),
     listBatches: ({ offset = 0, limit = 20, signal } = {}) => get(query('/v1/document-batches', paging(offset, limit)), { signal }),
     getBatch: (batchId, { offset = 0, limit = 100, states = [], signal } = {}) => {
       // An optional state filter: known file state names only, sent as one comma-separated value.

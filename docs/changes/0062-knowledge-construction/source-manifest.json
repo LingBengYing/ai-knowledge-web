@@ -1,0 +1,57 @@
+{
+  "scope": "Touched files; shared files may retain earlier WIP. This is not a production release manifest.",
+  "files": [
+    {
+      "path": "public/batch-upload.mjs",
+      "sha256": "575f23d6eaca2e8fa3a3648df64e2e8c96fd9d58522a339d677c0d13ac29a620"
+    },
+    {
+      "path": "public/wiki-construction.mjs",
+      "sha256": "db03a891ecee75652ac0e66cf427ff42faa196ca4fd72314b5b801934709e9c8"
+    },
+    {
+      "path": "public/wiki-workspace-api.mjs",
+      "sha256": "932bef6adba932a165bdca980998fa658cbf74aa43f538788a953f491ab576b5"
+    },
+    {
+      "path": "public/wiki-workspace.css",
+      "sha256": "ce23627661341d1aecc1dfe7e5662a3b60783ec16afb5e19f1c8a809f10b53a6"
+    },
+    {
+      "path": "public/wiki-workspace.html",
+      "sha256": "fcd8eb66bd6f9f176045ce714eb3dc7219a09f740790e2f0fc050cd297e35804"
+    },
+    {
+      "path": "public/wiki-workspace.mjs",
+      "sha256": "754ff37bfc5580ed3468070a306feb17bbf26ad0216df83b12a2642c42aaa384"
+    },
+    {
+      "path": "scripts/dev-server.mjs",
+      "sha256": "5bef9cfc13a6e6daad785352b1c5eb15d2318c5394e740b3198a7989785288a1"
+    },
+    {
+      "path": "scripts/external-server.mjs",
+      "sha256": "461dae2ba4cf3df447b6bc35cc058d953ca3d479a1db17628442cd9403e54cf7"
+    },
+    {
+      "path": "scripts/wiki-transport.mjs",
+      "sha256": "f85f7d9c242a004b295fda122e1dfc1d8354a65f51a5c8768e3930cad3d00ffb"
+    },
+    {
+      "path": "tests/wiki-transport.test.mjs",
+      "sha256": "b5892ff0e5ff2259ad8eb6e80c874d3325a23fb708c67384fc6e72d818754837"
+    },
+    {
+      "path": "ui-tests/wiki-construction.test.mjs",
+      "sha256": "050bdd293a05fbf9d1631e43ab60100d811c76c5b24e254a169f1ad638d209d4"
+    },
+    {
+      "path": "ui-tests/wiki-workspace-api.test.mjs",
+      "sha256": "2be1a7cbc163073f6cabd808c363bf86b82bdd429d8c3768b4bdbc70b7cf94b4"
+    },
+    {
+      "path": "ui-tests/wiki-workspace.test.mjs",
+      "sha256": "557dda9792373dbd2c558a0c2a25d9083b9893e07eac6f9ac597ecfaf221cd40"
+    }
+  ]
+}
