@@ -486,11 +486,17 @@ export class BatchUploadSession {
       }
       const known = new Set(slots.filter(item => item.state === 'awaiting_upload' || item.state === 'duplicate' || item.ingestion_task_id).map(item => `${item.filename}\u0000${item.size_bytes}`));
       const entries = new Set(slots.map(item => `${item.relative_path || item.filename}\u0000${item.size_bytes}`));
+      // A file and an entry of which only one carries a folder path (plain files chosen for a folder
+      // import, or a folder chosen for plain files) are the same entry when name and size agree.
+      const names = new Set(slots.map(item => `${item.filename}\u0000${item.size_bytes}`));
+      const plainNames = new Set(slots.filter(item => !item.relative_path).map(item => `${item.filename}\u0000${item.size_bytes}`));
+      const registeredEntry = file => { const path = relativePathOf(file), name = `${file.name}\u0000${file.size}`;
+        return entries.has(`${path || file.name}\u0000${file.size}`) || (path ? plainNames : names).has(name); };
       const toVerify = [], toRegister = []; let unmatched = 0;
       for (const file of files) {
         signal?.throwIfAborted();
         // An open batch has no entry for this file yet: it is registered (up to the announced count).
-        if (open && !entries.has(`${relativePathOf(file) || file.name}\u0000${file.size}`)) { toRegister.push(file); continue; }
+        if (open && !registeredEntry(file)) { toRegister.push(file); continue; }
         // Not a file of this batch at all: no slot has its name and size, so it is never hashed.
         if (!known.has(`${file.name}\u0000${file.size}`)) { unmatched++; continue; }
         toVerify.push(file);
