@@ -1557,8 +1557,8 @@ test('batch construction route mounts separately and cancels pending read on nav
 test('import directory choice makes a single file a batch and a failed registration keeps original placement', async () => {
   const backend = batchBackend({ failCreate: 1 });
   const f = fixture('#/sources', { ...backend.api, listFolders: async () => ({ items: [{ folder_id: 'folder-one', name: '<资料目录>' }] }) }, { capabilities: [...batchCapabilities.capabilities, 'batch_organization'] });
-  await f.workspace.start(); await f.click('import'); assert.match(f.nodes.get('import-target-folder').innerHTML, /&lt;资料目录&gt;/u);
-  f.nodes.get('upload-kind').value = 'document'; f.nodes.get('import-target-folder').value = 'folder-one'; f.doc.getElementById('import-preserve-paths').checked = true;
+  await f.workspace.start(); f.doc.getElementById('upload-kind').value = 'document'; await f.click('import'); assert.match(f.nodes.get('import-target-folder').innerHTML, /&lt;资料目录&gt;/u);
+  f.nodes.get('import-target-folder').value = 'folder-one'; f.doc.getElementById('import-preserve-paths').checked = true;
   chooseFiles(f, [new File(['synthetic'], 'one.txt')]); await f.click('confirm-import'); await settle(f);
   assert.equal(backend.creates.length, 1); assert.equal(backend.creates[0].target_folder_id, 'folder-one'); assert.equal(backend.creates[0].preserve_paths, true);
   f.nodes.get('import-target-folder').value = 'other-folder'; f.doc.getElementById('import-preserve-paths').checked = false;
@@ -1574,4 +1574,42 @@ test('batch detail reads its saved destination and path policy without offering 
   await f.click('import'); assert.equal(f.nodes.get('import-organization').hidden, true); f.workspace.close();
   const plain = fixture('#/imports/b1', { getBatch: async () => ({ ...batch, target_folder_id: null, target_folder_name: null, preserve_paths: false }) }, batchCapabilities); await plain.workspace.start();
   assert.doesNotMatch(plain.html(), /目录：|保留文件夹路径/u); plain.workspace.close();
+});
+
+test('a folder list failure still opens the import dialog and imports to 未分类', async () => {
+  const backend = batchBackend();
+  const f = fixture('#/sources', { ...backend.api, listFolders: async () => { throw new ApiError(500, '目录服务暂不可用'); } }, { capabilities: [...batchCapabilities.capabilities, 'batch_organization'] });
+  await f.workspace.start(); f.doc.getElementById('upload-kind').value = 'document'; await f.click('import');
+  assert.equal(f.doc.getElementById('import-dialog').open, true); assert.equal(f.nodes.get('import-organization').hidden, true);
+  assert.match(f.nodes.get('toast').textContent, /目录列表读取失败/u);
+  f.nodes.get('import-target-folder').value = 'stale-folder';
+  chooseFiles(f, [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')]); await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 1); assert.equal('target_folder_id' in backend.creates[0], false); f.workspace.close();
+});
+
+test('after a failed registration the folder choice is hidden, since the retry keeps the original placement', async () => {
+  const backend = batchBackend({ failCreate: 1 });
+  const f = fixture('#/sources', { ...backend.api, listFolders: async () => ({ items: [{ folder_id: 'folder-one', name: '一' }] }) }, { capabilities: [...batchCapabilities.capabilities, 'batch_organization'] });
+  await f.workspace.start(); f.doc.getElementById('upload-kind').value = 'document'; await f.click('import');
+  assert.equal(f.nodes.get('import-organization').hidden, false); f.nodes.get('import-target-folder').value = 'folder-one';
+  chooseFiles(f, [new File(['synthetic'], 'one.txt')]); await f.click('confirm-import'); await settle(f);
+  assert.equal(backend.creates.length, 1);
+  assert.equal(f.nodes.get('import-organization').hidden, true);
+  chooseFiles(f, [new File(['other'], 'two.txt')]); assert.equal(f.nodes.get('import-organization').hidden, false); f.workspace.close();
+});
+
+test('a revision proposal marks modified, added, removed and unchanged sections by id', async () => {
+  const base = knowledge.content.sections[0];
+  const section = (id, heading, body) => ({ ...base, id, heading, body });
+  const before = { ...knowledge.content, sections: [section('keep', '保留', '原文'), section('edit', '修改', '旧正文'), section('gone', '删除<b>', '旧')] };
+  const after = { ...knowledge.content, sections: [section('keep', '保留', '原文'), section('edit', '修改', '新正文'), section('new', '新增', '补充')] };
+  const f = fixture('#/review/proposal', { getProposal: async () => ({ ...proposal, before, after }) }); await f.workspace.start();
+  const html = f.html();
+  assert.match(html, /section-unchanged"><span class="badge gray">未修改<\/span><h2>保留/u);
+  assert.match(html, /section-modified"><span class="badge amber">已修改<\/span><h2>修改/u);
+  assert.match(html, /section-added"><span class="badge green">新增<\/span><h2>新增/u);
+  assert.match(html, /section-removed"><span class="badge gray">删除<\/span><h2>删除&lt;b&gt;/u);
+  f.workspace.close();
+  const created = fixture('#/review/proposal', { getProposal: async () => ({ ...proposal, base_version: 0, before: null, after }) }); await created.workspace.start();
+  assert.doesNotMatch(created.html(), /section-change/u); created.workspace.close();
 });
