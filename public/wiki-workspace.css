@@ -300,3 +300,6 @@ article.panel + article.panel, article.panel + section.panel { margin-top: 12px;
 .construction-refresh .field { min-width: 200px; }
 @media (max-width: 1000px) { .construction-layout { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .construction-diff { grid-template-columns: 1fr; } .construction-refresh { align-items: stretch; flex-direction: column; } .construction-source { flex-wrap: wrap; } }
+.section-change > .badge { margin-bottom: 6px; }
+.section-change.section-unchanged { opacity: .6; }
+.section-change.section-removed h2, .section-change.section-removed .preserve-lines { text-decoration: line-through; }

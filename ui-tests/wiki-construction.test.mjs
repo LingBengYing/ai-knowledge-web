@@ -109,5 +109,39 @@ test('a late read after leaving cannot replace the next route and listeners are 
 test('malformed pages fail visibly rather than claiming a complete empty collection', async t => {
   const f = fixture(undefined, { listBatchSources: async () => ({ batch_id: 'another', offset: 0, limit: 50, total: 0, items: [], folders: [] }) });
   t.after(() => f.workflow.destroy()); await f.workflow.ready;
-  assert.match(f.container.innerHTML, /数据发生变化/u); assert.doesNotMatch(f.container.innerHTML, /找到 0 份/u);
+  assert.match(f.container.innerHTML, /数据与预期不一致/u); assert.doesNotMatch(f.container.innerHTML, /找到 0 份/u);
+});
+
+test('a version conflict drops selections from other pages that this page cannot re-check', async t => {
+  let version = 'pub-1';
+  const f = fixture(undefined, {
+    listBatchSources: async (id, { offset, limit }) => { const all = Array.from({ length: 51 }, (_, i) => ({ ...source(i + 1), ...(i === 0 ? { publication_id: version } : {}) })); return { batch_id: id, offset, limit, total: 51, folders: [], items: all.slice(offset, offset + limit) }; },
+    createProposal: async command => { f.calls.push(['create', command]); if (command.source_versions.some(item => item.document_id === 'doc-1' && item.publication_id !== version)) throw new ApiError(409, '所选来源版本已改变，请刷新来源后再生成提案。'); return { id: 'proposal-1' }; },
+  });
+  t.after(() => f.workflow.destroy()); await f.workflow.ready;
+  f.choose('doc-1'); f.input('construction-title', '主题'); await f.click('next'); f.choose('doc-51');
+  version = 'pub-1b'; await f.submit('construction-build');
+  assert.equal(f.workflow.state.writeUnknown, false); assert.deepEqual([...f.workflow.state.selected.keys()], ['doc-51']);
+  assert.match(f.notices.at(-1), /已取消 1 份不在当前页/u); assert.match(f.container.innerHTML, /所选来源版本已改变/u);
+  await f.click('prev'); f.choose('doc-1'); await f.submit('construction-build');
+  assert.equal(f.calls.at(-1)[1].source_versions.find(item => item.document_id === 'doc-1').publication_id, 'pub-1b');
+  assert.deepEqual(f.navigations, ['#/review/proposal-1']);
+});
+
+test('a list that shrank below the current page shows its last page instead of an empty range', async t => {
+  let total = 51;
+  const f = fixture(undefined, { listBatchSources: async (id, { offset, limit }) => { f.calls.push(['sources', id, offset]); const all = Array.from({ length: total }, (_, i) => source(i + 1)); return { batch_id: id, offset, limit, total, folders: [], items: all.slice(offset, offset + limit) }; } });
+  t.after(() => f.workflow.destroy()); await f.workflow.ready; await f.click('next'); total = 40; await f.click('refresh');
+  assert.equal(f.workflow.state.offset, 0); assert.equal(f.calls.at(-1)[2], 0);
+  assert.match(f.container.innerHTML, /1–40 \/ 40/u); assert.doesNotMatch(f.container.innerHTML, /51–50/u);
+});
+
+test('counts from the server are rendered only as non-negative integers', async t => {
+  const hostile = '<img src=x onerror=alert(1)>';
+  const f = fixture({ view: 'knowledge-updates', id: 'p1' }, { getSourceChanges: async () => ({ ...changes, sources: [{ ...changes.sources[0], after: { ...changes.sources[0].after, part_count: hostile, text_characters: hostile } }] }) });
+  t.after(() => f.workflow.destroy()); await f.workflow.ready;
+  assert.doesNotMatch(f.container.innerHTML, /<img/u); assert.match(f.container.innerHTML, /0 个片段 · 0 字符/u);
+  const b = fixture(undefined, { listBatchSources: async (id, { offset, limit }) => ({ batch_id: id, offset, limit, total: 1, folders: [{ path: '目录', count: hostile }], items: [source(1)] }) });
+  t.after(() => b.workflow.destroy()); await b.workflow.ready;
+  assert.doesNotMatch(b.container.innerHTML, /<img/u); assert.match(b.container.innerHTML, /目录（0）/u);
 });
