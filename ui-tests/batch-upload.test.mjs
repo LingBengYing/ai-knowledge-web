@@ -427,6 +427,26 @@ test('resume of a partly registered open batch uploads the registered rest, appe
   assert.equal(changed.uploads.includes(5), false); assert.equal(changed.entries.length, 20); assert.equal(result.unmatched, 1);
 });
 
+test('resuming an open folder batch with the same files picked without their folder never registers them twice', async () => {
+  const input = tedFiles(20), registered = [];
+  for (let ordinal = 0; ordinal < 10; ordinal++) registered.push({ ordinal, filename: input[ordinal].name, size_bytes: input[ordinal].size, source_sha256: await shaHex(input[ordinal]),
+    relative_path: relativePathOf(input[ordinal]), state: ordinal < 4 ? 'queued' : 'awaiting_upload', ingestion_task_id: ordinal < 4 ? `old-${ordinal}` : null });
+  // The same 20 files chosen in the file picker: no folder path on any of them.
+  const plain = await Promise.all(input.map(async file => new File([await file.arrayBuffer()], file.name)));
+  const server = openServer({ registered, expected: 20 });
+  const session = new BatchUploadSession(server.api, { hash: shaHex });
+  await session.resume('open-1', plain);
+  assert.deepEqual([...server.uploads].sort((a, b) => a - b), Array.from({ length: 16 }, (_, i) => i + 4), 'registered slots are uploaded, the rest appended once');
+  assert.equal(server.entries.length, 20); assert.equal(server.entries.filter(entry => entry.state === 'duplicate').length, 0);
+  assert.equal(session.unmatched, 0); assert.equal(server.sealed, true);
+  // The other way round: a plain-file batch continued by choosing its folder.
+  const flat = registered.map(entry => ({ ...entry, relative_path: null }));
+  const folderServer = openServer({ registered: flat, expected: 20 });
+  await new BatchUploadSession(folderServer.api, { hash: shaHex }).resume('open-1', input);
+  assert.equal(folderServer.entries.length, 20); assert.equal(folderServer.entries.filter(entry => entry.state === 'duplicate').length, 0);
+  assert.deepEqual([...folderServer.uploads].sort((a, b) => a - b), Array.from({ length: 16 }, (_, i) => i + 4));
+});
+
 test('progress reports are throttled to five a second and carry counters and a few rows, never every file', async () => {
   const input = tedFiles(600), server = openServer(), reports = [];
   let clock = 0;

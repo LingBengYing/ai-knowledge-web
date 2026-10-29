@@ -830,7 +830,10 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     try {
       const batch = await wiki.getBatch(state.route.id, batchPage(readController.signal));
       if (!isCurrent(captured)) return;
+      // A halted batch still finishing files is re-read while its new budget is typed: keep the field focused.
+      const typing = doc.activeElement?.id === 'batch-resume-limit';
       state.data = batch; render(); scheduleBatchPoll(captured);
+      if (typing) $('batch-resume-limit')?.focus?.();
     } catch (error) { if (isCurrent(captured) && error.name !== 'AbortError') notify(`批次状态读取暂停：${errorMessage(error)}。可点击刷新重新读取。`); }
   }
   async function mutate(operation, success) {
@@ -1033,6 +1036,12 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (importOpening) return;
     const captured = epoch;
     state.batchProgress = null; state.importError = ''; state.skippedFiles = []; state.collectTruncated = false;
+    // "继续上传" on a batch page continues that batch: a failed import of another batch (or of none yet)
+    // must not be resumed into it, so its retry and files are dropped here.
+    if (!state.uploading && state.route.view === 'imports' && state.route.id && state.batchRetry && state.batchRetry.batchId !== state.route.id) {
+      state.batchRetry = null; state.pendingFiles = []; $('workspace-files').value = ''; if ($('workspace-folder')) $('workspace-folder').value = '';
+    }
+    if (!state.uploading) updateUploadList();
     $('upload-kind').disabled = state.route.view === 'imports'; if (state.route.view === 'imports') $('upload-kind').value = 'document';
     if (can('batch_organization') && !state.batchRetry && !(state.route.view === 'imports' && state.route.id)) {
       importOpening = true;
