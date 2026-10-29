@@ -33,6 +33,14 @@ export function createUploadAdmission({ perClient = UPLOAD_PER_CLIENT, global = 
   };
 }
 
+/**
+ * Upload connections are never pooled: the agent destroys each socket when its request is done
+ * instead of keeping it for reuse. It still sends keep-alive, so the backend does not close (and
+ * reset unread bytes) the moment it answers.
+ */
+const UPLOAD_AGENT = new http.Agent({ keepAlive: true });
+UPLOAD_AGENT.keepSocketAlive = () => false;
+
 /** The declared body length, or null for a body without Content-Length (chunked). */
 export function declaredLength(req, Failure) {
   const value = req.headers['content-length'];
@@ -48,6 +56,13 @@ export function declaredLength(req, Failure) {
  * declared bytes; a client that stops early aborts the upstream request. Returns the backend
  * response, or null when the body has no declared length (the caller then buffers it with its cap).
  * `Failure` is the entry's own TransportError class.
+ *
+ * The backend may answer before it has read the whole body (a duplicate, size or validation refusal,
+ * an expired session) and then stop reading or close. That answer is what the client gets: from the
+ * moment it arrives the rest of the client body is no longer forwarded but read and discarded (it
+ * is bounded by the declared length, already within the cap), so neither connection stalls, and a
+ * later upstream write error no longer turns the answer into backend_unavailable. The upstream
+ * request is destroyed once its response has been consumed, so an upload socket is never reused.
  */
 export function streamUpload({ req, backend, headers, limit, signal, Failure, request = http.request }) {
   const length = declaredLength(req, Failure);
@@ -57,18 +72,39 @@ export function streamUpload({ req, backend, headers, limit, signal, Failure, re
   headers['Content-Length'] = String(length);
   delete headers['Transfer-Encoding']; delete headers['transfer-encoding'];
   return new Promise((resolveResponse, rejectResponse) => {
-    let settled = false, sent = 0;
-    // A broken body always tears the upstream request down, even after the backend answered early.
-    const fail = error => { req.unpipe(upstream); upstream.destroy(); if (!settled) { settled = true; rejectResponse(error); } };
-    const upstream = request(backend, { method: req.method, path: req.url, headers, signal }, response => {
-      if (settled) { response.destroy(); return; }
-      settled = true; resolveResponse(response);
+    let settled = false, answered = false, sent = 0;
+    const upstream = request(backend, { method: req.method, path: req.url, headers, signal, agent: UPLOAD_AGENT });
+    const settle = (response, error) => {
+      if (settled) { response?.destroy(); return; }
+      settled = true;
+      if (response) resolveResponse(response); else rejectResponse(error);
+    };
+    // Stop forwarding and drain whatever the client still sends (nothing, once the body is complete).
+    const discard = () => { req.unpipe(upstream); req.resume(); };
+    // A broken client body always tears the upstream request down, even after an early answer.
+    const broken = error => { discard(); upstream.destroy(); settle(null, error); };
+    upstream.once('response', response => {
+      answered = true;
+      discard();
+      // The upstream connection of an upload is never reused (UPLOAD_AGENT) and is torn down once
+      // its response has been read or abandoned, even while body bytes are still unwritten.
+      // After an early answer the backend may still be discarding the body, or close the connection
+      // once it gives up (Tomcat after max-swallow-size), so a pooled socket could reset the next
+      // request; a fresh connection per upload costs nothing here.
+      const teardown = () => upstream.destroy();
+      response.once('end', teardown); response.once('close', teardown);
+      settle(response);
     });
-    upstream.once('error', () => fail(new Failure(signal.aborted ? 504 : 502, signal.aborted ? 'request_deadline' : 'backend_unavailable')));
-    req.on('data', chunk => { sent += chunk.length; if (sent > length) fail(new Failure(400, 'invalid_content_length')); });
-    req.once('aborted', () => fail(new Failure(502, 'connection_failed')));
-    req.once('error', () => fail(new Failure(502, 'connection_failed')));
-    req.once('end', () => { if (sent !== length) fail(new Failure(502, 'connection_failed')); });
+    upstream.on('error', () => {
+      discard();
+      // After an answer, the write side failing (the backend closed without reading the rest) is
+      // expected; the answer is forwarded as received.
+      if (!answered) settle(null, new Failure(signal.aborted ? 504 : 502, signal.aborted ? 'request_deadline' : 'backend_unavailable'));
+    });
+    req.on('data', chunk => { sent += chunk.length; if (sent > length) broken(new Failure(400, 'invalid_content_length')); });
+    req.once('aborted', () => broken(new Failure(502, 'connection_failed')));
+    req.once('error', () => broken(new Failure(502, 'connection_failed')));
+    req.once('end', () => { if (sent !== length) broken(new Failure(502, 'connection_failed')); });
     req.pipe(upstream);
   });
 }

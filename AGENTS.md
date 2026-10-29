@@ -1,5 +1,7 @@
 # AI Knowledge Web：智能体工作约定
 
+2026-10-29 上传提前应答修复（分支fix/upload-early-reply，未发布）：scripts/upload-transport.mjs的streamUpload在后端未读完请求体就应答（409 batch_file_duplicate、413、401/429等）时，以该应答为准转发给浏览器；收到应答即停止向上游转发、读完并丢弃浏览器余下请求体（不超过已声明长度），之后的上游写错误不再变成502 backend_unavailable；上传用不复用的上游连接（专用agent，keepSocketAlive=false），应答读完或放弃即销毁。原先：后端应答后关闭时偶发502、保持连接时浏览器连接卡住约6–12秒。后端在应答前直接重置连接（未吞读）时应答已丢失，仍是502。**生产定制external-server.mjs若导入upload-transport.mjs，只需重新部署该文件**，否则照搬streamUpload与UPLOAD_AGENT。不部署。
+
 2026-10-25 0094-r2/Web0062已发布并完成真实建设验收：Java源码e94a6e1、Web源码17fc742，schema42→43真实副本/实际UID/兼容回退和停机备份通过。两份新合成资料批次→自动索引→模型编译/浏览器采纳v1→替换来源自动索引→精确章节修订/采纳v2通过；首轮重复未变章节提案已dismissed并保留失败记录，修复后原章节ID/顺序及稳定章节完整保持。统一6次HTTP（SF嵌入3/DS生成3含旧失败），0重试；当前两份generation Strong、109旧表172178旧行/21文件/11backup保持、受控重启零模型回读、公网45项通过，四服务active/NRestarts0。Milvus0093、Agent/OCR、免登录及配置不变，图片/OCR/问答WIP未部署，不恢复旧批次/旧failed。先读0094/Web0062 deployment-verification/provider-run/handoff及0094 production-summary.json；后续文档提交不改运行制品。v1旧原件替换后下载受现有API限制，旧全仓/readiness503、全库/规模/多模态质量仍开放。禁止旧库覆盖新业务。
 
 2026-10-25 0094/Web0062知识建设：负责人已授权本版推送Git、配套Java/Web生产发布与新合成资料真实模型验收。批次归档/选源提案、来源变化局部修订、规则质量待办，schema43增加批次归档设置。旧图片/OCR/问答WIP不纳入本提交；生产Milvus0093、Agent/OCR和配置保持。发布状态与边界以docs/changes/0062-knowledge-construction/deployment-plan.md及后续deployment-verification.md为准，不把本地验证称为真实生产验收。

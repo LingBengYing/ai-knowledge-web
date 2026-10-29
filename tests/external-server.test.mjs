@@ -663,3 +663,37 @@ test('uploads stream with four slots per signed-in principal and eight in total,
   assert.deepEqual(await Promise.all([...alpha, ...beta]), Array(8).fill(200));
   assert.equal(await send('rag_session=alpha', '/v1/documents?filename=a.txt', 'POST', Buffer.alloc(20 * 1024 * 1024 + 1)), 413);
 });
+
+test('an early backend upload reply is forwarded, and the browser connection stays usable', async t => {
+  let calls = 0;
+  const reply = JSON.stringify({ status: 409, error_code: 'batch_file_duplicate' });
+  const { origin } = await fixture(t, { uploadBytes: 8 * 1024 * 1024 }, (req, res) => {
+    calls++;
+    // Answer without reading the body; every other upload is then dropped after a bounded swallow.
+    res.writeHead(409, { 'Content-Type': 'application/problem+json', 'Content-Length': Buffer.byteLength(reply) });
+    res.end(reply);
+    if (calls % 2) {
+      let swallowed = 0;
+      req.on('data', chunk => { swallowed += chunk.length; if (swallowed > 2 * 1024 * 1024) req.socket.destroy(); });
+    }
+  });
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  t.after(() => agent.destroy());
+  const body = Buffer.alloc(4 * 1024 * 1024, 'x');
+  const send = () => new Promise(resolve => {
+    const req = http.request(origin, { path: '/v1/document-batches/batch-one/files/0', method: 'POST', agent, headers: { Host: publicHost, Origin: publicOrigin, Cookie: sessionPair, 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length) } }, res => {
+      const chunks = []; res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
+    req.on('error', error => resolve({ error: error.code }));
+    req.end(body);
+  });
+  const started = Date.now();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const result = await send();
+    assert.equal(result.status, 409, JSON.stringify(result));
+    assert.equal(JSON.parse(result.body).error_code, 'batch_file_duplicate');
+  }
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started}ms`);
+  assert.equal(calls, 4);
+});
