@@ -884,3 +884,88 @@ test('reindex uses ordinary 128 KiB JSON budget and ordinary deadline without au
   assert.equal((await raw(origin, '/v1/documents/doc-timeout/reindex', { method: 'POST', headers, body: '{"base_publication_id":"publication-old"}' })).status, 504);
   assert.equal(calls, 2, 'oversize was never forwarded and timeout was never retried');
 });
+
+// Sends an upload over a keep-alive agent; resolves with the response, or with { error } when the
+// connection fails.
+function upload(origin, path, body, agent) {
+  return new Promise(resolve => {
+    const req = http.request(origin, { path, method: 'POST', agent, headers: { Origin: origin, 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length) } }, res => {
+      const chunks = []; res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
+      res.on('error', error => resolve({ error: error.code }));
+    });
+    req.on('error', error => resolve({ error: error.code }));
+    req.end(body);
+  });
+}
+
+const DUPLICATE = JSON.stringify({ type: 'about:blank', status: 409, error_code: 'batch_file_duplicate' });
+const connections = server => new Promise((resolve, reject) => server.getConnections((error, count) => error ? reject(error) : resolve(count)));
+async function until(condition, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!(await condition())) { if (Date.now() > end) return false; await new Promise(resolve => setTimeout(resolve, 10)); }
+  return true;
+}
+
+test('an early backend reply that then closes reaches the browser with its own status and body', async t => {
+  let calls = 0;
+  const { origin, backend } = await fixture(t, (req, res) => {
+    calls++;
+    // Like Tomcat: answer before reading the body, swallow up to its default max-swallow-size (2 MiB), then close with
+    // the rest unread, so any further body write from the entry is reset.
+    res.writeHead(409, { 'Content-Type': 'application/problem+json', 'Content-Length': Buffer.byteLength(DUPLICATE) });
+    res.end(DUPLICATE);
+    let swallowed = 0;
+    const timer = setTimeout(() => req.socket.destroy(), 50);
+    req.on('data', chunk => { swallowed += chunk.length; if (swallowed > 2 * 1024 * 1024) req.socket.destroy(); });
+    req.on('end', () => clearTimeout(timer)); // a fully swallowed body keeps the connection alive
+  }, { uploadBytes: 8 * 1024 * 1024 });
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  t.after(() => agent.destroy());
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await upload(origin, '/v1/document-batches/batch-one/files/0', Buffer.alloc(4 * 1024 * 1024, 'x'), agent);
+    assert.equal(result.status, 409, JSON.stringify(result));
+    assert.equal(JSON.parse(result.body).error_code, 'batch_file_duplicate');
+  }
+  assert.equal(calls, 3);
+  // No upstream connection was left parked on the backend.
+  assert.ok(await until(async () => await connections(backend) === 0), 'upstream sockets left open');
+  // Every admission slot is free again: a full set of concurrent uploads is admitted, none is 429.
+  const results = await Promise.all(Array.from({ length: 4 }, () => upload(origin, '/v1/document-batches/batch-one/files/1', Buffer.alloc(1024, 'y'))));
+  assert.deepEqual(results.map(result => result.status), [409, 409, 409, 409]);
+});
+
+test('an early backend reply on a kept-alive connection does not stall the browser connection', async t => {
+  let calls = 0;
+  const { origin, backend } = await fixture(t, (req, res) => {
+    calls++;
+    // Answer without reading the body and keep the connection open.
+    res.writeHead(413, { 'Content-Type': 'application/problem+json' });
+    res.end(JSON.stringify({ status: 413, error_code: 'upload_too_large' }));
+  }, { uploadBytes: 8 * 1024 * 1024 });
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  t.after(() => agent.destroy());
+  const started = Date.now();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await upload(origin, '/v1/documents?filename=a.txt', Buffer.alloc(4 * 1024 * 1024, 'x'), agent);
+    assert.equal(result.status, 413, JSON.stringify(result));
+    assert.equal(JSON.parse(result.body).error_code, 'upload_too_large');
+  }
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started}ms`);
+  assert.equal(calls, 3);
+  // The upstream requests are torn down rather than left parked on the backend.
+  assert.ok(await until(async () => await connections(backend) === 0), 'upstream sockets left open');
+  const results = await Promise.all(Array.from({ length: 4 }, () => upload(origin, '/v1/documents?filename=b.txt', Buffer.alloc(1024, 'y'))));
+  assert.deepEqual(results.map(result => result.status), [413, 413, 413, 413]);
+});
+
+test('a backend that resets an upload without answering still frees the slot and the connection', async t => {
+  const { origin } = await fixture(t, req => req.socket.destroy(), { uploadBytes: 8 * 1024 * 1024 });
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  t.after(() => agent.destroy());
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const result = await upload(origin, '/v1/documents?filename=a.txt', Buffer.alloc(1024 * 1024, 'x'), agent);
+    assert.equal(result.status, 502, JSON.stringify(result));
+    assert.equal(JSON.parse(result.body).title, 'backend_unavailable');
+  }
+});
