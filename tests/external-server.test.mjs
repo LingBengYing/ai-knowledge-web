@@ -6,6 +6,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startExternalServer, readConfiguration } from '../scripts/external-server.mjs';
+import { closeServer, raw as plainRequest } from './transport-fixture.mjs';
 
 const publicOrigin = 'https://knowledge.example.invalid';
 const publicHost = new URL(publicOrigin).host;
@@ -132,17 +133,7 @@ test('feature module uses the exact authenticated static route', async t => {
   }
 });
 
-function raw(origin, path, { method = 'GET', headers = {}, body } = {}) {
-  return new Promise((resolve, reject) => {
-    const request = http.request(origin, { path, method, headers: { Host: publicHost, ...headers } }, response => {
-      const chunks = [];
-      response.on('data', chunk => chunks.push(chunk));
-      response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks).toString() }));
-    });
-    request.on('error', reject);
-    request.end(body);
-  });
-}
+const raw = (origin, path, { headers = {}, ...options } = {}) => plainRequest(origin, path, { ...options, headers: { Host: publicHost, ...headers } });
 
 async function fixture(t, options = {}, handler) {
   const seen = [];
@@ -165,10 +156,10 @@ async function fixture(t, options = {}, handler) {
     else response.end('{}');
   }).listen(0, '127.0.0.1');
   await once(backend, 'listening');
-  t.after(() => new Promise(resolve => { backend.close(resolve); backend.closeAllConnections(); }));
+  t.after(() => closeServer(backend));
   const backendOrigin = `http://127.0.0.1:${backend.address().port}`;
   const frontend = await startExternalServer({ backendOrigin, publicOrigin, port: 0, ...options });
-  t.after(() => new Promise(resolve => { frontend.close(resolve); frontend.closeAllConnections(); }));
+  t.after(() => closeServer(frontend));
   return { origin: `http://127.0.0.1:${frontend.address().port}`, backendOrigin, seen };
 }
 

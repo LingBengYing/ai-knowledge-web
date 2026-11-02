@@ -6,6 +6,7 @@ import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDevServer, readConfiguration } from '../scripts/dev-server.mjs';
+import { closeServer, raw } from './transport-fixture.mjs';
 
 const sessionName = ['rag', 'session'].join('_');
 const sessionPair = `${sessionName}=synthetic-session`;
@@ -131,25 +132,9 @@ async function fixture(t, handler = (_req, res) => res.end('{}'), options = {}) 
   await once(backend, 'listening');
   const backendOrigin = `http://127.0.0.1:${backend.address().port}`;
   const frontend = await startDevServer({ backendOrigin, port: 0, ...options });
-  t.after(async () => {
-    await Promise.all([frontend, backend].map(server => new Promise(resolve => {
-      server.close(resolve); server.closeAllConnections();
-    })));
-  });
+  t.after(() => Promise.all([frontend, backend].map(closeServer)));
   const origin = `http://127.0.0.1:${frontend.address().port}`;
   return { origin, backendOrigin, frontend, backend };
-}
-
-function raw(origin, path, { method = 'GET', headers = {}, body } = {}) {
-  return new Promise((resolve, reject) => {
-    const req = http.request(origin, { path, method, headers }, res => {
-      const chunks = [];
-      res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
-    });
-    req.on('error', reject);
-    req.end(body);
-  });
 }
 
 test('saved original routes and module are exact allowlisted reads with an independent binary budget', async t => {
