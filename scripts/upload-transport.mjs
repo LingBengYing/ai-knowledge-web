@@ -2,7 +2,7 @@ import http from 'node:http';
 
 /**
  * Upload admission and streaming shared by the development and external entries. The production
- * external-server.mjs is customized separately and must mirror this module (see docs/BATCH_IMPORT.md).
+ * external-server.mjs is customized separately and must import or mirror this module (see AGENTS.md).
  */
 export const UPLOAD_PER_CLIENT = 4;
 export const UPLOAD_GLOBAL = 8;
