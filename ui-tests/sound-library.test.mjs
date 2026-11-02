@@ -12,7 +12,8 @@ const state = (status = 'missing', extra = {}) => ({ status, document_id: 'sound
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
 test('sound is independent of ASR and permits a genuine unindexed original only with explicit capabilities', () => {
-  assert.equal(soundEnabled({ capabilities: ['sound_upload', 'sound_index', 'sound_answers', 'sound_sources', 'sound_query_attachments'] }), true);
+  assert.equal(soundEnabled({ capabilities: ['sound_upload', 'sound_index'] }), true);
+  assert.equal(soundEnabled({ capabilities: ['sound_upload'] }), false);
   assert.equal(soundEnabled({ capabilities: ['audio_upload', 'audio_answers', 'audio_sources'] }), false);
   assert.equal(canReadSoundIndex(row()), true);
   for (const extra of [{ document_type: 'video' }, { synthetic_fixture: true }, { can_edit: null },

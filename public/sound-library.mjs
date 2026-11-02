@@ -13,7 +13,7 @@ const indexFields = ['status', 'document_id', 'source_revision_id', 'source_sha2
   'embedding_model_revision', 'dimensions', 'publication_id', 'generation_id', 'manifest_sha256', 'span_count'];
 
 export function soundEnabled(config) {
-  return ['sound_upload', 'sound_index', 'sound_answers', 'sound_sources', 'sound_query_attachments']
+  return ['sound_upload', 'sound_index']
     .every(name => config?.capabilities?.includes(name));
 }
 

@@ -13,7 +13,7 @@ const indexFields = ['status', 'document_id', 'source_revision_id', 'source_sha2
   'embedding_model_revision', 'dimensions', 'publication_id', 'generation_id', 'manifest_sha256', 'window_count', 'video_window_count', 'audio_window_count'];
 
 export function videoAvEnabled(config) {
-  return ['video_av_upload', 'video_av_index', 'video_av_answers', 'video_av_sources']
+  return ['video_av_upload', 'video_av_index']
     .every(name => config?.capabilities?.includes(name));
 }
 
