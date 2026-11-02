@@ -1,4 +1,4 @@
-import { ApiError } from './api.mjs';
+import { ApiError, isId } from './api.mjs';
 
 const keys = (value, names) => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
@@ -38,7 +38,7 @@ function checked(value) {
   if (value.job !== null) {
     const job = value.job;
     if (!keys(job, ['id', 'base_active_version', 'target_version', 'state', 'total_documents', 'completed_documents', 'error_code', 'created_at', 'updated_at'])
-      || typeof job.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/u.test(job.id)
+      || !isId(job.id)
       || !(job.base_active_version === null || integer(job.base_active_version)) || !integer(job.target_version)
       || !['queued', 'running', 'applying', 'completed', 'failed'].includes(job.state)
       || !integer(job.total_documents) || !integer(job.completed_documents) || job.completed_documents > job.total_documents

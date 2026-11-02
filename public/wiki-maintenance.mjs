@@ -1,4 +1,4 @@
-import { ApiError, documentDownloadOnly, escapeHtml as e } from './api.mjs';
+import { ApiError, documentDownloadOnly, escapeHtml as e, isId } from './api.mjs';
 import { batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
 import { CleanupSession, cleanupEnabled, cleanupLabel, cleanupResourceLabel } from './document-cleanup.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
@@ -11,7 +11,6 @@ import { SoundIndexSession, soundEnabled, canReadSoundIndex } from './sound-libr
 import { VideoAvIndexSession, videoAvEnabled, canReadVideoAvIndex } from './video-av.mjs';
 import { failureReason, failureNotice } from './failure-reasons.mjs';
 
-const idValid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const safeError = error => error instanceof ApiError ? error.message : '操作未完成，请刷新状态后核对。';
 const invalid = () => new ApiError(502, '资料或任务状态不一致，请刷新后核对。');
 const cap = (config, name) => config?.capabilities?.includes(name) === true;
@@ -21,8 +20,8 @@ const vectorOptions = config => ({ allowPublishedDuringReindex: cap(config, 'tex
 export function maintenanceCanReindex(config, item) {
   return ['text_index', 'indexings', 'text_reindex'].every(name => cap(config, name)) && item?.can_reindex === true
     && item.status === 'parsed' && item.synthetic_fixture === false && item.latest_job?.state === 'parsed'
-    && idValid(item.active_revision_id) && item.active_revision_id === item.latest_job.revision_id
-    && idValid(item.index_publication_id) && !taskPending(item.latest_index_job);
+    && isId(item.active_revision_id) && item.active_revision_id === item.latest_job.revision_id
+    && isId(item.index_publication_id) && !taskPending(item.latest_index_job);
 }
 
 /** Recover only server-owned latest tasks. This is not an invented task history. */
@@ -160,7 +159,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   }
   function checkedPage(value) {
     if (!value || !Array.isArray(value.items) || !Number.isSafeInteger(value.total) || value.total < 0 || !Number.isSafeInteger(value.total_pages) || value.total_pages < 0
-      || value.items.some(item => !idValid(item.document_id)) || new Set(value.items.map(item => item.document_id)).size !== value.items.length) throw invalid();
+      || value.items.some(item => !isId(item.document_id)) || new Set(value.items.map(item => item.document_id)).size !== value.items.length) throw invalid();
     restoredMaintenanceTasks(value.items); return value;
   }
   function query(number = page, size = pageSize, search = filters) {

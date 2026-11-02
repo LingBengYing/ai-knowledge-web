@@ -1,13 +1,12 @@
-import { ApiError, DOCUMENT_MIME_TYPES, sha256Hex } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, ID_PATTERN, isId, sha256Hex } from './api.mjs';
 import { checkedRetrievalSettings } from './retrieval-settings.mjs';
 import { createKnowledgeAgentApi } from './knowledge-agent.mjs';
 import { createKnowledgeConversationsApi } from './knowledge-conversations.mjs';
 
-const validId = /^[A-Za-z0-9_-]{1,128}$/u;
 const sha256 = /^[a-f0-9]{64}$/u;
 const invalid = () => new ApiError(422, '知识工作台的请求参数无效，请刷新后重试。');
 const inconsistent = () => new ApiError(502, '来源或分页数据不一致，请重新读取；不会使用演示数据代替。');
-const id = value => { if (typeof value !== 'string' || !validId.test(value)) throw invalid(); return value; };
+const id = value => { if (!isId(value)) throw invalid(); return value; };
 const version = (value, minimum = 1) => { if (!Number.isSafeInteger(value) || value < minimum) throw invalid(); return value; };
 const query = (path, fields) => `${path}?${new URLSearchParams(Object.entries(fields).filter(([, value]) => value !== '' && value != null)).toString()}`;
 const paging = (offset, limit) => {
@@ -147,7 +146,7 @@ export function createWikiWorkspaceApi({ api }) {
       const path = `/v1/knowledge-sources/${id(answerId)}/${version(ordinal)}`;
       const result = await get(path, options), citation = result?.citation;
       if (result?.answer_id !== answerId || !citation || citation.citation_id !== ordinal
-        || !validId.test(citation.document_id ?? '') || !validId.test(citation.revision_id ?? '')
+        || !ID_PATTERN.test(citation.document_id ?? '') || !ID_PATTERN.test(citation.revision_id ?? '')
         || !sha256.test(citation.source_sha256 ?? '') || !sha256.test(citation.text_sha256 ?? '')
         || citation.source_url !== path || citation.content_url !== `/v1/documents/${citation.document_id}/revisions/${citation.revision_id}/content`
         || typeof citation.quote !== 'string' || !citation.quote || !validAnswerLocator(citation)
@@ -165,7 +164,7 @@ export function createWikiWorkspaceApi({ api }) {
           || (!page.items.length && items.length < page.total)) throw inconsistent();
         total = page.total;
         for (const item of page.items) {
-          if (!validId.test(item?.page_id ?? '') || seen.has(item.page_id)) throw inconsistent();
+          if (!ID_PATTERN.test(item?.page_id ?? '') || seen.has(item.page_id)) throw inconsistent();
           seen.add(item.page_id); items.push(item);
         }
       } while (items.length < total);

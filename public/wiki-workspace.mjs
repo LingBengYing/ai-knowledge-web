@@ -1,4 +1,4 @@
-import { createApi, escapeHtml, validateUpload, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
+import { createApi, escapeHtml, ID_PATTERN, validateUpload, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
 import { createWikiWorkspaceApi } from './wiki-workspace-api.mjs';
 import { AnswerSession } from './answers.mjs';
 import { KnowledgeAgentSession, agentProgressView } from './knowledge-agent.mjs';
@@ -30,12 +30,11 @@ export function formatTimestamp(milliseconds) {
   const pad = value => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
-const ident = /^[A-Za-z0-9_-]{1,128}$/u;
 const positive = value => /^[1-9][0-9]*$/u.test(value ?? '') && Number.isSafeInteger(Number(value));
 export function parseWorkspaceRoute(hash) {
   const pieces = String(hash || '#/home').replace(/^#\//u, '').split('/');
   const [view, id, third, fourth] = pieces;
-  if (pieces.length > 4 || (id && !ident.test(id))) return { view: 'missing' };
+  if (pieces.length > 4 || (id && !ID_PATTERN.test(id))) return { view: 'missing' };
   if (view === 'models' && pieces.length === 1) return { view };
   if (view === 'imports' && pieces.length <= 2) return { view, ...(id ? { id } : {}) };
   if (view === 'build' && id && pieces.length === 2) return { view, id };
@@ -47,8 +46,8 @@ export function parseWorkspaceRoute(hash) {
   if (['home', 'ask', 'settings', 'graph', 'compile'].includes(view) && pieces.length <= 2) return { view, ...(id ? { id } : {}) };
   if (['knowledge', 'sources', 'review', 'drafts'].includes(view) && pieces.length <= 2) return { view, ...(id ? { id } : {}) };
   if (view === 'knowledge' && positive(third) && pieces.length === 3) return { view, id, version: Number(third) };
-  if (view === 'page-source' && id && positive(third) && ident.test(fourth ?? '') && pieces.length === 4) return { view, id, version: Number(third), sourceId: fourth };
-  if (view === 'proposal-source' && id && ident.test(third ?? '') && pieces.length === 3) return { view, id, sourceId: third };
+  if (view === 'page-source' && id && positive(third) && ID_PATTERN.test(fourth ?? '') && pieces.length === 4) return { view, id, version: Number(third), sourceId: fourth };
+  if (view === 'proposal-source' && id && ID_PATTERN.test(third ?? '') && pieces.length === 3) return { view, id, sourceId: third };
   if (view === 'answer-source' && id && positive(third) && pieces.length === 3) return { view, id, ordinal: Number(third) };
   return { view: 'missing' };
 }
@@ -154,7 +153,7 @@ export function uploadProgressHtml(progress) {
   const counts = progress?.counts ?? {}, total = Number(progress?.total) || 0, settled = Number(progress?.settled) || 0;
   const percent = Math.max(0, Math.min(100, Math.floor(Number(progress?.percent) || 0))), phase = progress?.phase;
   const count = name => Number(counts[name]) || 0;
-  const batchId = typeof progress?.batchId === 'string' && ident.test(progress.batchId) ? progress.batchId : null;
+  const batchId = typeof progress?.batchId === 'string' && ID_PATTERN.test(progress.batchId) ? progress.batchId : null;
   const headline = phase === 'preparing' && !progress.streaming ? `正在校验文件 ${Number(progress.prepared) || 0} / ${total}…`
     : phase === 'registering' ? `正在登记批次（${total} 份文件）…`
     : phase === 'starting' ? `正在创建批次（${total} 份文件）…`
@@ -336,7 +335,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     const sources = details.sources?.length ? `<ul class="agent-tool-sources">${details.sources.map(source => {
       const locator = source.page != null ? /\.pdf$/iu.test(source.title) ? `第 ${source.page} 页` : `文本分段 ${source.page}`
         : source.start_ms != null && source.end_ms != null ? `${source.start_ms / 1000}–${source.end_ms / 1000} 秒` : '';
-      const title = ident.test(source.document_id) ? `<a href="#/sources/${e(source.document_id)}">${e(source.title)}</a>` : `<span class="agent-source-title">${e(source.title)}</span>`;
+      const title = ID_PATTERN.test(source.document_id) ? `<a href="#/sources/${e(source.document_id)}">${e(source.title)}</a>` : `<span class="agent-source-title">${e(source.title)}</span>`;
       return `<li>${title}<span>${e([sourceKind[source.kind], locator].filter(Boolean).join(' · '))}</span><code>${e(source.source_id)}</code></li>`;
     }).join('')}</ul>` : '';
     const planned = details.tool_names?.length ? `<p>计划调用：${details.tool_names.map(name => `<code>${e(name)}</code>`).join('、')}</p>` : '';
@@ -577,7 +576,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   function batchFileLink(item) {
     if (item.document_id) return `<a href="#/sources/${e(item.document_id)}">查看资料</a>`;
     // A skipped duplicate links the document it repeats (or names the earlier file of this batch).
-    if (item.state === 'duplicate' && ident.test(item.duplicate_of_document_id ?? '')) return `<a href="#/sources/${e(item.duplicate_of_document_id)}">查看已有资料</a>`;
+    if (item.state === 'duplicate' && ID_PATTERN.test(item.duplicate_of_document_id ?? '')) return `<a href="#/sources/${e(item.duplicate_of_document_id)}">查看已有资料</a>`;
     if (item.state === 'duplicate' && Number.isSafeInteger(item.duplicate_of_ordinal)) return `同本批第 ${item.duplicate_of_ordinal + 1} 个文件`;
     return '—';
   }
@@ -642,7 +641,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
         || !response.items.length && count < response.total) throw new Error('资料状态列表发生变化，请重新读取。');
       total = response.total; count += response.items.length;
       for (const item of response.items) {
-        if (!ident.test(item?.document_id ?? '') || seen.has(item.document_id)) throw new Error('资料状态身份不一致，请重新读取。');
+        if (!ID_PATTERN.test(item?.document_id ?? '') || seen.has(item.document_id)) throw new Error('资料状态身份不一致，请重新读取。');
         seen.add(item.document_id); if (wanted.has(item.document_id)) result.set(item.document_id, item);
       }
       if (count >= total) break;
@@ -1041,7 +1040,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       try {
         const folders = await wiki.listFolders({ signal: readController?.signal });
         if (!isCurrent(captured)) return;
-        if (!Array.isArray(folders?.items) || folders.items.some(folder => !ident.test(folder.folder_id ?? '') || typeof folder.name !== 'string')) throw new Error('目录列表不完整，请重新打开导入窗口。');
+        if (!Array.isArray(folders?.items) || folders.items.some(folder => !ID_PATTERN.test(folder.folder_id ?? '') || typeof folder.name !== 'string')) throw new Error('目录列表不完整，请重新打开导入窗口。');
         const selected = $('import-target-folder').value;
         $('import-target-folder').innerHTML = '<option value="">未分类</option>' + folders.items.map(folder => `<option value="${e(folder.folder_id)}" ${folder.folder_id === selected ? 'selected' : ''}>${e(folder.name)}</option>`).join('');
         foldersUnavailable = false;

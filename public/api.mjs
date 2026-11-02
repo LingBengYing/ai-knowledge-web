@@ -6,6 +6,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Server identities (documents, revisions, pages, tasks, batches…): 1–128 URL-safe characters. */
+export const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
+export const isId = value => typeof value === 'string' && ID_PATTERN.test(value);
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 /** Lowercase hex SHA-256 of bytes (BufferSource). */
 export const sha256Hex = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -96,13 +99,12 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
     if (file !== undefined && batchUpload !== undefined) {
       validateUpload(file, config, 'document');
       if (replacement !== undefined || method !== 'POST' || body !== undefined
-        || !/^[A-Za-z0-9_-]{1,128}$/u.test(batchUpload?.batchId ?? '') || !Number.isSafeInteger(batchUpload?.ordinal) || batchUpload.ordinal < 0
+        || !ID_PATTERN.test(batchUpload?.batchId ?? '') || !Number.isSafeInteger(batchUpload?.ordinal) || batchUpload.ordinal < 0
         || path !== `/v1/document-batches/${batchUpload.batchId}/files/${batchUpload.ordinal}`) throw new ApiError(422, '批次上传参数无效。');
       headers['Content-Type'] = 'application/octet-stream';
     } else if (file !== undefined && replacement !== undefined) {
       validateReplacementUpload(file, replacement.documentType);
-      const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
-      if (!config?.capabilities?.includes('document_replacements') || !validId(replacement.documentId) || !validId(replacement.baseRevisionId)
+      if (!config?.capabilities?.includes('document_replacements') || !isId(replacement.documentId) || !isId(replacement.baseRevisionId)
         || method !== 'POST' || body !== undefined
         || path !== `/v1/documents/${replacement.documentId}/replacement?filename=${encodeURIComponent(file.name)}&base_revision_id=${replacement.baseRevisionId}`) {
         throw new ApiError(422, '新原文件只能提交到当前资料的指定版本更新接口。');

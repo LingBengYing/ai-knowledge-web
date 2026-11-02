@@ -1,8 +1,7 @@
-import { ApiError } from './api.mjs';
+import { ApiError, isId } from './api.mjs';
 import { answerRequest, checkedKnowledgeAnswer } from './answers.mjs';
 import { agentFailureMessages } from './failure-reasons.mjs';
 
-const identifier = /^[A-Za-z0-9_-]{1,128}$/u;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
 const statuses = ['running', 'completed', 'failed', 'cancelled'];
 const events = Object.freeze({ running: '任务已开始', planning: '整理任务', searching: '检索知识库', reading: '阅读原始资料', completed: '任务已完成', failed: '任务未完成', cancelled: '任务已取消' });
@@ -14,7 +13,7 @@ const failure = error => new ApiError(error?.status ?? 502, error?.status === 40
 /** A 4xx answer (except timeout/rate limit) is a definite refusal: no run was created, so the question can be sent again. */
 const refused = error => Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
 const refusal = error => new ApiError(error.status, error.status === 401 ? '当前会话不可用，请重新连接。' : failureMessages[error.errorCode] ?? `问题未被受理（${error.status}），请核对后重新发送。`, { errorCode: error.errorCode });
-const checkedId = value => { if (typeof value !== 'string' || !identifier.test(value)) throw inputError(); return value; };
+const checkedId = value => { if (!isId(value)) throw inputError(); return value; };
 const checkedFailure = value => {
   if (!value || !Object.hasOwn(failureMessages, value.code)) throw invalid();
   return Object.freeze({ code: value.code, message: failureMessages[value.code] });
@@ -41,7 +40,7 @@ function checkedEventDetails(value) {
   if (!Array.isArray(rawSources) || rawSources.length > 32 || !Array.isArray(rawTools)
     || rawTools.length > 16 || rawTools.some(name => !toolNames.includes(name))) throw invalid();
   const sources = rawSources.map(source => {
-    if (!source || typeof source.source_id !== 'string' || !identifier.test(source.source_id)
+    if (!source || !isId(source.source_id)
       || typeof source.document_id !== 'string' || !documentIdentity.test(source.document_id)
       || typeof source.revision_id !== 'string' || !revisionIdentity.test(source.revision_id)
       || !validText(source.title) || !sourceKinds.includes(source.kind)) throw invalid();
@@ -126,7 +125,7 @@ export async function checkedAgentRun(value, expectedId) {
   if (value.preview !== undefined && value.preview !== null && typeof value.preview !== 'string') throw invalid();
   const suggestions = value.suggestions.map(item => {
     if (!item || !validText(item.title) || !validText(item.reason) || !Array.isArray(item.document_ids)
-      || !item.document_ids.length || item.document_ids.some(id => typeof id !== 'string' || !identifier.test(id))
+      || !item.document_ids.length || item.document_ids.some(id => !isId(id))
       || new Set(item.document_ids).size !== item.document_ids.length) throw invalid();
     return Object.freeze({ title: item.title, reason: item.reason, document_ids: Object.freeze([...item.document_ids]) });
   });

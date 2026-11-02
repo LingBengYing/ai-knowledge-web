@@ -1,4 +1,4 @@
-import { ApiError } from './api.mjs';
+import { ApiError, isId } from './api.mjs';
 import { fileSha256Hex } from './sha256-stream.mjs';
 
 const UPLOAD_ATTEMPTS = 4;
@@ -170,7 +170,6 @@ const FINISHED = new Set(['submitted', 'duplicate', 'failed', 'unknown', 'skippe
 const STATES = ['preparing', 'awaiting_upload', 'uploading', 'submitted', 'duplicate', 'failed', 'unknown', 'skipped'];
 /** A lost or refused-for-now request that is safe to repeat: a network error, 429 or a 5xx. */
 const transient = error => error?.name !== 'AbortError' && (!(error instanceof ApiError) || error.status === 0 || error.status === 429 || error.status >= 500);
-const validBatchId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const invalidReceipt = () => new ApiError(502, '批次回执无效，请刷新后核对。');
 const duplicateOf = item => ({ documentId: typeof item?.duplicate_of_document_id === 'string' ? item.duplicate_of_document_id : null,
   duplicateOrdinal: Number.isSafeInteger(item?.duplicate_of_ordinal) ? item.duplicate_of_ordinal : null });
@@ -269,7 +268,7 @@ export class BatchUploadSession {
         let batch;
         try { batch = await this.repeating(() => this.api.createBatch({ request_id: requestId, open: true, expected_total: this.files.length, ...options }, { signal }), signal); }
         catch (error) { throw this.lostRegistration(error, `${this.files.length} 份文件的批次创建未完成（连接中断或超时）。`); }
-        if (!validBatchId(batch?.batch_id) || batch.open !== true || batch.expected_total !== this.files.length) throw invalidReceipt();
+        if (!isId(batch?.batch_id) || batch.open !== true || batch.expected_total !== this.files.length) throw invalidReceipt();
         this.batchId = batch.batch_id; this.phase = 'uploading'; this.emit(true);
         try { await this.pipeline({ register: order, base: 0, seal: true, signal }); }
         catch (error) {
@@ -348,7 +347,7 @@ export class BatchUploadSession {
       let batch;
       try { batch = await this.api.createBatch({ request_id: oneShot.requestId, files: manifest, ...oneShot.options }, { signal }); }
       catch (error) { fail(this.lostRegistration(error, `${manifest.length} 份文件的批次登记未完成（连接中断或超时）。`)); return; }
-      if (!validBatchId(batch?.batch_id) || batch.total !== manifest.length) { fail(invalidReceipt()); return; }
+      if (!isId(batch?.batch_id) || batch.total !== manifest.length) { fail(invalidReceipt()); return; }
       this.batchId = batch.batch_id;
       let duplicates;
       // Files the server already holds (or that repeat an earlier file) are skipped, never sent.

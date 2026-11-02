@@ -1,6 +1,5 @@
-import { ApiError } from './api.mjs';
+import { ApiError, isId as id } from './api.mjs';
 
-const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
 const vectorIdentity = row => JSON.stringify([row?.document_id, row?.index_publication_id, row?.active_revision_id,
   row?.document_type, row?.index_status, row?.synthetic_fixture, row?.media_info]);
