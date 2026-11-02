@@ -396,9 +396,11 @@ test('audio vector authenticated reads and explicit bodyless builds retain their
   t.after(() => rm(publicDirectory, { recursive: true, force: true }));
   await writeFile(join(publicDirectory, 'audio-vectors.mjs'), 'export const synthetic = true;');
   const seen = [];
-  const { origin } = await fixture(t, { publicDirectory, audioVectorDeadlineMs: 150, deadlineMs: 10 }, (req, res) => {
+  const { origin } = await fixture(t, { publicDirectory, audioVectorDeadlineMs: 150, deadlineMs: 50 }, (req, res) => {
     seen.push({ path: req.url, method: req.method, origin: req.headers.origin, cookie: req.headers.cookie });
-    if (req.method === 'POST' || req.url === '/v1/management/tags') setTimeout(() => res.end('{}'), 40); else res.end('{}');
+    if (req.method === 'POST') setTimeout(() => res.end('{}'), 40);
+    else if (req.url === '/v1/management/tags') setTimeout(() => res.end('{}'), 120);
+    else res.end('{}');
   });
   const headers = { Origin: publicOrigin, Cookie: sessionPair };
   assert.equal((await raw(origin, '/audio-vectors.mjs', { headers })).status, 200);
