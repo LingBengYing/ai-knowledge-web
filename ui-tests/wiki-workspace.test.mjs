@@ -1086,6 +1086,20 @@ test('finishing an answer keeps conversations loaded beyond the first page', asy
   assert.match(f.nodes.get('conversation-list').innerHTML, /对话39/u);
 });
 
+test('a failed dismiss unlocks only the controls it locked and keeps accept disabled for changed sources', async t => {
+  const stale = { ...proposal, source_state: 'stale' };
+  const f = fixture('#/review/proposal', { getProposal: async () => stale, dismissProposal: async () => { throw new Error('服务暂不可用'); } });
+  t.after(() => f.workspace.close());
+  await f.workspace.start();
+  assert.match(f.html(), /data-action="accept-proposal"[^>]*disabled/u);
+  const accept = { disabled: true }, dismiss = { disabled: false };
+  f.doc.querySelectorAll = () => [accept, dismiss];
+  await f.click('dismiss-proposal'); await tick();
+  assert.equal(f.workspace.state.busy, false);
+  assert.equal(dismiss.disabled, false, 'the control the write locked is unlocked again');
+  assert.equal(accept.disabled, true, 'accept stays disabled while sources have changed');
+});
+
 test('loading more conversations restores the composer send button that the write lock disabled', async t => {
   const all = Array.from({ length: 33 }, (_, index) => ({ ...conversation, id: `c${index}`, title: `对话${index}` }));
   const f = fixture('#/ask', { getAgentConfig: async () => ({ enabled: true }), listConversations: async ({ offset = 0, limit = 30 } = {}) => ({ items: all.slice(offset, offset + limit), offset, limit }) });

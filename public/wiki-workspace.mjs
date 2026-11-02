@@ -802,16 +802,19 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       if (typing) $('batch-resume-limit')?.focus?.();
     } catch (error) { if (isCurrent(captured) && error.name !== 'AbortError') notify(`批次状态读取暂停：${errorMessage(error)}。可点击刷新重新读取。`); }
   }
+  /** One write at a time: locks the write controls that are enabled now and, when it settles on the same page, unlocks exactly those. */
   async function mutate(operation, success) {
     if (state.busy) return; state.busy = true; const captured = epoch;
     const disabled = [...(doc.querySelectorAll?.('button[type="submit"],form .button.primary,[data-action="accept-proposal"],[data-action="dismiss-proposal"],[data-action="delete-draft"],[data-action="delete-page"],[data-action="restore-page"],[data-action="purge-page"],[data-action="confirm-import"]') ?? [])].filter(node => !node.disabled);
     for (const node of disabled) node.disabled = true;
+    // Controls the page disabled on purpose (e.g. accepting a proposal with changed sources) stay disabled.
+    const unlock = () => { for (const node of disabled) if (doc.contains?.(node) !== false) node.disabled = false; };
     try {
       const value = await operation(); state.busy = false;
-      if (isCurrent(captured)) { await success(value); if (isCurrent(captured)) { for (const node of disabled) if (doc.contains?.(node) !== false) node.disabled = false; updateChat(); } }
+      if (isCurrent(captured)) { await success(value); if (isCurrent(captured)) { unlock(); updateChat(); } }
       else { notify('操作已完成；请回到对应列表读取最新结果。'); renderKeepingDrafts(); }
     }
-    catch (error) { state.busy = false; notify(`${errorMessage(error)}；没有自动重试。`); if (!isCurrent(captured)) renderKeepingDrafts(); else { for (const node of doc.querySelectorAll?.('form .button.primary,[data-action="accept-proposal"],[data-action="dismiss-proposal"],[data-action="delete-draft"],[data-action="delete-page"],[data-action="restore-page"],[data-action="purge-page"]') ?? []) node.disabled = false; } }
+    catch (error) { state.busy = false; notify(`${errorMessage(error)}；没有自动重试。`); if (!isCurrent(captured)) renderKeepingDrafts(); else unlock(); }
   }
   /** A page rendered while another page's operation was busy is re-rendered once it settles, keeping typed field values and focus. */
   function renderKeepingDrafts() {
