@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { videoAvEnabled, canReadVideoAvIndex, VideoAvIndexSession } from '../public/video-av.mjs';
 
-const capabilities = ['ingestions', 'video_av_upload', 'video_av_index', 'video_av_answers', 'video_av_sources'];
+const capabilities = ['ingestions', 'video_av_upload', 'video_av_index'];
 const row = extra => ({ document_id: 'video-one', document_type: 'video', registered_revision_id: 'source-one', synthetic_fixture: false,
   can_edit: true, active_revision_id: null, index_publication_id: null, media_info: { mime_type: 'video/mp4', sha256: 'a'.repeat(64), size_bytes: 200 }, ...extra });
 const index = (available = false, extra = {}) => ({ status: available ? 'available' : 'missing', document_id: 'video-one',
@@ -12,7 +12,7 @@ const index = (available = false, extra = {}) => ({ status: available ? 'availab
   window_count: available ? 3 : 0, video_window_count: available ? 2 : 0, audio_window_count: available ? 3 : 0, ...extra });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { resolve, promise }; };
 
-test('video AV needs four actual capabilities and preserves genuine raw videos without ASR', () => {
+test('video AV needs its upload and index capabilities and preserves genuine raw videos without ASR', () => {
   assert.equal(videoAvEnabled({ capabilities }), true);
   for (const omitted of capabilities.slice(1)) assert.equal(videoAvEnabled({ capabilities: capabilities.filter(name => name !== omitted) }), false);
   assert.equal(canReadVideoAvIndex(row()), true);
