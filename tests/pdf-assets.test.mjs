@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { startDevServer } from '../scripts/dev-server.mjs';
 import { startExternalServer } from '../scripts/external-server.mjs';
 import bundle from '../public/vendor/pdfjs/manifest.json' with { type: 'json' };
+import { closeServer } from './transport-fixture.mjs';
 
 test('vendored PDF modules, worker, CMaps and fonts match the pinned manifest', async () => {
   assert.equal(bundle.version, '6.4.299');
@@ -34,7 +35,7 @@ for (const mode of ['development', 'external']) {
     await once(backend, 'listening');
     const options = { backendOrigin: `http://127.0.0.1:${backend.address().port}`, port: 0 };
     const frontend = mode === 'development' ? await startDevServer(options) : await startExternalServer({ ...options, publicOrigin });
-    t.after(async () => { await Promise.all([backend, frontend].map(server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }))); });
+    t.after(() => Promise.all([backend, frontend].map(closeServer)));
     const origin = `http://127.0.0.1:${frontend.address().port}`;
     const headers = mode === 'external' ? { Host: new URL(publicOrigin).host, Cookie: 'rag_session=fixture' } : {};
     for (const path of ['/pdf-preview.mjs', '/vendor/pdfjs/pdf.min.mjs', '/vendor/pdfjs/pdf.worker.min.mjs',
