@@ -7,12 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDevServer } from '../scripts/dev-server.mjs';
 import { startExternalServer } from '../scripts/external-server.mjs';
+import { closeServer, raw } from './transport-fixture.mjs';
 
 const sourcePaths = ['/v1/wiki/pages/page-one/versions/2/sources/source-one', '/v1/wiki/proposals/proposal-one/sources/source-one'];
 const publicOrigin = 'https://wiki.example.invalid';
 const sessionPair = 'rag_session=REPLACE_ME';
 const body = JSON.stringify({ title: '合成知识', body: '原样保留', version: 2 });
-const close = server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
 
 test('knowledge construction routes cross both proxies with exact queries and version-bound refresh bodies', async t => {
   for (const external of [false, true]) {
@@ -221,17 +221,6 @@ test('Wiki permanent deletion is bodyless double CAS DELETE only on both transpo
   }
 });
 
-function raw(origin, path, { method = 'GET', headers = {}, body: content } = {}) {
-  return new Promise((resolve, reject) => {
-    const request = http.request(origin, { path, method, headers }, response => {
-      const chunks = [];
-      response.on('data', chunk => chunks.push(chunk));
-      response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks).toString() }));
-    });
-    request.on('error', reject); request.end(content);
-  });
-}
-
 async function fixture(t, handler = (_req, res) => res.end('{}'), options = {}, external = false) {
   const backend = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
@@ -243,10 +232,10 @@ async function fixture(t, handler = (_req, res) => res.end('{}'), options = {}, 
     }
     handler(req, res);
   }).listen(0, '127.0.0.1');
-  await once(backend, 'listening'); t.after(() => close(backend));
+  await once(backend, 'listening'); t.after(() => closeServer(backend));
   const backendOrigin = `http://127.0.0.1:${backend.address().port}`;
   const frontend = await (external ? startExternalServer({ publicOrigin, backendOrigin, port: 0, ...options }) : startDevServer({ backendOrigin, port: 0, ...options }));
-  t.after(() => close(frontend));
+  t.after(() => closeServer(frontend));
   return { origin: `http://127.0.0.1:${frontend.address().port}`, backendOrigin };
 }
 

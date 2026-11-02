@@ -18,15 +18,11 @@ Current contract: [0039 shared workspace](changes/0039-shared-workspace/spec.md)
 
 当前[0015原图向量入口](changes/0015-image-vector-retrieval/spec.md)使用独立ImageVectorSession读取/显式构建当前图片receipt，严格核对document/publication/source与模型、投影profile；保留整理草稿，reader不构建，取消后刷新确认服务器状态。原图问答携参考图片沿现有附件和完整scope，image_vector_required提示为全范围图片建立向量。287项/语法通过，后端0026配套，实际证据见[verification](changes/0015-image-vector-retrieval/verification.md)。本切未部署；当前voice-tags已部署含标签/语音，用户验收完整页面，真实ASR/provider仍开放。下方状态为历史记录。
 
-0014语音提问以独立VoiceQuestionSession准备临时输入，复用现有音频文件校验/编码及AnswerSession。核对完整原字节与全文SHA后显示可编辑预览，确认才明确替换问题框，保留完整scope/mode且不自动提问/追加附件。换文件、身份、范围、模式、问题或离页使迟到操作失效。当前部署PDF版，标签与语音本机待发布；完整验证见[0014记录](changes/0014-voice-questions/verification.md)，页面用户验收。
-
 当前[0013摘要建议标签](changes/0013-tag-suggestions/spec.md)通过独立Session实现当前摘要身份校验、显式选择和原子追加；保存只发fingerprint/ordinals。原资料表单和草稿生命周期保持，成功刷新列表与标签。新增模块及两个精确代理路由使用普通JSON/期限，不能整包覆盖现网open-access定制。
 
 当前增量为[0012 PDF来源](changes/0012-pdf-sources/intent.md)：AnswerSession的canReadOriginal由document_originals控制，PDF来源metadata先沿原答案回读，再匹配已有原文件metadata及完整SHA。复用精确GET原文件接口，无新代理路由；来源生命周期与原问答epoch共用。后端0023提供默认关闭的逐页PDF OCR，前端只声明实际capability。
 
 最新增量为[0011文件摘要网页](changes/0011-file-synopsis/intent.md)。资料详情使用file_synopsis/synopsis_sources门禁，显式生成持久任务→轮询→读取当前publication摘要→专用来源/原文件/时间/帧。file-synopsis.mjs独立Session隐藏任务与Blob生命周期；task error不影响索引，读取不调用生成。八类引用的文本/图像SHA区别明确，原文件使用摘要source_sha256，video_ocr专用frame响应没有独立帧SHA字段，不宣称客户端独立核对该帧SHA。用户页面验收和部署仍未执行，无新增真实模型调用。
-
-最新开发增量为[0010查询附件网页](changes/0010-query-attachments/intent.md)：query-attachments.mjs隐藏全批次校验、原字节base64及安全响应包络；AnswerSession沿用原问题/完整scope/typed结果和来源，app提供选择/移除/处理反馈。精确附件POST独立28MiB/180秒/2在途，无附件保持旧四入口。用户负责网页验收，本轮无真实模型调用或发布。后端0022数字完整性修复已有独立部署报告，ASR识别偏差仍待真实复验；旧“待发布”为当时记录。usage/计费继续取消。
 
 2026-10-03当前入口：[0009原文件与导航修复](changes/0009-document-originals/verification.md)。资料详情在保存身份/initial revision/完整原字节SHA核对后显示PDF/文本/图片/音视频并可打开/下载；详情进入问答后返回资料库再开新文件不会遗留旧详情或scope。185项前端及当前Java/精确代理五种原文件HTTP通过；独立免登录发布版两项外部复测通过，PDF内嵌像素尚未检查。后端0022数字完整性已独立冻结待发布，ASR识别偏差仍未通过，前端播放不代表识别质量。用户已取消新增usage/计费开发，没有该项代码/迁移/验证/发布；不把它加回本主线。下方0006–0008“未接/未发布/下一步”仅描述各历史阶段，不能用于覆盖当前实现和证据。
 

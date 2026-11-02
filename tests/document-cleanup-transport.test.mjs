@@ -1,43 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import { once } from 'node:events';
-import { startDevServer } from '../scripts/dev-server.mjs';
-import { startExternalServer } from '../scripts/external-server.mjs';
-
-const publicOrigin = 'https://knowledge.example.invalid';
-const cookie = 'rag_session=fixture';
-async function fixture(t, external, handler, settings = {}) {
-  const backend = http.createServer((req, res) => {
-    if (external && req.url === '/health/entry-policy') {
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ enabled: true, public_origin: publicOrigin, auth_mode: 'jwt' }));
-    } else if (external && req.url === '/v1/config') {
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ auth_mode: 'jwt', capabilities: [] }));
-    } else if (external && req.url === '/v1/session') {
-      res.setHeader('Content-Type', 'application/json');
-      res.statusCode = req.headers.cookie === cookie ? 200 : 401;
-      res.end(JSON.stringify({ status: res.statusCode === 200 ? 'authenticated' : 'unauthenticated' }));
-    } else handler(req, res);
-  });
-  backend.listen(0, '127.0.0.1'); await once(backend, 'listening');
-  t.after(() => new Promise(r => { backend.close(r); backend.closeAllConnections(); }));
-  const backendOrigin = `http://127.0.0.1:${backend.address().port}`;
-  const server = await (external ? startExternalServer({ publicOrigin, backendOrigin, port: 0, ...settings })
-    : startDevServer({ backendOrigin, port: 0, ...settings }));
-  t.after(() => new Promise(r => { server.close(r); server.closeAllConnections(); }));
-  const origin = `http://127.0.0.1:${server.address().port}`;
-  return { backendOrigin, request: (path, { method = 'GET', body, headers = {} } = {}) => new Promise((resolve, reject) => {
-    const req = http.request(origin, { path, method, headers: {
-      ...(external ? { Host: new URL(publicOrigin).host, Cookie: cookie } : {}),
-      ...(!['GET', 'HEAD'].includes(method) ? { Origin: external ? publicOrigin : origin } : {}), ...headers,
-      ...(body === undefined ? {} : { 'Content-Length': Buffer.byteLength(body) }),
-    } }, res => { const chunks = []; res.on('data', x => chunks.push(x)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() })); });
-    req.on('error', reject); req.end(body);
-  }) };
-}
-
+import { proxyFixture as fixture } from './transport-fixture.mjs';
 
 for (const external of [false,true]) {
   const name=external?'external':'development';

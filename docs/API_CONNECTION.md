@@ -16,21 +16,11 @@ POST Agent run可带conversation_id，仍有独立request_id防重；刷新历�
 
 0039新合同：浏览器问答/召回请求不发送document_ids，旧客户端参数视为废弃。问题不再限制4096字节；召回scope_count不限128，统一知识引用knowledge-sources编号不限32。登录/同源、精确来源路径及版本/SHA保持；普通128KiB JSON请求、4MiB响应、媒体字节与期限等物理保护未取消。角色权限仅保留兼容响应字段，不作为本UI动作门禁。以下旧选中范围/reader行为已由后端0053与[0039规格](changes/0039-shared-workspace/spec.md)替代。
 
-## 产品使用帮助（0036 / Java 0048）
-
-2026-10-10：独立产品帮助前端模块（product-help.mjs）及两代理的`/v1/product-help/search`转发已删除，普通知识问答已覆盖该用途；以下为历史合同。
-
-`product_help`能力对应精确`POST /v1/product-help/search`，无query。请求为question、可选完整document_ids、top_k（每类1–10、默认5）、rerank（默认true）。省略范围为全库，空数组不得改写。返回search_id/configuration_version/status/reason/scope_count/score_kind/matches；match包含category、evidence_kind、原document/revision/SHA、text/text_sha256、nullable页码/码点或start_ms/end_ms/time_precision，以及精确原件content_url。检索结果不是answer trace，不访问旧答案来源路径。
-
-两代理只为该精确POST复用已有retrieval期限/限额；原件继续既有metadata及按revision内容路由，完整身份/SHA核对后Blob阅读/播放，不转发任意URL或Range。前端无模型密钥，无自动重试，当前停测与真实模型验证边界见[0036记录](changes/0036-product-help/REVIEW.md)。
-
 2026-10-03当前基础修复0033：已有文字索引后，仅更换生成或重排模型可以保存、单独测试并明确应用；嵌入配置及投影不变时不重建资料索引。实际新角色与新trace、原索引/旧来源、连续切换及重启均已本机验证；真正嵌入或投影变化仍拒绝，legacy媒体按实际完整profile判定。最终3058 Java、1013格式、原LINE/BRANCH双80与架构、六Native各1通过；1029后端输入相同、761生产class稳定。前端64及后端18 Node/static输入字节不变，430/check与73明确复用此前实跑证据。新交接.tools/model-role-switch-handoff以实际manifest/VALIDATION为准；未部署、0新增真实provider调用、页面用户验收、真实ASR未宣称修复，目标active。历史记录保留。
 
 0021新增`model_configuration`与`retrieval_test`实际能力：设置中的GET/PUT `/v1/model-configuration`、POST同路径`/test`及`/activate`采用独立配置Session；POST `/v1/retrieval-tests`采用完整范围和片段SHA校验。写结果未知后只读核对，不自动重发；读取已应用版本后同身份刷新能力/授权行并保留整理草稿。角色测试单次请求，召回不生成；同版本原文件沿既有完整SHA校验打开。流程与失败恢复见[MODEL_SETUP_AND_RETRIEVAL](MODEL_SETUP_AND_RETRIEVAL.md)及[0021合同](changes/0021-model-setup-retrieval-test/spec.md)。
 
 0016新增`audio_vector_retrieval`能力及精确GET/POST `/v1/documents/{id}/audio-vector`，均无query/body。响应精确十字段status/document_id/publication_id/source_revision_id/source_sha256/profile_fingerprint/model_revision/dimensions/vector_generation_id/manifest_sha256；missing最后两项为null，available必须完整绑定，维度2..3072。当前editor显式POST，reader只GET；停止后明确GET核对，任何写操作不自动重试。AUDIO附件完整scope缺receipt显示`audio_vector_required`，query附件预算与typed原音频来源不变。
-
-（2026-10-10：语音提问前端模块随旧经典页删除，两代理不再转发 `/v1/voice-questions`；以下为历史合同。）0014新增能力voice_questions与精确POST /v1/voice-questions（无query），请求仅filename/media_type/content_base64单音频；响应必须精确八字段transcript/transcript_sha256/source_sha256/decoder_revision/model_revision/compiler_revision/duration_ms/policy_revision。核对full SHA和java-voice-question-v1后显示完整≤65536 UTF8字节预览；确认沿旧4096字节问题约束，随后仍发原问答端点与完整document_ids。独立28MiB/180秒/2在途，默认关闭且需当前证据模式answers/sources，不要求query_attachments。
 
 0013新增GET /v1/documents/{id}/tag-suggestions及POST同路径/apply；能力tag_suggestions与file_synopsis/synopsis_sources共同有效且摘要available才显示建议流程。响应绑定当前摘要身份，POST只发suggestion_fingerprint和ordinals，成功返回既有资料行；409/404后显式刷新，不自动重发。普通JSON体积和期限保持。
 
@@ -43,14 +33,6 @@ POST Agent run可带conversation_id，仍有独立request_id防重；刷新历�
 摘要绑定document/publication/revision/source_sha256，并含overview/topic/term/timeline、最多32条及每条1..8个原始依据。专用GET `/v1/synopsis-sources/{synopsisId}/{entryOrdinal}/{sourceOrdinal}`采用一基编号；支持text/image_ocr/image/audio_transcript/video_frame/video_transcript/video_ocr/video_subtitle。网页核对身份、引用SHA、服务器页/CP/微秒时间及精确content/frame路径，重新读取完整原文件并核对摘要的源SHA；文字和video_frame另核对各自证据SHA。video_ocr帧由专用授权接口提供，当前HTTP未含其独立帧SHA，客户端不声称独立验证该哈希。
 
 新元数据/任务路由与其GET/POST无query/body，普通10秒/128KiB请求/4MiB JSON响应；只有精确`/content`允许20MiB原文件、`/frame`允许10MiB PNG/JPEG，完整200，不转发Range。来源可打开/下载、PDF按页显示、图片/OCR词框、音视频按时间播放、视频原帧和字幕轨定位。切换详情、身份、发布版本或离开资料页停止轮询/播放并撤销URL；刷新摘要保留整理草稿。Java配置及完整长文件生成见后端0015/0016，部署开关仍默认关闭，本轮不改变配置。
-
-## 查询附件（0010）
-
-Java声明`query_attachments`且当前证据模式的answers/sources启用时，可添加最多3个原始图片/音频/视频，总计20MiB（图片单文件10MiB）。`POST /v1/attachment-answers`无query，JSON为原`question`、完整可选`document_ids`、`mode`和`attachments:[{filename,media_type,content_base64}]`。原问题不改写，显式空scope不回退全库；附件仅辅助检索，不能充当库内引用。网页显式选择附件类型，MP4/WebM不猜测模态。
-
-证据模式：网页`text/visual/audio/video-visual/video-transcript/video-joint/video-ocr/video-subtitle`映射到`text/image/audio/video_visual/video_transcript/video_joint/video_ocr/video_subtitle`。响应`mode/result/query_attachments`逐项核对ordinal、media_kind、prepared/failed、visual_sampled及稳定reason，`result`再经过原typed答案校验。来源仍走旧sources路径与SHA核验。无附件使用原四入口，不改变旧JSON。
-
-开发与外部代理只给此精确POST独立28MiB请求、180秒总期限及最多2个在途；JSON响应4MiB，其他JSON请求128KiB、普通请求10秒、资料上传30秒保持。读取文件开始即防重复，取消或上下文改变使旧读取/请求失效，不自动重试。离页或身份改变清空临时选择。Java开关默认关闭，配置依赖及hash-only审计见后端`docs/QUERY_ATTACHMENTS.md`；这次网页接线不代替部署者启用配置或真实质量验收。
 
 0009原文件详情：基础能力`document_originals`提供精确GET `/v1/documents/{id}/original`（八字段metadata）及其pinned `/v1/documents/{id}/revisions/{revision}/content`。当前详情身份、版本、文件名、类型、MIME、SHA、大小及URL均校验，完整原字节SHA通过后才创建Blob URL；1..20MiB、普通10秒，不能使用query/Range或任意文件路径。PDF原生预览/打开/下载、TXT/MD纯文本、图片显示、音视频播放/下载；关闭与离开资料页停止媒体、取消请求、撤销URL。解析/索引或问答关闭不影响真实保存原文件读取。两个代理只增精确GET和静态Module，认证边界保持。导航到问答/设置清除旧详情，取消脏表单离开不改变问答scope；任务页既有草稿行为保留。详见[0009验证](changes/0009-document-originals/verification.md)。
 
@@ -79,8 +61,6 @@ Java声明`query_attachments`且当前证据模式的answers/sources启用时，
 | `/v1/document-batches/{id}/retry-failed`、`/cancel`、`/resume` | POST | 2026-10-17新增批量操作；无query，JSON（resume可选`embedding_request_limit`），返回`{batch_id,action,affected,batch}`；409`batch_action_conflict`表示当前状态不适用。生产定制入口须同样放行 |
 | `/v1/document-batches/{id}/files` | POST | 2026-10-19开放批次追加清单条目（后端v42，能力`batch_streaming_upload`）：JSON`{files:[{ordinal,filename,size_bytes,source_sha256,relative_path?}]}`，1–1,000条、ordinal连续；与`/files/{ordinal}`上传路由不同。同条目重放成功，不同条目409。与批次清单一样请求体上限4MiB、使用上传时限`uploadDeadlineMs`。生产定制入口须同样放行 |
 | `/v1/document-batches/{id}/seal` | POST | 2026-10-19结束开放批次登记（可少于`expected_total`），重复调用无害；无query、JSON`{}`，普通时限。生产定制入口须在批量操作路由中加入`seal` |
-| `/v1/answers` | POST | 0006新增；无query，JSON问题及完整所选范围，独立180秒期限 |
-| `/v1/sources/{answer_id}/{1..32}` | GET | 0006新增；无query/body，当前身份重新校验文本引用 |
 | `/v1/management/documents` | GET | 授权分页、筛选、排序 |
 | `/v1/management/documents/{id}` | PATCH | 展示元数据整理；详情使用当前授权列表行，没有独立GET详情接口 |
 | `/v1/management/document-actions` | POST | 批量移动／追加标签及逐项回执 |
@@ -109,18 +89,6 @@ Java的`RAG_INGESTION_ENABLED=true`为显式本机开关，默认关闭；页面
 
 四条索引路由拒绝任何query（包括空问号）与body；创建和任务动作无Content-Type要求，不获得上传预算。保留普通10秒deadline、128KiB读取上限、4MiB响应、原鉴权/Origin/Host/Cookie限制和错误不重试。Node回归与HTTP替身结果不认证真实Java、provider/Milvus或浏览器。
 
-## 文本证据问答与来源（0006）
-
-Java须显式设置`RAG_ANSWERS_ENABLED=true`并同时返回`answers/sources`；页面才启用问答。全库发送`{"question":"问题"}`，不带document_ids；所选范围发送`{"question":"问题","document_ids":["doc-1","doc-2"]}`，完整保留顺序与集合。显式`[]`仍为空所选范围，不能回退全库；任一所选项不可用时显示Java错误，不删除该项后重试。问题非空、最多4096 UTF-8字节，允许换行和Tab，拒绝其他C0控制字符、DEL及不合法Unicode。所选ID最多128个、唯一，符合Java的`[A-Za-z0-9][A-Za-z0-9._:-]{0,99}`。
-
-POST仅发送一次，无SSE或自动重试。页面防重复并允许取消本地等待，不能据此宣称后台处理已取消。身份、范围或新问题使旧响应失效；答案、文件名和quote都用纯文本显示，不渲染模型HTML或自由链接。
-
-答案shape为`answer_id/status/answer/reason/citations`。HTTP200 `answered`显示证据答案，`abstained`显示服务器原因；后者不是网络错误。全库empty_scope提示先导入并索引可访问资料，显式空所选范围则提示重新选择。每条文本引用含`number/document_id/revision_id/source_sha256/parser_revision/filename/page/start/end/quote/quote_sha256/source_url`；page为服务器整数页码，start/end为Unicode码点半开区间，不是浏览器UTF-16字符串下标。
-
-引用source_url只能为当前答案的精确`/v1/sources/{answer_id}/{1..32}`。点击后以当前身份GET，返回`{"answer_id":"...","citation":{...}}`；Module复核答案、编号及全部文本引用字段，回读开始就清除旧来源。404、401或身份/版本不匹配不保留旧摘录为当前验证成功，401复用现有身份清除。Java可附带image，但本切只显示文本citation，不请求媒体内容。
-
-代理只增加精确POST answers和GET sources，不接受query（含空问号）、编码ID、额外动作或自由URL。POST answers要求application/json、原128KiB请求及4MiB响应上限，独立180秒总期限；来源GET仍10秒、无body。原Host/Origin/fetch-site、Authorization拒绝、开发身份/Cookie白名单均保持，不能把180秒推广给普通请求或上传。
-
 ## 认证
 
 开发演示：Java 必须显式开启 `development_headers`，页面根据 `/v1/config` 展示本机身份输入。Node 只转发这些明确头；Java 仍做角色/组织与操作权限校验。
@@ -138,8 +106,3 @@ JWT：由可信签发方提供现有合法 JWT；页面 POST `/v1/session`，Jav
 - 429：本地代理或Java已有两个上传请求在途；稍后显式重试，不放大并发限额。Java持久任务/原文件总量配额则返回409，应先核对后端安全错误。
 
 生产同源托管、TLS和 Cookie Secure 需要单独验收。不要把该开发Node代理放到公网后声称原认证边界仍成立。
-
-
-## 0005 预览边界
-
-（2026-10-10：preview.mjs随旧经典页删除，以下为历史。）本地文件预览没有新增业务API，只增加preview.mjs静态资源与本地blob媒体CSP。库内记录不能仅凭filename生成媒体src；通用库内预览和Java typed媒体来源尚未接入本前端。历史[后端需求](changes/0005-media-preview/backend-integration.md)与当前文本sources是不同合同，不能把本地File预览或文本摘录回读当作远程媒体预览。

@@ -471,7 +471,6 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         uploadClient = `${identity.body.workspace_id ?? ''}\n${identity.body.principal_id ?? ''}`;
       }
       if (asset) {
-        if (path === '/tag-suggestions.mjs' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
         if (!['GET', 'HEAD'].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
         await serveAsset(res, asset, anonymous ? ENTRY_PUBLIC : publicDirectory, req.method === 'HEAD');
       } else {

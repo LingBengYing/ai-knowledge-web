@@ -9,7 +9,6 @@
     "build:pdf": "node scripts/vendor-pdfjs.mjs",
     "dev": "node scripts/dev-server.mjs",
     "dev:workspace": "node scripts/wiki-workspace-server.mjs",
-    "start": "node scripts/dev-server.mjs",
     "test": "node --test ui-tests/*.test.mjs tests/*.test.mjs scripts/check-secrets.test.mjs",
     "check": "node scripts/check-syntax.mjs",
     "check:secrets": "node scripts/check-secrets.mjs --history"
