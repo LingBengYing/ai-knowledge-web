@@ -1,8 +1,6 @@
-import { ApiError, escapeHtml as e } from './api.mjs';
+import { ApiError, escapeHtml as e, isId } from './api.mjs';
 import { failureReason } from './failure-reasons.mjs';
 
-const idPattern = /^[A-Za-z0-9_-]{1,128}$/u;
-const validId = value => typeof value === 'string' && idPattern.test(value);
 const kinds = { topic: '主题', entity: '实体', procedure: '操作指南', overview: '概览' };
 const maintenanceLabels = Object.freeze({ parse_failed: '解析失败', index_failed: '索引失败', empty_text: '没有可用文字', duplicate_source: '原文件相同', stale_knowledge: '知识待更新' });
 const invalid = () => new ApiError(502, '服务返回的数据与预期不一致，请刷新后重新读取。');
@@ -65,15 +63,15 @@ export function mountWikiConstruction({ container, document: doc, wiki, route, n
       let data;
       if (route.view === 'build') {
         data = checkedPage(await wiki.listBatchSources(route.id, { offset: state.offset, limit: state.limit, q: state.query, folder: state.folder, signal: controller.signal }), state.offset, state.limit);
-        if (data.batch_id !== route.id || !Array.isArray(data.folders) || data.items.some(item => !validId(item.document_id) || !validId(item.publication_id))) throw invalid();
+        if (data.batch_id !== route.id || !Array.isArray(data.folders) || data.items.some(item => !isId(item.document_id) || !isId(item.publication_id))) throw invalid();
       } else if (route.id) {
         data = await wiki.getSourceChanges(route.id, { signal: controller.signal });
         if (data?.page_id !== route.id || !Number.isSafeInteger(data.version) || data.version < 1 || !Array.isArray(data.sources)
-          || data.sources.some(source => !validId(source.document_id) || !['current', 'updated', 'unavailable'].includes(source.status))) throw invalid();
+          || data.sources.some(source => !isId(source.document_id) || !['current', 'updated', 'unavailable'].includes(source.status))) throw invalid();
       } else {
         data = checkedPage(await wiki.listMaintenance({ offset: state.offset, limit: state.limit, kind: state.kind, signal: controller.signal }), state.offset, state.limit);
         if (!data.counts || Object.values(data.counts).some(count => !Number.isSafeInteger(count) || count < 0)
-          || data.items.some(item => !validId(item.target_id) || !['document', 'page'].includes(item.target_type) || !maintenanceLabels[item.kind] || item.related_document_id && !validId(item.related_document_id))) throw invalid();
+          || data.items.some(item => !isId(item.target_id) || !['document', 'page'].includes(item.target_type) || !maintenanceLabels[item.kind] || item.related_document_id && !isId(item.related_document_id))) throw invalid();
       }
       if (!current(captured)) return;
       // The list shrank below the current page: show its last page instead of an empty one.
@@ -101,7 +99,7 @@ export function mountWikiConstruction({ container, document: doc, wiki, route, n
         document_ids: [...state.selected.keys()], source_versions: [...state.selected.values()].map(source => ({ document_id: source.document_id, publication_id: source.publication_id })) }
         : { base_version: state.data.version, generation_method: state.generation, source_versions: state.data.sources.map(source => ({ document_id: source.document_id, publication_id: source.after.publication_id })) };
       const result = route.view === 'build' ? await wiki.createProposal(command) : await wiki.refreshProposal(route.id, command);
-      if (!validId(result?.id)) throw invalid();
+      if (!isId(result?.id)) throw invalid();
       if (!current(captured)) return;
       navigate(`#/review/${result.id}`); notify('提案已生成，请审阅后采纳。');
     } catch (error) {

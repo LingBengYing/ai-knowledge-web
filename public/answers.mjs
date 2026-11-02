@@ -1,6 +1,5 @@
-import { ApiError, DOCUMENT_MIME_TYPES, sha256Hex } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, isId, sha256Hex } from './api.mjs';
 
-const sourceId = /^[A-Za-z0-9_-]{1,128}$/u;
 const sha256 = /^[a-f0-9]{64}$/u;
 const idle = () => ({ phase: 'idle', result: null, error: null });
 const invalidResponse = () => new ApiError(502, '服务器返回的答案或来源格式无效，请刷新后核对。');
@@ -21,8 +20,8 @@ async function checkedKnowledgeCitation(value, answerId, ordinal) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || knowledgeFields.some(field => !Object.hasOwn(value, field))
     || value.citation_id !== ordinal || !Number.isSafeInteger(ordinal) || ordinal < 1
-    || typeof value.document_id !== 'string' || !sourceId.test(value.document_id)
-    || typeof value.revision_id !== 'string' || !sourceId.test(value.revision_id)
+    || !isId(value.document_id)
+    || !isId(value.revision_id)
     || typeof value.filename !== 'string' || !value.filename
     || !sha256.test(value.source_sha256 ?? '') || !sha256.test(value.text_sha256 ?? '')
     || typeof value.quote !== 'string' || !value.quote
@@ -50,7 +49,7 @@ async function checkedKnowledgeCitation(value, answerId, ordinal) {
 }
 
 export async function checkedKnowledgeAnswer(value) {
-  if (!value || typeof value.answer_id !== 'string' || !sourceId.test(value.answer_id)
+  if (!value || !isId(value.answer_id)
     || !['answered', 'abstained'].includes(value.status) || typeof value.answer !== 'string' || !value.answer.trim()
     || !Array.isArray(value.citations)
     || (value.status === 'answered' ? value.reason !== null || !value.citations.length

@@ -1,4 +1,4 @@
-import { ApiError } from './api.mjs';
+import { ApiError, escapeHtml as e, isId } from './api.mjs';
 import { fileSha256Hex } from './sha256-stream.mjs';
 
 const UPLOAD_ATTEMPTS = 4;
@@ -143,6 +143,40 @@ export function formatBytes(bytes) {
   while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit++; }
   return `${unit && amount < 10 ? amount.toFixed(1) : Math.round(amount)} ${units[unit]}`;
 }
+/**
+ * The import dialog's progress from a BatchUploadSession view: one bar with uploaded / total and the
+ * percentage, the counts per stage, speed and estimate, then the files in flight and the last few finished.
+ * Its size never depends on the number of files.
+ */
+export function uploadProgressHtml(progress) {
+  const counts = progress?.counts ?? {}, total = Number(progress?.total) || 0, settled = Number(progress?.settled) || 0;
+  const percent = Math.max(0, Math.min(100, Math.floor(Number(progress?.percent) || 0))), phase = progress?.phase;
+  const count = name => Number(counts[name]) || 0;
+  const batchId = isId(progress?.batchId) ? progress.batchId : null;
+  const headline = phase === 'preparing' && !progress.streaming ? `正在校验文件 ${Number(progress.prepared) || 0} / ${total}…`
+    : phase === 'registering' ? `正在登记批次（${total} 份文件）…`
+    : phase === 'starting' ? `正在创建批次（${total} 份文件）…`
+    : phase === 'done' ? `上传完成 ${settled} / ${total} 份（${percent}%）`
+    : `已上传 ${settled} / ${total} 份（${percent}%）`;
+  const hint = phase === 'preparing' && !progress.streaming ? '正在计算文件指纹以识别重复资料，完成后开始上传。'
+    : phase === 'registering' ? '校验完成，正在向服务器登记，完成后开始上传。'
+    : progress.streaming && !['done', 'failed'].includes(phase) ? '边校验边上传：每校验完一小批文件就登记并开始上传，不必等全部校验完。' : '';
+  const stages = [['校验中', count('preparing')], ['待上传', count('awaiting_upload')], ['上传中', count('uploading')], ['已提交', count('submitted')],
+    ['跳过', count('duplicate') + count('skipped')], ['失败', count('failed') + count('unknown')]];
+  const rate = Number.isFinite(progress?.filesPerSecond) && progress.filesPerSecond !== null
+    ? `速度 ${progress.filesPerSecond >= 10 ? Math.round(progress.filesPerSecond) : progress.filesPerSecond.toFixed(1)} 份/秒 · ${formatBytes(progress.bytesPerSecond)}/秒`
+    : ['uploading', 'starting'].includes(phase) ? '速度统计中…' : '';
+  const eta = Number.isFinite(progress?.etaSeconds) && progress.etaSeconds > 0 ? `预计剩余 ${formatEta(progress.etaSeconds)}` : '';
+  const rows = [...(progress?.active ?? []), ...(progress?.recent ?? [])].slice(0, 16)
+    .map(row => `<div class="upload-item"><strong>${e(row.label)}</strong><span>${e(batchFileLabels[row.state] ?? row.state)}</span></div>`).join('');
+  const done = phase === 'done' && batchId ? `<p class="notice" role="status">上传完成，正在后台解析和索引 → <a class="text-link" href="#/imports/${e(batchId)}">查看批次进度</a></p>` : '';
+  return `<div class="upload-progress-panel"><div class="result-count" role="status">${e(headline)}</div>`
+    + `<progress class="upload-progress" max="100" value="${percent}" aria-label="上传进度">${percent}%</progress>`
+    + `<div class="result-count upload-stages">${stages.map(([name, value]) => `<span>${e(name)} ${value}</span>`).join('')}</div>`
+    + (rate || eta ? `<div class="result-count upload-rate">${[rate, eta].filter(Boolean).map(text => `<span>${e(text)}</span>`).join('')}</div>` : '')
+    + (hint ? `<div class="field-hint">${e(hint)}</div>` : '') + done
+    + (batchId && !done ? `<a class="text-link" href="#/imports/${e(batchId)}">查看批次处理进度</a>` : '') + `</div>${rows}`;
+}
 
 /** Bounded transfers; the durable server batch owns processing and recovery. */
 export const DEFAULT_UPLOAD_CONCURRENCY = 4;
@@ -150,8 +184,6 @@ export const DEFAULT_UPLOAD_CONCURRENCY = 4;
 export const DEFAULT_HASH_CONCURRENCY = 4;
 /** The most often progress is reported: at most five renders a second, however many files move. */
 export const PROGRESS_MS = 200;
-/** @deprecated The preparation report interval is the general progress interval now. */
-export const PREPARE_PROGRESS_MS = PROGRESS_MS;
 /**
  * Open batches register their manifest in chunks while files upload: the first chunk goes as soon as
  * this many files are hashed (a fraction of a second for small files), so uploads start at once.
@@ -172,7 +204,6 @@ const FINISHED = new Set(['submitted', 'duplicate', 'failed', 'unknown', 'skippe
 const STATES = ['preparing', 'awaiting_upload', 'uploading', 'submitted', 'duplicate', 'failed', 'unknown', 'skipped'];
 /** A lost or refused-for-now request that is safe to repeat: a network error, 429 or a 5xx. */
 const transient = error => error?.name !== 'AbortError' && (!(error instanceof ApiError) || error.status === 0 || error.status === 429 || error.status >= 500);
-const validBatchId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const invalidReceipt = () => new ApiError(502, '批次回执无效，请刷新后核对。');
 const duplicateOf = item => ({ documentId: typeof item?.duplicate_of_document_id === 'string' ? item.duplicate_of_document_id : null,
   duplicateOrdinal: Number.isSafeInteger(item?.duplicate_of_ordinal) ? item.duplicate_of_ordinal : null });
@@ -271,7 +302,7 @@ export class BatchUploadSession {
         let batch;
         try { batch = await this.repeating(() => this.api.createBatch({ request_id: requestId, open: true, expected_total: this.files.length, ...options }, { signal }), signal); }
         catch (error) { throw this.lostRegistration(error, `${this.files.length} 份文件的批次创建未完成（连接中断或超时）。`); }
-        if (!validBatchId(batch?.batch_id) || batch.open !== true || batch.expected_total !== this.files.length) throw invalidReceipt();
+        if (!isId(batch?.batch_id) || batch.open !== true || batch.expected_total !== this.files.length) throw invalidReceipt();
         this.batchId = batch.batch_id; this.phase = 'uploading'; this.emit(true);
         try { await this.pipeline({ register: order, base: 0, seal: true, signal }); }
         catch (error) {
@@ -350,7 +381,7 @@ export class BatchUploadSession {
       let batch;
       try { batch = await this.api.createBatch({ request_id: oneShot.requestId, files: manifest, ...oneShot.options }, { signal }); }
       catch (error) { fail(this.lostRegistration(error, `${manifest.length} 份文件的批次登记未完成（连接中断或超时）。`)); return; }
-      if (!validBatchId(batch?.batch_id) || batch.total !== manifest.length) { fail(invalidReceipt()); return; }
+      if (!isId(batch?.batch_id) || batch.total !== manifest.length) { fail(invalidReceipt()); return; }
       this.batchId = batch.batch_id;
       let duplicates;
       // Files the server already holds (or that repeat an earlier file) are skipped, never sent.

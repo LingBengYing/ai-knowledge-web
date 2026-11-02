@@ -110,14 +110,12 @@ test('catalog query encodes literal text separately from kind and pagination', a
   assert.throws(() => client.deleteDraft('draft-one', 0), error => error.status === 422);
 });
 
-test('upload retains File bytes and explicit media type while maintenance indexing keeps its bodyless API', async () => {
+test('upload retains File bytes and explicit media type', async () => {
   const calls = [], file = new File(['synthetic text'], '合成 材料.txt', { type: 'text/plain' });
   const client = createWikiWorkspaceApi({ api: async (path, options) => { calls.push([path, options]); return {}; } });
-  await client.upload(file); await client.startIndexing('doc-one'); await client.getIngestion('parse-one'); await client.getIndexing('index-one');
+  await client.upload(file);
   assert.equal(calls[0][0], `/v1/documents?filename=${encodeURIComponent(file.name)}`);
   assert.equal(calls[0][1].file, file); assert.equal(calls[0][1].uploadKind, 'document');
-  assert.equal(calls[1][0], '/v1/documents/doc-one/index'); assert.equal(calls[1][1].body, undefined);
-  assert.equal(calls[2][0], '/v1/ingestions/parse-one'); assert.equal(calls[3][0], '/v1/indexings/index-one');
 });
 
 test('Wiki source paths retain page version or proposal context and never accept arbitrary URLs', () => {

@@ -1,6 +1,5 @@
-import { ApiError, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob, sha256Hex } from './api.mjs';
+import { ApiError, ID_PATTERN, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob, sha256Hex } from './api.mjs';
 
-const id = /^[A-Za-z0-9_-]{1,128}$/u;
 const hashes = /^[a-f0-9]{64}$/u;
 const maxBytes = 20 * 1024 * 1024;
 const types = {
@@ -18,7 +17,7 @@ const identity = item => JSON.stringify([item?.document_id, item?.active_revisio
 function expected(item) {
   const revision = item?.active_revision_id ?? item?.latest_job?.revision_id ?? item?.registered_revision_id;
   const media = item?.media_info;
-  if (item?.synthetic_fixture || !id.test(item?.document_id ?? '') || !id.test(revision ?? '')
+  if (item?.synthetic_fixture || !ID_PATTERN.test(item?.document_id ?? '') || !ID_PATTERN.test(revision ?? '')
     || typeof item?.filename !== 'string' || !item.filename || item.filename.length > 255
     || !types[item.document_type]?.includes(media?.mime_type)
     || !hashes.test(media?.sha256 ?? '') || !Number.isSafeInteger(media?.size_bytes)

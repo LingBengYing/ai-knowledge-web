@@ -6,15 +6,15 @@ export class ApiError extends Error {
   }
 }
 
+/** Server identities (documents, revisions, pages, tasks, batches…): 1–128 URL-safe characters. */
+export const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
+export const isId = value => typeof value === 'string' && ID_PATTERN.test(value);
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 /** Lowercase hex SHA-256 of bytes (BufferSource). */
 export const sha256Hex = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
 
-export function imageUploadMode(config) {
-  const capabilities = config?.capabilities;
-  if (!Array.isArray(capabilities) || !capabilities.includes('ingestions')) return null;
-  return capabilities.includes('visual_image_upload') ? 'visual' : capabilities.includes('image_text_upload') ? 'ocr' : null;
-}
+const imageUploadEnabled = config => Array.isArray(config?.capabilities) && config.capabilities.includes('ingestions')
+  && ['visual_image_upload', 'image_text_upload'].some(capability => config.capabilities.includes(capability));
 
 export const DOCUMENT_FORMATS = Object.freeze({
   pdf: 'application/pdf', properties: 'text/x-java-properties', html: 'text/html', vtt: 'text/vtt', csv: 'text/csv',
@@ -58,13 +58,13 @@ export function validateReplacementUpload(file, documentType) {
 export function validateUpload(file, config, uploadKind = 'document') {
   const image = imageFile(file);
   checkFile(file, image);
-  const media = ['audio', 'video', 'sound', 'video-av'].includes(uploadKind);
-  const enabledMedia = config?.capabilities?.includes(`${uploadKind === 'video-av' ? 'video_av' : uploadKind}_upload`) && config?.capabilities?.includes('ingestions');
-  const supported = media ? (['video', 'video-av'].includes(uploadKind) ? videoFile(file) : audioFile(file))
+  const media = ['audio', 'video'].includes(uploadKind);
+  const enabledMedia = config?.capabilities?.includes(`${uploadKind}_upload`) && config?.capabilities?.includes('ingestions');
+  const supported = media ? (uploadKind === 'video' ? videoFile(file) : audioFile(file))
     : uploadKind === 'document' && (image || documentFile(file));
   checkFormat(file, supported);
   const enabledDocument = !Array.isArray(config?.capabilities) || ['ingestions', 'text_upload'].every(capability => config.capabilities.includes(capability));
-  if (media ? !enabledMedia : image ? !imageUploadMode(config) : !enabledDocument) throw new ApiError(422, '服务尚未启用此类型的上传功能。');
+  if (media ? !enabledMedia : image ? !imageUploadEnabled(config) : !enabledDocument) throw new ApiError(422, '服务尚未启用此类型的上传功能。');
   return file;
 }
 
@@ -99,13 +99,12 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
     if (file !== undefined && batchUpload !== undefined) {
       validateUpload(file, config, 'document');
       if (replacement !== undefined || method !== 'POST' || body !== undefined
-        || !/^[A-Za-z0-9_-]{1,128}$/u.test(batchUpload?.batchId ?? '') || !Number.isSafeInteger(batchUpload?.ordinal) || batchUpload.ordinal < 0
+        || !ID_PATTERN.test(batchUpload?.batchId ?? '') || !Number.isSafeInteger(batchUpload?.ordinal) || batchUpload.ordinal < 0
         || path !== `/v1/document-batches/${batchUpload.batchId}/files/${batchUpload.ordinal}`) throw new ApiError(422, '批次上传参数无效。');
       headers['Content-Type'] = 'application/octet-stream';
     } else if (file !== undefined && replacement !== undefined) {
       validateReplacementUpload(file, replacement.documentType);
-      const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
-      if (!config?.capabilities?.includes('document_replacements') || !validId(replacement.documentId) || !validId(replacement.baseRevisionId)
+      if (!config?.capabilities?.includes('document_replacements') || !isId(replacement.documentId) || !isId(replacement.baseRevisionId)
         || method !== 'POST' || body !== undefined
         || path !== `/v1/documents/${replacement.documentId}/replacement?filename=${encodeURIComponent(file.name)}&base_revision_id=${replacement.baseRevisionId}`) {
         throw new ApiError(422, '新原文件只能提交到当前资料的指定版本更新接口。');
@@ -113,11 +112,10 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
       headers['Content-Type'] = replacement.documentType === 'video' ? videoTypes[file.name.split('.').at(-1).toLowerCase()] : 'application/octet-stream';
     } else if (file !== undefined) {
       validateUpload(file, config, uploadKind);
-      if (method !== 'POST' || body !== undefined || path !== (uploadKind === 'video-av' ? '/v1/video-av-documents' : uploadKind === 'sound' ? '/v1/sound-documents' : `/v1/documents?filename=${encodeURIComponent(file.name)}`)) {
+      if (method !== 'POST' || body !== undefined || path !== `/v1/documents?filename=${encodeURIComponent(file.name)}`) {
         throw new ApiError(422, '原始文件仅允许发送到指定文本上传接口。');
       }
       headers['Content-Type'] = uploadKind === 'video' ? videoTypes[file.name.split('.').at(-1).toLowerCase()] : 'application/octet-stream';
-      if (['sound', 'video-av'].includes(uploadKind)) headers['X-Filename'] = encodeURIComponent(file.name);
     } else if (body !== undefined) headers['Content-Type'] = 'application/json';
     const send = () => fetcher(path, {
       method, headers, signal, credentials: 'same-origin', cache: 'no-store',

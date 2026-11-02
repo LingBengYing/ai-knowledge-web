@@ -1,6 +1,5 @@
-import { ApiError } from './api.mjs';
+import { ApiError, ID_PATTERN } from './api.mjs';
 
-const ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const KINDS = ['database_payload','database_file','managed_backups','managed_temporaries','remote_inventory','remote_logical_rows','remote_write_terminal','remote_physical_storage','restore_barrier'];
 const STATES = ['not_requested','pending','running','blocked','failed','completed'];
 const RESOURCE_STATES = ['pending','running','completed','not_applicable','blocked','failed'];
@@ -19,10 +18,10 @@ export function cleanupResourceLabel(resource) {
 }
 export function checkedCleanup(value, documentId = value?.document_id) {
   if (!keys(value,['document_id','cleanup_id','status','cleanup_status','requested_at','updated_at','completed_at','error_code','resources'])
-      || !ID.test(documentId ?? '') || value.document_id !== documentId || !STATES.includes(value.cleanup_status)
+      || !ID_PATTERN.test(documentId ?? '') || value.document_id !== documentId || !STATES.includes(value.cleanup_status)
       || !safeTime(value.requested_at) || !safeTime(value.updated_at) || !safeError(value.error_code) || !Array.isArray(value.resources)) throw invalid();
   const unrequested=value.cleanup_status==='not_requested', completed=value.cleanup_status==='completed';
-  if (value.status !== (completed?'deleted':'deleting') || (unrequested ? value.cleanup_id !== null : !ID.test(value.cleanup_id ?? ''))
+  if (value.status !== (completed?'deleted':'deleting') || (unrequested ? value.cleanup_id !== null : !ID_PATTERN.test(value.cleanup_id ?? ''))
       || (completed ? !safeTime(value.completed_at) : value.completed_at !== null)
       || ((completed || unrequested) && value.error_code !== null)
       || (['blocked','failed'].includes(value.cleanup_status) && value.error_code === null)
@@ -53,7 +52,7 @@ export class CleanupSession {
   stop(){const ids=this.pendingIds;this.serial++;this.controller?.abort();this.controller=null;this.pendingIds=[];this.emit({...this.value,phase:ids.length?'unknown':'ready',unknownIds:[...new Set([...this.value.unknownIds,...ids])],error:null});}
   merge(records){const map=new Map(this.value.records.map(item=>[item.document_id,item]));for(const record of records)map.set(record.document_id,record);return [...map.values()];}
   async load(documentId){
-    if(!ID.test(documentId??'') || this.value.phase==='requesting')return null;
+    if(!ID_PATTERN.test(documentId??'') || this.value.phase==='requesting')return null;
     return this.read(`/v1/documents/${documentId}/cleanup`,value=>{
       const checked=checkedCleanup(value,documentId), previous=this.value.records.find(item=>item.document_id===documentId);
       if(previous?.cleanup_id && previous.cleanup_id!==checked.cleanup_id)throw invalid();
@@ -77,7 +76,7 @@ export class CleanupSession {
   requestOne(id){return this.write([id],false);}
   requestBatch(ids){return this.write(ids,true);}
   async write(ids,batch){
-    if(!Array.isArray(ids)||ids.length<1||ids.length>100||ids.some(id=>!ID.test(id??''))||new Set(ids).size!==ids.length||this.value.phase==='requesting'||ids.some(id=>this.value.unknownIds.includes(id)))return null;
+    if(!Array.isArray(ids)||ids.length<1||ids.length>100||ids.some(id=>!ID_PATTERN.test(id??''))||new Set(ids).size!==ids.length||this.value.phase==='requesting'||ids.some(id=>this.value.unknownIds.includes(id)))return null;
     const captured=[...ids];this.controller?.abort();const serial=++this.serial;this.controller=new AbortController();this.pendingIds=captured;this.emit({...this.value,phase:'requesting',batch:null,error:null});
     try{
       const response=await this.request(batch?'/v1/management/document-cleanups':`/v1/documents/${captured[0]}/cleanup`,{method:'POST',...(batch?{body:{document_ids:captured}}:{}),signal:this.controller.signal});

@@ -1,13 +1,12 @@
-import { ApiError, DOCUMENT_MIME_TYPES, sha256Hex } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, ID_PATTERN, isId, sha256Hex } from './api.mjs';
 import { checkedRetrievalSettings } from './retrieval-settings.mjs';
 import { createKnowledgeAgentApi } from './knowledge-agent.mjs';
 import { createKnowledgeConversationsApi } from './knowledge-conversations.mjs';
 
-const validId = /^[A-Za-z0-9_-]{1,128}$/u;
 const sha256 = /^[a-f0-9]{64}$/u;
 const invalid = () => new ApiError(422, '知识工作台的请求参数无效，请刷新后重试。');
 const inconsistent = () => new ApiError(502, '来源或分页数据不一致，请重新读取；不会使用演示数据代替。');
-const id = value => { if (typeof value !== 'string' || !validId.test(value)) throw invalid(); return value; };
+const id = value => { if (!isId(value)) throw invalid(); return value; };
 const version = (value, minimum = 1) => { if (!Number.isSafeInteger(value) || value < minimum) throw invalid(); return value; };
 const query = (path, fields) => `${path}?${new URLSearchParams(Object.entries(fields).filter(([, value]) => value !== '' && value != null)).toString()}`;
 const paging = (offset, limit) => {
@@ -52,7 +51,6 @@ export function createWikiWorkspaceApi({ api }) {
     ...createKnowledgeConversationsApi(api),
     request: api,
     config: options => get('/v1/config', options),
-    modelConfiguration: options => get('/v1/model-configuration', options),
     listPages: ({ offset = 0, limit = 100, q = '', state = 'active', signal } = {}) => {
       if (!['active', 'deleted'].includes(state)) throw invalid();
       return get(query('/v1/wiki/pages', { ...paging(offset, limit), q, state }), { signal });
@@ -84,7 +82,7 @@ export function createWikiWorkspaceApi({ api }) {
     createDraft: ({ title, body }, options) => write('/v1/wiki/drafts', 'POST', { title, body }, options),
     updateDraft: (draftId, command, options) => write(`/v1/wiki/drafts/${id(draftId)}`, 'PUT', { version: version(command?.version), title: command?.title, body: command?.body }, options),
     deleteDraft: (draftId, expectedVersion, options) => write(`/v1/wiki/drafts/${id(draftId)}?version=${version(expectedVersion)}`, 'DELETE', undefined, options),
-    upload: (file, { uploadKind = 'document', signal } = {}) => api(uploadKind === 'sound' ? '/v1/sound-documents' : uploadKind === 'video-av' ? '/v1/video-av-documents' : `/v1/documents?filename=${encodeURIComponent(file?.name ?? '')}`, { method: 'POST', file, uploadKind, signal }),
+    upload: (file, { uploadKind = 'document', signal } = {}) => api(`/v1/documents?filename=${encodeURIComponent(file?.name ?? '')}`, { method: 'POST', file, uploadKind, signal }),
     createBatch: (command, options) => write('/v1/document-batches', 'POST', command, options),
     listFolders: options => get('/v1/management/folders', options),
     listBatchSources: (batchId, { offset = 0, limit = 50, q = '', folder = '', signal } = {}) =>
@@ -112,9 +110,6 @@ export function createWikiWorkspaceApi({ api }) {
     cancelBatch: (batchId, options) => write(`/v1/document-batches/${id(batchId)}/cancel`, 'POST', {}, options),
     resumeBatch: (batchId, { embeddingRequestLimit, signal } = {}) => write(`/v1/document-batches/${id(batchId)}/resume`, 'POST',
       embeddingRequestLimit === undefined ? {} : { embedding_request_limit: version(embeddingRequestLimit) }, { signal }),
-    getIngestion: (taskId, options) => get(`/v1/ingestions/${id(taskId)}`, options),
-    startIndexing: (documentId, options) => write(`/v1/documents/${id(documentId)}/index`, 'POST', undefined, options),
-    getIndexing: (taskId, options) => get(`/v1/indexings/${id(taskId)}`, options),
     listDocuments: ({ page = 1, page_size = 100, q = '', type = '', status = '', signal } = {}) => {
       version(page); paging(0, page_size);
       return get(query('/v1/management/documents', { page, page_size, q, type, status, sort: 'updated_desc' }), { signal });
@@ -151,7 +146,7 @@ export function createWikiWorkspaceApi({ api }) {
       const path = `/v1/knowledge-sources/${id(answerId)}/${version(ordinal)}`;
       const result = await get(path, options), citation = result?.citation;
       if (result?.answer_id !== answerId || !citation || citation.citation_id !== ordinal
-        || !validId.test(citation.document_id ?? '') || !validId.test(citation.revision_id ?? '')
+        || !ID_PATTERN.test(citation.document_id ?? '') || !ID_PATTERN.test(citation.revision_id ?? '')
         || !sha256.test(citation.source_sha256 ?? '') || !sha256.test(citation.text_sha256 ?? '')
         || citation.source_url !== path || citation.content_url !== `/v1/documents/${citation.document_id}/revisions/${citation.revision_id}/content`
         || typeof citation.quote !== 'string' || !citation.quote || !validAnswerLocator(citation)
@@ -169,7 +164,7 @@ export function createWikiWorkspaceApi({ api }) {
           || (!page.items.length && items.length < page.total)) throw inconsistent();
         total = page.total;
         for (const item of page.items) {
-          if (!validId.test(item?.page_id ?? '') || seen.has(item.page_id)) throw inconsistent();
+          if (!ID_PATTERN.test(item?.page_id ?? '') || seen.has(item.page_id)) throw inconsistent();
           seen.add(item.page_id); items.push(item);
         }
       } while (items.length < total);

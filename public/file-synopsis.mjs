@@ -1,6 +1,5 @@
-import { ApiError, DOCUMENT_MIME_TYPES, safeOriginalBlob, sha256Hex } from './api.mjs';
+import { ApiError, isId as id, DOCUMENT_MIME_TYPES, safeOriginalBlob, sha256Hex } from './api.mjs';
 
-const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const text = (value, max = 64000) => typeof value === 'string' && !!value.trim() && [...value].length <= max;

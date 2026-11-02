@@ -1,6 +1,5 @@
-import { ApiError } from './api.mjs';
+import { ApiError, isId as id } from './api.mjs';
 
-const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
 const text = (value, max) => typeof value === 'string' && value.trim().length > 0 && [...value].length <= max
   && !/[\u0000-\u001f\u007f-\u009f\p{Cs}]/u.test(value);

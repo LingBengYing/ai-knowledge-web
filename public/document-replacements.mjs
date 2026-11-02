@@ -1,7 +1,6 @@
-import { ApiError, validateReplacementUpload, DOCUMENT_MIME_TYPES, DOCUMENT_ACCEPT } from './api.mjs';
+import { ApiError, isId as id, validateReplacementUpload, DOCUMENT_MIME_TYPES, DOCUMENT_ACCEPT } from './api.mjs';
 import { checkedTask, checkedIndexTask } from './workbench-state.mjs';
 
-const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
 const fields = ['document_id', 'base_revision_id', 'base_publication_id', 'candidate_revision_id', 'pipeline', 'state',
   'filename', 'document_type', 'media_type', 'source_sha256', 'size_bytes', 'ingestion_task', 'index_task', 'can_upload', 'can_index', 'publication_id'];

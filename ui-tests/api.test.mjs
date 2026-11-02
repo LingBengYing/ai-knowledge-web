@@ -2,17 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApi, ApiError } from '../public/api.mjs';
 
-test('sound upload uses complete original bytes and one encoded UTF8 filename header only on the dedicated route', async () => {
+test('synopsis source content returns complete original bytes and rejects partial responses', async () => {
   const file = new File([Uint8Array.of(0, 128, 255)], '铃声 + 完整.wav', { type: 'audio/wav' });
-  const seen = [];
-  const api = createApi({ capabilities: ['ingestions', 'sound_upload'], auth_mode: 'jwt' }, () => 'unused', async (path, options) => {
-    seen.push({ path, options }); return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
-  });
-  await api('/v1/sound-documents', { method: 'POST', file, uploadKind: 'sound' });
-  assert.equal(seen[0].path, '/v1/sound-documents'); assert.equal(seen[0].options.body, file);
-  assert.deepEqual(seen[0].options.headers, { Accept: 'application/json', 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) });
-  for (const path of ['/v1/sound-documents?', '/v1/documents?filename=tone.wav', '/v1/sound-documents/more']) await assert.rejects(api(path, { method: 'POST', file, uploadKind: 'sound' }), e => e.status === 422);
-  assert.equal(seen.length, 1);
   const sourceApi = createApi({}, () => '', async () => new Response(file, { headers: { 'Content-Type': 'audio/wav' } }));
   const blob = await sourceApi('/v1/synopsis-sources/answer-one/1/1/content', { binary: true });
   assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), new Uint8Array(await file.arrayBuffer()));

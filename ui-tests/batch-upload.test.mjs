@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { BatchUploadSession, batchFileLabels, uploadSettled } from '../public/batch-upload.mjs';
+import { BatchUploadSession, batchFileLabels, uploadSettled, uploadProgressHtml } from '../public/batch-upload.mjs';
 import { Sha256, fileSha256Hex } from '../public/sha256-stream.mjs';
 import { ApiError, createApi } from '../public/api.mjs';
 import { createWikiWorkspaceApi } from '../public/wiki-workspace-api.mjs';
@@ -268,7 +268,6 @@ test('an unreadable file or a lost registration fails preparation with a clear m
 
 // Streaming: open batches register in chunks while files upload, then are sealed.
 const { FIRST_CHUNK, PROGRESS_MS, formatEta, formatBytes } = await import('../public/batch-upload.mjs');
-const { uploadProgressHtml } = await import('../public/wiki-workspace.mjs');
 const shaHex = async file => createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex');
 /** An in-memory open-batch server with the Java service's append rules (replay, conflict, gap, seal, dedupe). */
 function openServer({ registered = [], expected = 0, sealedAlready = false } = {}) {
