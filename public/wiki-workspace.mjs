@@ -9,7 +9,7 @@ import { ModelConfigurationSession, modelConfigurationEnabled } from './model-co
 import { ModelRebuildSession, modelRebuildEnabled, modelRebuildPending, modelRebuildReason } from './model-rebuild.mjs';
 import { documentStatusLabel, indexTaskLabel, taskPending, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
 import { failureNotice, failureReason } from './failure-reasons.mjs';
-import { BatchUploadSession, batchFileLabels, relativePathOf, displayPath, partitionImportable, droppedEntries, collectEntries, estimateEmbeddingRequests, checkedRequestLimit, batchThroughput, formatDuration, formatEta, formatBytes, MAX_COLLECTED_FILES } from './batch-upload.mjs';
+import { BatchUploadSession, batchFileLabels, relativePathOf, displayPath, partitionImportable, droppedEntries, collectEntries, estimateEmbeddingRequests, checkedRequestLimit, batchThroughput, formatDuration, uploadProgressHtml, MAX_COLLECTED_FILES } from './batch-upload.mjs';
 
 const e = escapeHtml;
 const BATCH_ACTIVE = ['queued', 'parsing', 'parsed', 'indexing'];
@@ -144,45 +144,15 @@ const heading = (title, actions = '') => `<div class="page-heading"><div class="
 const empty = title => `<div class="empty-state">${icon('book')}<h3>${e(title)}</h3></div>`;
 const SECTION_CHANGES = { same: ['section-unchanged', 'gray', '未修改'], modified: ['section-modified', 'amber', '已修改'], added: ['section-added', 'green', '新增'], removed: ['section-removed', 'gray', '删除'] };
 const notice = (message, error = false) => `<p class="notice${error ? ' error' : ''}" ${error ? 'role="alert"' : ''}>${e(message)}</p>`;
-/**
- * The import dialog's progress from a BatchUploadSession view: one bar with uploaded / total and the
- * percentage, the counts per stage, speed and estimate, then the files in flight and the last few finished.
- * Its size never depends on the number of files.
- */
-export function uploadProgressHtml(progress) {
-  const counts = progress?.counts ?? {}, total = Number(progress?.total) || 0, settled = Number(progress?.settled) || 0;
-  const percent = Math.max(0, Math.min(100, Math.floor(Number(progress?.percent) || 0))), phase = progress?.phase;
-  const count = name => Number(counts[name]) || 0;
-  const batchId = typeof progress?.batchId === 'string' && ID_PATTERN.test(progress.batchId) ? progress.batchId : null;
-  const headline = phase === 'preparing' && !progress.streaming ? `正在校验文件 ${Number(progress.prepared) || 0} / ${total}…`
-    : phase === 'registering' ? `正在登记批次（${total} 份文件）…`
-    : phase === 'starting' ? `正在创建批次（${total} 份文件）…`
-    : phase === 'done' ? `上传完成 ${settled} / ${total} 份（${percent}%）`
-    : `已上传 ${settled} / ${total} 份（${percent}%）`;
-  const hint = phase === 'preparing' && !progress.streaming ? '正在计算文件指纹以识别重复资料，完成后开始上传。'
-    : phase === 'registering' ? '校验完成，正在向服务器登记，完成后开始上传。'
-    : progress.streaming && !['done', 'failed'].includes(phase) ? '边校验边上传：每校验完一小批文件就登记并开始上传，不必等全部校验完。' : '';
-  const stages = [['校验中', count('preparing')], ['待上传', count('awaiting_upload')], ['上传中', count('uploading')], ['已提交', count('submitted')],
-    ['跳过', count('duplicate') + count('skipped')], ['失败', count('failed') + count('unknown')]];
-  const rate = Number.isFinite(progress?.filesPerSecond) && progress.filesPerSecond !== null
-    ? `速度 ${progress.filesPerSecond >= 10 ? Math.round(progress.filesPerSecond) : progress.filesPerSecond.toFixed(1)} 份/秒 · ${formatBytes(progress.bytesPerSecond)}/秒`
-    : ['uploading', 'starting'].includes(phase) ? '速度统计中…' : '';
-  const eta = Number.isFinite(progress?.etaSeconds) && progress.etaSeconds > 0 ? `预计剩余 ${formatEta(progress.etaSeconds)}` : '';
-  const rows = [...(progress?.active ?? []), ...(progress?.recent ?? [])].slice(0, 16)
-    .map(row => `<div class="upload-item"><strong>${e(row.label)}</strong><span>${e(batchFileLabels[row.state] ?? row.state)}</span></div>`).join('');
-  const done = phase === 'done' && batchId ? `<p class="notice" role="status">上传完成，正在后台解析和索引 → <a class="text-link" href="#/imports/${e(batchId)}">查看批次进度</a></p>` : '';
-  return `<div class="upload-progress-panel"><div class="result-count" role="status">${e(headline)}</div>`
-    + `<progress class="upload-progress" max="100" value="${percent}" aria-label="上传进度">${percent}%</progress>`
-    + `<div class="result-count upload-stages">${stages.map(([name, value]) => `<span>${e(name)} ${value}</span>`).join('')}</div>`
-    + (rate || eta ? `<div class="result-count upload-rate">${[rate, eta].filter(Boolean).map(text => `<span>${e(text)}</span>`).join('')}</div>` : '')
-    + (hint ? `<div class="field-hint">${e(hint)}</div>` : '') + done
-    + (batchId && !done ? `<a class="text-link" href="#/imports/${e(batchId)}">查看批次处理进度</a>` : '') + `</div>${rows}`;
-}
 const button = (action, label, primary = false, attrs = '') => `<button type="button" class="button ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${attrs}>${e(label)}</button>`;
+/** Previous / next page buttons around "first–last / total" for an offset-paged list. */
+const pager = (previous, next, offset, shown, total, range = `${total ? offset + 1 : 0}–${offset + shown}`) =>
+  `<div class="pagination">${button(previous, '上一页', false, offset === 0 ? 'disabled' : '')}<span>${range} / ${total}</span>${button(next, '下一页', false, offset + shown >= total ? 'disabled' : '')}</div>`;
 
 export function createWikiWorkspace({ document: doc = globalThis.document, window: win = globalThis.window, wiki: suppliedWiki, config: suppliedConfig, FormData: FormDataType = globalThis.FormData } = {}) {
   const $ = id => doc.getElementById(id);
-  const state = { route: parseWorkspaceRoute(win.location.hash), pages: [], deletedPages: [], drafts: [], proposals: [], catalog: null, sourceDocuments: new Map(), query: '', pageKind: '', sourceKind: '', reviewStatus: 'pending', offset: 0, turns: [], question: '', pendingFiles: [], busy: false, loading: false, data: null, config: suppliedConfig, error: null, settings: null };
+  const state = { route: parseWorkspaceRoute(win.location.hash), pages: [], deletedPages: [], drafts: [], proposals: [], catalog: null, sourceDocuments: new Map(), query: '', pageKind: '', sourceKind: '', reviewStatus: 'pending', offset: 0, turns: [], question: '', pendingFiles: [], busy: false, loading: false, data: null, config: suppliedConfig, error: null, settings: null,
+    conversations: [], conversation: null, conversationMore: false, conversationRenaming: false, conversationCreating: false };
   let wiki = suppliedWiki, api = suppliedWiki?.request, epoch = 0, readController, pollTimer, toastTimer;
   const setPollTimer = win.setTimeout?.bind(win) ?? setTimeout, clearPollTimer = win.clearTimeout?.bind(win) ?? clearTimeout;
   let original, pdf, workflow, objectUrls = [], pendingConfirmation = null, importOpening = false, foldersUnavailable = false;
@@ -191,7 +161,6 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   let batchSession = null;
   const unknownSourceTasks = new Set();
   let renderedChatContainer, renderedChatMarkup, renderedToolsContainer, renderedToolsMarkup;
-  Object.assign(state, { conversations: [], conversation: null, conversationMore: false, conversationRenaming: false, conversationCreating: false });
   const isCurrent = value => value === epoch;
   const can = capability => state.config?.capabilities?.includes(capability) === true;
   const notify = message => { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000); };
@@ -199,6 +168,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   const linkPage = page => `#/knowledge/${e(page.page_id)}`;
   const pageName = id => state.pages.find(page => page.page_id === id)?.content.title ?? id;
   const navigate = hash => { if (win.location.hash === hash) load(); else win.location.hash = hash; };
+  const forgetPage = pageId => { state.pages = state.pages.filter(page => page.page_id !== pageId); state.deletedPages = state.deletedPages.filter(page => page.page_id !== pageId); };
   function finishConfirmation(accepted) {
     const pending = pendingConfirmation;
     if (!pending) return;
@@ -265,7 +235,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       return `${heading(item.display_name || item.filename, '<a class="button secondary" href="#/sources">返回资料列表</a>')}<div class="article-layout"><article class="article-paper"><div class="status-line"><span id="source-processing-status" class="badge gray">${e(sourceStatus(item))}</span></div><div id="source-task-status">${sourceTaskStatus(item)}</div><div id="reader">${empty('正在核对原文件…')}</div></article><aside class="side-column"><section class="panel"><div class="panel-header"><h2>资料信息</h2></div><div class="panel-body reader-meta"><dl class="meta-list"><dt>原文件名</dt><dd>${e(item.filename)}</dd><dt>类型</dt><dd>${e(types[item.document_type])}</dd></dl>${button('refresh', '刷新处理状态')}<a class="button secondary" href="#/tasks">查看处理任务</a></div></section><button class="button secondary" data-ask="${e(item.display_name || item.filename)}讲了什么？">了解相关内容</button><a class="button secondary" href="#/documents/${e(item.document_id)}">整理 / 更新原文件</a></aside></div>`;
     }
     const cat = state.catalog;
-    return `${heading('原始资料', '<a class="button secondary" href="#/documents">资料维护</a><a class="button secondary" href="#/directories">目录管理</a>' + (can('wiki_maintenance') ? '<a class="button secondary" href="#/quality">资料质量</a>' : '') + button('import', '导入资料', true))}<div class="toolbar">${searchForm('搜索文件名或正文')}<select id="source-kind" class="filter-select" aria-label="资料类型"><option value="">所有类型</option>${Object.entries(types).map(([key, value]) => `<option value="${key}" ${state.sourceKind === key ? 'selected' : ''}>${value}</option>`).join('')}</select></div><div class="result-count">找到 ${cat.total} 份资料 · 当前显示 ${cat.items.length} 份</div><div class="table-wrap"><table class="data-table"><thead><tr><th>资料名称 / 匹配片段</th><th>类型</th><th>处理状态</th><th>可用于问答</th></tr></thead><tbody>${cat.items.map(item => `<tr><td><a class="table-title" href="#/sources/${e(item.document_id)}"><span class="file-icon">${icon('file')}</span><span><strong class="row-title">${e(item.display_name || item.filename)}</strong><span class="row-subtitle">${e(item.excerpt || item.filename)}</span></span></a></td><td>${e(types[item.kind])}</td><td>${e(sourceStatus(state.sourceDocuments.get(item.document_id), item.state))}</td><td><span class="badge ${item.answerable ? 'green' : 'amber'}">${item.answerable ? '已发布' : '尚未发布'}</span></td></tr>`).join('')}</tbody></table></div>${!cat.items.length ? empty('没有匹配资料') : ''}<div class="pagination">${button('prev-catalog', '上一页', false, cat.offset === 0 ? 'disabled' : '')}<span>${cat.total ? cat.offset + 1 : 0}–${cat.offset + cat.items.length} / ${cat.total}</span>${button('next-catalog', '下一页', false, cat.offset + cat.items.length >= cat.total ? 'disabled' : '')}</div>`;
+    return `${heading('原始资料', '<a class="button secondary" href="#/documents">资料维护</a><a class="button secondary" href="#/directories">目录管理</a>' + (can('wiki_maintenance') ? '<a class="button secondary" href="#/quality">资料质量</a>' : '') + button('import', '导入资料', true))}<div class="toolbar">${searchForm('搜索文件名或正文')}<select id="source-kind" class="filter-select" aria-label="资料类型"><option value="">所有类型</option>${Object.entries(types).map(([key, value]) => `<option value="${key}" ${state.sourceKind === key ? 'selected' : ''}>${value}</option>`).join('')}</select></div><div class="result-count">找到 ${cat.total} 份资料 · 当前显示 ${cat.items.length} 份</div><div class="table-wrap"><table class="data-table"><thead><tr><th>资料名称 / 匹配片段</th><th>类型</th><th>处理状态</th><th>可用于问答</th></tr></thead><tbody>${cat.items.map(item => `<tr><td><a class="table-title" href="#/sources/${e(item.document_id)}"><span class="file-icon">${icon('file')}</span><span><strong class="row-title">${e(item.display_name || item.filename)}</strong><span class="row-subtitle">${e(item.excerpt || item.filename)}</span></span></a></td><td>${e(types[item.kind])}</td><td>${e(sourceStatus(state.sourceDocuments.get(item.document_id), item.state))}</td><td><span class="badge ${item.answerable ? 'green' : 'amber'}">${item.answerable ? '已发布' : '尚未发布'}</span></td></tr>`).join('')}</tbody></table></div>${!cat.items.length ? empty('没有匹配资料') : ''}${pager('prev-catalog', 'next-catalog', cat.offset, cat.items.length, cat.total)}`;
   }
   /** Failure explanation plus the tasks page's retry action, gated by the same capability and can_retry flag. */
   function sourceTaskStatus(item) {
@@ -571,7 +541,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       const link = `#/imports/${e(item.batch_id)}`;
       return `<tr><td class="maint-cell-title"><a class="text-link" href="${link}">${e(isoTime(item.created_at))}</a><div class="muted">更新于 ${e(isoTime(item.updated_at))}</div></td><td class="maint-cell-meta" data-label="文件数">${Number(item.total) || 0}</td><td class="maint-cell-meta" data-label="进度">${e(progress)}</td><td class="maint-cell-meta" data-label="状态">${e(batchStateLabels[item.open === true && item.state === 'awaiting_upload' ? 'registering' : item.state] ?? item.state)}${item.halted_reason && item.state === 'halted' ? `<div class="muted">${e(failureReason(item.halted_reason))}</div>` : ''}</td><td class="maint-cell-actions"><a class="text-link" href="${link}">查看批次</a></td></tr>`;
     }).join('');
-    return `${heading('导入记录', tools)}<div class="result-count">共 ${list.total} 个批次，最新的在前</div><div class="table-wrap maintenance-table imports-table"><table class="data-table"><thead><tr><th>导入时间</th><th>文件数</th><th>进度</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div><div class="pagination">${button('imports-prev', '上一页', false, list.offset === 0 ? 'disabled' : '')}<span>${list.offset + 1}–${list.offset + list.items.length} / ${list.total}</span>${button('imports-next', '下一页', false, list.offset + list.items.length >= list.total ? 'disabled' : '')}</div>`;
+    return `${heading('导入记录', tools)}<div class="result-count">共 ${list.total} 个批次，最新的在前</div><div class="table-wrap maintenance-table imports-table"><table class="data-table"><thead><tr><th>导入时间</th><th>文件数</th><th>进度</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>${pager('imports-prev', 'imports-next', list.offset, list.items.length, list.total, `${list.offset + 1}–${list.offset + list.items.length}`)}`;
   }
   function batchFileLink(item) {
     if (item.document_id) return `<a href="#/sources/${e(item.document_id)}">查看资料</a>`;
@@ -619,7 +589,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     const placement = batch.target_folder_id || batch.preserve_paths === true
       ? `<div class="result-count">目录：${e(batch.target_folder_name || (batch.target_folder_id ? '原目标目录（不可用）' : '未分类'))}${batch.preserve_paths === true ? ' · 保留文件夹路径' : ''}</div>` : '';
     const registration = open ? `<div class="notice batch-open" role="status">批次登记未完成：已登记 ${batch.total} / ${expected} 份文件。${stopped ? '' : '点击“继续上传”重新选择同一文件夹或同一批文件，会先上传已登记但尚未上传的文件，再登记并上传其余文件；也可以“按已登记的文件结束登记”，不再追加文件，已登记的文件照常处理。'}</div>` : '';
-    return `${heading('批量导入', tools)}${registration}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.counts.duplicate ? ` · 已存在跳过 ${batch.counts.duplicate} 份` : ''}${batch.counts.failed ? ` · 失败 ${batch.counts.failed} 份` : ''}${BATCH_SUMMARY[batch.state] ?? ''}</div><div class="result-count muted">导入于 ${e(isoTime(batch.created_at))} · 最后更新 ${e(isoTime(batch.updated_at))}</div>${placement}${batchSpeed(batch)}${stopped ? failureNotice(batch.halted_reason, { prefix: batch.state === 'cancelled' ? '' : '批次已停止：', fallback: BATCH_HALTED }) : ''}${resumeLimit}${filters}<div class="table-wrap maintenance-table batch-table"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>开始</th><th>完成</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div><div class="pagination">${button('batch-prev', '上一页', false, batch.offset === 0 ? 'disabled' : '')}<span>${matched ? `${batch.offset + 1}–${batch.offset + batch.items.length}` : '0'} / ${matched}</span>${button('batch-next', '下一页', false, batch.offset + batch.items.length >= matched ? 'disabled' : '')}</div>`;
+    return `${heading('批量导入', tools)}${registration}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.counts.duplicate ? ` · 已存在跳过 ${batch.counts.duplicate} 份` : ''}${batch.counts.failed ? ` · 失败 ${batch.counts.failed} 份` : ''}${BATCH_SUMMARY[batch.state] ?? ''}</div><div class="result-count muted">导入于 ${e(isoTime(batch.created_at))} · 最后更新 ${e(isoTime(batch.updated_at))}</div>${placement}${batchSpeed(batch)}${stopped ? failureNotice(batch.halted_reason, { prefix: batch.state === 'cancelled' ? '' : '批次已停止：', fallback: BATCH_HALTED }) : ''}${resumeLimit}${filters}<div class="table-wrap maintenance-table batch-table"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>开始</th><th>完成</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>${pager('batch-prev', 'batch-next', batch.offset, batch.items.length, matched, matched ? `${batch.offset + 1}–${batch.offset + batch.items.length}` : '0')}`;
   }
   async function completeList(method, options = {}, signal) {
     const items = []; let total;
@@ -628,6 +598,13 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       total = page.total; items.push(...page.items);
     } while (items.length < total);
     return items;
+  }
+  /** Reads the current catalog page and its documents' processing state; false when the page moved on meanwhile. */
+  async function loadCatalogPage(signal, captured) {
+    const catalog = await wiki.listCatalog({ offset: state.offset, limit: 20, q: state.query, kind: state.sourceKind, signal });
+    const documents = await sourceDocuments(catalog, signal); if (!isCurrent(captured)) return false;
+    state.catalog = catalog; state.sourceDocuments = documents;
+    return true;
   }
   async function sourceDocuments(catalog, signal) {
     const wanted = new Set(catalog.items.map(item => item.document_id)), result = new Map(), seen = new Set();
@@ -681,7 +658,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
       if (route.view === 'imports') data = route.id ? await wiki.getBatch(route.id, batchPage(signal)) : await wiki.listBatches({ offset: state.importsOffset ?? 0, limit: 20, signal });
       if (route.view === 'home') { const [catalog, pending] = await Promise.all([wiki.listCatalog({ limit: 5, signal }), wiki.listProposals({ status: 'pending', limit: 1, signal })]); if (!isCurrent(currentEpoch)) return; state.catalog = catalog; data = { pendingTotal: pending.total }; }
       if (route.view === 'knowledge' && route.id) data = route.version ? await wiki.getPageVersion(route.id, route.version, { signal }) : await wiki.getPage(route.id, { signal });
-      if (route.view === 'sources') { if (route.id) data = { document: await wiki.getDocument(route.id, { signal }) }; else { const catalog = await wiki.listCatalog({ offset: state.offset, limit: 20, q: state.query, kind: state.sourceKind, signal }); const documents = await sourceDocuments(catalog, signal); if (!isCurrent(currentEpoch)) return; state.catalog = catalog; state.sourceDocuments = documents; } }
+      if (route.view === 'sources') { if (route.id) data = { document: await wiki.getDocument(route.id, { signal }) }; else if (!await loadCatalogPage(signal, currentEpoch)) return; }
       if (route.view === 'compile') data = { page: route.id ? await wiki.getPage(route.id, { signal }) : null, catalog: await completeList(wiki.listCatalog, {}, signal) };
       if (route.view === 'drafts') { if (route.id) data = route.id === 'new' ? null : await wiki.getDraft(route.id, { signal }); else { const drafts = await completeList(wiki.listDrafts, {}, signal); if (!isCurrent(currentEpoch)) return; state.drafts = drafts; } }
       if (route.view === 'review') { if (route.id) data = await wiki.getProposal(route.id, { signal }); else { const proposals = await completeList(wiki.listProposals, { status: state.reviewStatus }, signal); if (!isCurrent(currentEpoch)) return; state.proposals = proposals; } }
@@ -767,9 +744,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
         const document = await wiki.getDocument(state.route.id, { signal }); if (!isCurrent(captured)) return;
         state.data.document = document; updateSourceTaskStatus();
       } else {
-        const catalog = await wiki.listCatalog({ offset: state.offset, limit: 20, q: state.query, kind: state.sourceKind, signal });
-        const documents = await sourceDocuments(catalog, signal); if (!isCurrent(captured)) return;
-        state.catalog = catalog; state.sourceDocuments = documents;
+        if (!await loadCatalogPage(signal, captured)) return;
         const active = doc.activeElement, editing = active?.id === 'source-query';
         const draft = editing ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
         render();
@@ -1015,7 +990,11 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   /** A folder selection or a drop: hidden, system and unsupported files are skipped and listed. */
   function selectCollected(files, truncated) {
     const { accepted, skipped } = partitionImportable(files, $('workspace-files').accept);
-    state.batchProgress = null; state.batchRetry = null; state.importError = ''; state.pendingFiles = accepted; state.skippedFiles = skipped; state.collectTruncated = truncated;
+    selectFiles(accepted, skipped, truncated);
+  }
+  /** A new selection replaces any previous one, its progress and a pending retry. */
+  function selectFiles(files, skipped = [], truncated = false) {
+    state.batchProgress = null; state.batchRetry = null; state.importError = ''; state.pendingFiles = files; state.skippedFiles = skipped; state.collectTruncated = truncated;
     updateUploadList(); updateUploadAccept();
   }
   function updateUploadAccept() {
@@ -1100,7 +1079,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (target.id === 'source-kind') { state.sourceKind = target.value; state.offset = 0; load(); }
     if (target.id === 'page-kind') { state.pageKind = target.value; render(); }
     if (target.id === 'review-status') { state.reviewStatus = target.value; load(); }
-    if (target.id === 'workspace-files') { state.batchProgress = null; state.batchRetry = null; state.importError = ''; state.skippedFiles = []; state.collectTruncated = false; state.pendingFiles = Array.from(target.files); updateUploadList(); updateUploadAccept(); }
+    if (target.id === 'workspace-files') selectFiles(Array.from(target.files));
     if (target.id === 'workspace-folder') { const files = Array.from(target.files ?? []); selectCollected(files.slice(0, MAX_COLLECTED_FILES), files.length > MAX_COLLECTED_FILES); }
     if (target.id === 'upload-kind') { state.batchRetry = null; state.importError = ''; state.pendingFiles = []; state.skippedFiles = []; state.collectTruncated = false; $('workspace-files').value = ''; updateUploadList(); updateUploadAccept(); }
     if (target.id === 'threshold-enabled') $('score-threshold').disabled = !target.checked;
@@ -1139,7 +1118,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
         if (latest.page_id !== pageId || !pageDeleted(latest)) { notify('知识页已变化，只有已删除的知识页可以彻底删除，请刷新后核对。'); return; }
         if (!await confirmOperation('彻底删除知识页', `彻底删除“${latest.content.title}”及其所有历史版本和关联提案？操作无法恢复，不会删除原始文件或其索引。`)) return;
         await mutate(() => wiki.purgePage(pageId, latest.version, latest.lifecycle_version ?? 0), () => {
-          state.pages = state.pages.filter(page => page.page_id !== pageId); state.deletedPages = state.deletedPages.filter(page => page.page_id !== pageId);
+          forgetPage(pageId);
           navigate('#/knowledge-deleted'); notify('知识页已彻底删除，无法恢复；原始文件和索引保持不变。');
         });
       } catch (error) { if (isCurrent(captured)) notify(`${errorMessage(error)}；没有自动重试。`); }
@@ -1153,7 +1132,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
         const latest = await wiki.getPage(pageId);
         return removing ? wiki.deletePage(pageId, latest.version, latest.lifecycle_version ?? 0) : wiki.restorePage(pageId, latest.version, latest.lifecycle_version ?? 0);
       }, async () => {
-        state.pages = state.pages.filter(page => page.page_id !== pageId); state.deletedPages = state.deletedPages.filter(page => page.page_id !== pageId);
+        forgetPage(pageId);
         navigate(removing ? '#/knowledge' : `#/knowledge/${pageId}`);
         notify(removing ? '知识页已删除，可在“已删除”中恢复。' : '知识页已恢复。');
       }); return;
