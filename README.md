@@ -68,7 +68,7 @@ Wiki 单份 TXT 已完成真实模型/Milvus的编译、采纳、两版历史及
 
 新增[0015原图向量入口](docs/changes/0015-image-vector-retrieval/verification.md)：已索引图片详情可显式建立原图向量；原图模式携参考图片按服务器完整授权范围检索，再打开库内原图来源。独立状态读取/构建保留整理草稿，停止仅结束本地等待，须刷新核对服务器结果。后端0026配套，默认关闭。本增量未部署；当前20261003-voice-tags已部署含标签/语音，入口只读结果已核对，完整页面由用户验收，真实ASR质量仍未通过。下方发布状态均属历史快照。
 
-新增[语音提问](docs/changes/0014-voice-questions/spec.md)：上传单个音频→转成完整文字→编辑核对→明确替换问题→按原范围和模式提问，随后打开库内来源。确认前保留手工问题，转录不会自动发起问答或加入附件。[275项验证](docs/changes/0014-voice-questions/verification.md)已通过；标签与语音尚待发布。当前部署20261003-scanned-pdf已含附件、摘要和PDF来源；页面完整流程由用户验收。下方发布状态为历史快照。
+（2026-10-10已删除：语音提问随旧经典页移除，以下为历史。）新增[语音提问](docs/changes/0014-voice-questions/spec.md)：上传单个音频→转成完整文字→编辑核对→明确替换问题→按原范围和模式提问，随后打开库内来源。确认前保留手工问题，转录不会自动发起问答或加入附件。[275项验证](docs/changes/0014-voice-questions/verification.md)已通过；标签与语音尚待发布。当前部署20261003-scanned-pdf已含附件、摘要和PDF来源；页面完整流程由用户验收。下方发布状态为历史快照。
 
 新增[摘要建议标签](docs/changes/0013-tag-suggestions/spec.md)：从已保存摘要推荐短术语/主题，勾选后追加保存，保留现有标签。有未保存整理草稿时先处理草稿。需要tag_suggestions/file_synopsis/synopsis_sources能力及当前有效摘要；本轮没有新模型调用或部署。
 
@@ -76,7 +76,7 @@ Wiki 单份 TXT 已完成真实模型/Milvus的编译、采纳、两版历史及
 
 新增[0011文件摘要网页](docs/changes/0011-file-synopsis/intent.md)：已索引资料详情可读取概览、主题、术语和媒体时间线，并打开各条原始依据。生成需要服务声明`file_synopsis/synopsis_sources`及当前编辑权限，显式确认后创建任务；读取已有摘要不生成新内容。任务失败不影响索引，摘要只作浏览导航。当前为本地开发增量，发布和用户页面验收待完成。
 
-新增[0010查询附件网页](docs/changes/0010-query-attachments/intent.md)：服务启用`query_attachments`后，可在文字问题旁添加图片、音频或视频，最多3个、合计20MiB（单张图片10MiB）。先选择附件类型，再选择原文件；MP4/WebM可明确作为音频或视频处理。附件辅助检索库内资料，不入库、不生成附件引用，答案沿用原有来源核验。页面显示每份附件的处理状态及视觉采样说明；离开问答或切换身份清空选择。当前是本地开发增量，尚未发布或完成用户页面验收。
+（2026-10-14已删除：查询附件已移除，以下为历史。）新增[0010查询附件网页](docs/changes/0010-query-attachments/intent.md)：服务启用`query_attachments`后，可在文字问题旁添加图片、音频或视频，最多3个、合计20MiB（单张图片10MiB）。先选择附件类型，再选择原文件；MP4/WebM可明确作为音频或视频处理。附件辅助检索库内资料，不入库、不生成附件引用，答案沿用原有来源核验。页面显示每份附件的处理状态及视觉采样说明；离开问答或切换身份清空选择。当前是本地开发增量，尚未发布或完成用户页面验收。
 
 2026-10-02当前本地稳定点：[0008音视频网页](docs/changes/0008-audio-video-library/verification.md)与[认证外部入口整合](docs/changes/deployment-external-entry/integration.md)。文档、图片、音频、视频均已接上传/处理/索引、显式证据模式、来源回读；音视频原文件SHA校验后支持按引用时间播放/下载，视频原帧另校验。真实本机Java/FFmpeg/Tesseract与前端Module、JWT入口七条正常链路通过；模型和向量均为loopback替身，不代表真实质量或公网完成。0007/0008及入口当前为未提交工作树，Git写入归专门任务。
 
@@ -96,7 +96,7 @@ For AI agents: this repository contains the standalone native JavaScript knowled
 
 ## 本地运行
 
-需要 Node.js 22+。没有第三方 npm 依赖、无需 `npm install`、无需前端构建或模型 API key。
+需要 Node.js 22+。运行无需 `npm install`、前端构建或模型 API key；唯一 npm 依赖 `pdfjs-dist`（6.4.299）只在用 `npm run build:pdf` 重新生成已提交的 `public/vendor/pdfjs/` 时需要安装。
 
 先按 [Java 仓库快速开始](https://github.com/LingBengYing/ai-knowledge#快速开始) 启动独立 Java 服务，默认 `http://127.0.0.1:18084`。开发演示身份须在 Java 端显式启用 `RAG_AUTH_MODE=development_headers`；空库显示空状态，合成资料由 Java 的显式 seed 工具创建，前端不会生成或自动导入业务资料。
 
@@ -131,9 +131,8 @@ JWT 模式使用 Java 的 `/v1/session` 交换 HttpOnly Cookie，输入提交后
 | Node 开发服务 | 仅静态文件 + loopback 同源适配，无业务数据库 |
 | PDF / TXT / MD上传与任务 | 后端capability启用后可用；原始文件1字节至20MiB，最多3次attempt |
 | 文本索引任务与发布状态 | 显式能力、当前权限与确认框门禁；解析/索引终态回读服务器列表 |
-| 文本证据问答与来源 | answers/sources启用后可用；本机浏览器闭环已检查，真实provider/Milvus质量待验 |
+| 综合知识问答与来源 | `/v1/knowledge-answers`、`/v1/knowledge-sources/…`；Agent启用时经SSE实时显示思考与回答 |
 | 图片/音频/视频网页 | 已接入现有Java合同并通过本机正常链路；真实模型与公网待验 |
-| 查询附件网页 | 0010接入临时图片/音频/视频，需Java显式query_attachments与所选模式能力；页面及真实模型待验 |
 | 文件摘要网页 | 0011接入任务、结构化摘要及八类原始依据；需Java显式能力与摘要模型，页面/真实质量待验 |
 | 生产发布 | 未验收；不能把开发代理暴露公网或套反向代理使用 |
 
@@ -141,7 +140,7 @@ JWT 模式使用 Java 的 `/v1/session` 交换 HttpOnly Cookie，输入提交后
 
 上传后查看解析任务面板；queued/processing约每1.5秒刷新，终态停止。索引使用独立任务，可从列表或详情重新查看，按服务器允许取消/重试。切换身份、筛选或分页会清空当前任务显示，但不会取消后台任务。网络错误会暂停轮询，不自动重发写请求；上传或索引写请求响应丢失时先刷新列表/任务核对。开发代理最多两个上传请求同时在途，超出返回429。
 
-代理的普通请求期限为10秒，文本上传为30秒，只有精确POST `/v1/answers`为180秒；来源GET仍为10秒。问答不是SSE，也不自动重试。身份或范围切换、新问题会清除旧答案和来源，404/401来源不保留旧摘录为当前验证成功。
+代理的普通请求期限为10秒，文本上传为30秒，精确POST `/v1/knowledge-answers`与Wiki编译提案为180秒，Agent事件流`GET /v1/knowledge-agent/runs/{id}/events`最长600秒并逐块转发（SSE）；来源GET仍为10秒。问答不自动重试。身份或范围切换、新问题会清除旧答案和来源，404/401来源不保留旧摘录为当前验证成功。
 
 ## 验证与文档
 
