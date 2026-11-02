@@ -6,15 +6,11 @@
 
 0016新增`audio-vectors.mjs`隐藏十字段验证、独立GET/POST、身份/资料/权限epoch、忙碌与停止后的结果未知状态。app以当前indexed audio及实际audio能力装配独立详情panel，刷新保留整理form/草稿，图片与音频panel分别匹配资料类型。两个代理仅增加精确模块资产和audio-vector GET/POST，POST180秒、GET普通期限，原信任和上传预算保持。问答仍由旧附件/AnswerSession发送完整scope和打开服务器库内来源。
 
-0014新增voice-question.mjs，Session隐藏文件读取、编码、原字节/全文SHA、独立POST、取消和预览。app只接显式控件并在确认后调用旧answerRequest验证，填入问题后由原AnswerSession完成问答/来源；语音准备和问答互斥。dev/external代理分别为voice精确路由维持独立大小/期限/容量，不扩大普通请求预算，后端0025只依赖现有AudioCompilationService。
-
 0013新增tag-suggestions.mjs控制读取/选择/保存，候选和合并由Java authority拥有。app详情只安全渲染文本、检查当前摘要/权限与草稿，迟到响应不更新新资料。dev/external代理增加一个静态模块和两个精确GET/POST路由，无新依赖或长请求例外。
 
 [0012 PDF来源](changes/0012-pdf-sources/spec.md)复用AnswerSession的source生命周期和现有原文件路由；只有先通过答案来源、document/revision/filename/SHA及MIME/大小/全字节校验，才生成可撤销Blob URL。app仅用服务器页码设置PDF片段，机器OCR文本不是PDF字符坐标。原后端权限/完整scope/无证拒答不变。
 
 0011文件摘要增量：`file-synopsis.mjs`的`SynopsisSession`提供open/create/refresh/readSource/close，隐藏独立持久任务轮询、当前文档/publication/revision/SHA检查、typed来源及Blob释放。`app.js`只在详情独立区域显示，任务刷新不重建整理表单，离页/身份/版本变化停止旧请求。创建复用Java已有显式POST，不使用答案trace或入库接口。`api.mjs`与两个Node代理仅新增精确摘要元数据/任务/来源路由，原文件20MiB/帧10MiB，普通10秒不变。
-
-0010查询附件增量：`query-attachments.mjs`负责临时File全批次校验、完整有界base64、证据模式映射及附件处理说明校验；`AnswerSession`复用原问题/scope、epoch与typed结果校验。附件读取纳入loading，取消或上下文变化后不POST；无附件仍用旧四入口。app仅持有当前问答选择，离页/身份变化释放，不持久化或自行证明答案。两个代理各自新增精确`/v1/attachment-answers`，该入口28MiB/180秒/2在途，普通JSON与来源预算保持。
 
 0008当前结构：api.mjs负责明确音频/视频上传MIME和有界二进制读取；media-sources.mjs校验typed时间/帧/转录/OCR/字幕；AnswerSession校验完整来源身份与原媒体/帧SHA，维护Blob生命周期；app.js提供模式和引用播放器。external-server.mjs为独立JWT外部入口，显式HTTPS Origin握手与会话回读，保留开发代理原边界。四类合同/限额见[API_CONNECTION](API_CONNECTION.md)，本机证据见[整合验证](changes/deployment-external-entry/integration.md)。下方未接媒体或全部响应4MiB为历史文字阶段。
 
@@ -54,7 +50,7 @@ Java Authentication / Management / Text Ingestion / Text Indexing / Answer Modul
 
 静态allowlist为脚本中精确列出的工作台页面、模块、CSS与PDF资源（根路径 `/` 即 wiki-workspace.html）；拒绝 symlink、非普通文件、超1MiB文件与符号链接根目录。目录 listing、README、配置、脚本、数据库不公开；不提供 SPA 任意路径 fallback。
 
-JSON请求体128KiB、普通请求从接收请求到读完上游响应总计10秒。精确文本上传POST允许20MiB/30秒，最多两个上传exchange在途（超出429）；精确POST `/v1/answers`独立180秒，GET文本来源仍为10秒。header仍10秒，所有后端响应仍4MiB。测试只能向小方向配置限值。该deadline不包含向慢浏览器排空响应的时间。问答和来源拒绝query、编码ID、自由URL与额外动作；来源GET无body。请求/响应先完整限长再转发/提交，无流式大文件、SSE、WebSocket；不跟随3xx、不重试。只转发响应Content-Type、WWW-Authenticate和限定会话Cookie；不转发Location、CORS、其他Cookie或内部头。安全错误不含内部异常、原文、凭据。
+JSON请求体128KiB、普通请求从接收请求到读完上游响应总计10秒。精确文本上传POST允许20MiB/30秒，最多两个上传exchange在途（超出429）；精确POST `/v1/knowledge-answers`与Wiki编译提案独立180秒，GET文本来源仍为10秒。header仍10秒，所有后端响应仍4MiB。测试只能向小方向配置限值。该deadline不包含向慢浏览器排空响应的时间。问答和来源拒绝query、编码ID、自由URL与额外动作；来源GET无body。请求/响应先完整限长再转发/提交，无流式大文件、SSE、WebSocket；不跟随3xx、不重试。只转发响应Content-Type、WWW-Authenticate和限定会话Cookie；不转发Location、CORS、其他Cookie或内部头。安全错误不含内部异常、原文、凭据。
 
 本机 HTTP 不等于生产安全：没有 TLS、用户签发/撤销、限流、分布式代理、进程沙箱和生产运维门禁。Cookie 不按端口隔离；同机用户/恶意本机服务不在此开发工具的隔离保证内。详见 [SECURITY](../SECURITY.md)。
 
@@ -66,10 +62,3 @@ JSON请求体128KiB、普通请求从接收请求到读完上游响应总计10�
 任务列表从state.items当前授权页读取两类任务，并调用原有任务Interface；刷新不会扩展资料范围、生成active版本或启用问答。没有后台全局任务历史接口，所以页面明确限定资料页范围。
 
 正常路径：原始文件上传→解析任务parsed→授权列表刷新显示索引入口→确认外部处理→索引任务indexed→服务器active/publication刷新→全库或完整所选范围提问→answered/abstained→当前身份来源回读。问答显示和来源状态独立，来源失败不会被旧摘录冒充当前成功；来源页码与偏移不由前端推算。
-
-
-## 0005 本地文件预览
-
-独立preview.mjs为Preview Module：inspectFile验证类型和大小，PreviewResource管理Blob URL/异步代次，mountPreview绑定独立dialog。没有fetch或业务API调用，不关联库内record。身份重置发knowledge-context-reset事件释放资源。仅静态allowlist增加preview.mjs；CSP新增本地blob图片/媒体和签名检查PDF对象，不开放远程资源或新业务路由。PDF依赖浏览器原生支持，当前内置浏览器走兼容回退。远程读取必须另建授权Source Adapter并冻结契约。
-
-本地Preview Module与0006文本Source Adapter不是同一能力。当前不转发Java typed媒体来源或content接口，不把本地Blob预览、OCR文本摘录、音视频类型筛选说成库内多模态网页已完成。持久摘要、查询附件、真实质量和生产按后续主线推进。
