@@ -52,7 +52,6 @@ export function createWikiWorkspaceApi({ api }) {
     ...createKnowledgeConversationsApi(api),
     request: api,
     config: options => get('/v1/config', options),
-    modelConfiguration: options => get('/v1/model-configuration', options),
     listPages: ({ offset = 0, limit = 100, q = '', state = 'active', signal } = {}) => {
       if (!['active', 'deleted'].includes(state)) throw invalid();
       return get(query('/v1/wiki/pages', { ...paging(offset, limit), q, state }), { signal });
@@ -84,7 +83,7 @@ export function createWikiWorkspaceApi({ api }) {
     createDraft: ({ title, body }, options) => write('/v1/wiki/drafts', 'POST', { title, body }, options),
     updateDraft: (draftId, command, options) => write(`/v1/wiki/drafts/${id(draftId)}`, 'PUT', { version: version(command?.version), title: command?.title, body: command?.body }, options),
     deleteDraft: (draftId, expectedVersion, options) => write(`/v1/wiki/drafts/${id(draftId)}?version=${version(expectedVersion)}`, 'DELETE', undefined, options),
-    upload: (file, { uploadKind = 'document', signal } = {}) => api(uploadKind === 'sound' ? '/v1/sound-documents' : uploadKind === 'video-av' ? '/v1/video-av-documents' : `/v1/documents?filename=${encodeURIComponent(file?.name ?? '')}`, { method: 'POST', file, uploadKind, signal }),
+    upload: (file, { uploadKind = 'document', signal } = {}) => api(`/v1/documents?filename=${encodeURIComponent(file?.name ?? '')}`, { method: 'POST', file, uploadKind, signal }),
     createBatch: (command, options) => write('/v1/document-batches', 'POST', command, options),
     listFolders: options => get('/v1/management/folders', options),
     listBatchSources: (batchId, { offset = 0, limit = 50, q = '', folder = '', signal } = {}) =>
@@ -112,9 +111,6 @@ export function createWikiWorkspaceApi({ api }) {
     cancelBatch: (batchId, options) => write(`/v1/document-batches/${id(batchId)}/cancel`, 'POST', {}, options),
     resumeBatch: (batchId, { embeddingRequestLimit, signal } = {}) => write(`/v1/document-batches/${id(batchId)}/resume`, 'POST',
       embeddingRequestLimit === undefined ? {} : { embedding_request_limit: version(embeddingRequestLimit) }, { signal }),
-    getIngestion: (taskId, options) => get(`/v1/ingestions/${id(taskId)}`, options),
-    startIndexing: (documentId, options) => write(`/v1/documents/${id(documentId)}/index`, 'POST', undefined, options),
-    getIndexing: (taskId, options) => get(`/v1/indexings/${id(taskId)}`, options),
     listDocuments: ({ page = 1, page_size = 100, q = '', type = '', status = '', signal } = {}) => {
       version(page); paging(0, page_size);
       return get(query('/v1/management/documents', { page, page_size, q, type, status, sort: 'updated_desc' }), { signal });

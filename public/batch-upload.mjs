@@ -150,8 +150,6 @@ export const DEFAULT_UPLOAD_CONCURRENCY = 4;
 export const DEFAULT_HASH_CONCURRENCY = 4;
 /** The most often progress is reported: at most five renders a second, however many files move. */
 export const PROGRESS_MS = 200;
-/** @deprecated The preparation report interval is the general progress interval now. */
-export const PREPARE_PROGRESS_MS = PROGRESS_MS;
 /**
  * Open batches register their manifest in chunks while files upload: the first chunk goes as soon as
  * this many files are hashed (a fraction of a second for small files), so uploads start at once.

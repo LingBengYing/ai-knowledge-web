@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { videoAvEnabled, canReadVideoAvIndex, VideoAvIndexSession } from '../public/video-av.mjs';
-import { createApi, validateUpload } from '../public/api.mjs';
 
-const hash = async data => Buffer.from(await crypto.subtle.digest('SHA-256', data)).toString('hex');
 const capabilities = ['ingestions', 'video_av_upload', 'video_av_index', 'video_av_answers', 'video_av_sources'];
 const row = extra => ({ document_id: 'video-one', document_type: 'video', registered_revision_id: 'source-one', synthetic_fixture: false,
   can_edit: true, active_revision_id: null, index_publication_id: null, media_info: { mime_type: 'video/mp4', sha256: 'a'.repeat(64), size_bytes: 200 }, ...extra });
@@ -39,14 +37,4 @@ test('AV index rejects drift and unmapped windows and isolates stopped or late r
   await session.open(row()); const building = session.build(row()); session.stop(); gate.resolve(index(true)); await building;
   assert.equal(session.value.phase, 'unknown'); assert.equal(session.value.index, null); await session.open(row()); assert.equal(session.value.phase, 'ready');
   const late = deferred(), closed = new VideoAvIndexSession(() => late.promise); const read = closed.open(row()); closed.close(); late.resolve(index()); await read; assert.equal(closed.value.phase, 'idle');
-});
-
-test('raw video upload uses exact octet-stream header route with the encoded filename', async () => {
-  const file = new File(['saved-synthetic-video'], '运动 + 原片.mp4', { type: 'video/mp4' });
-  const receipt = { document_id: 'video-one', source_revision_id: 'source-one', source_sha256: await hash(await file.arrayBuffer()), size_bytes: file.size };
-  assert.equal(validateUpload(file, { capabilities }, 'video-av'), file);
-  let sent; const api = createApi({ capabilities }, () => 'synthetic', async (path, options) => { sent = { path, options }; return new Response(JSON.stringify(receipt), { status: 201 }); });
-  await api('/v1/video-av-documents', { method: 'POST', file, uploadKind: 'video-av' });
-  assert.equal(sent.path, '/v1/video-av-documents'); assert.equal(sent.options.body, file); assert.equal(sent.options.headers['Content-Type'], 'application/octet-stream');
-  assert.equal(sent.options.headers['X-Filename'], encodeURIComponent(file.name));
 });
