@@ -1,5 +1,7 @@
 import { ApiError } from './api.mjs';
 
+/** Display names of the document types the server reports. */
+export const documentTypeLabels = Object.freeze({ document: '文档', image: '图片', audio: '音频', video: '视频' });
 const taskNames = { queued: '等待解析', processing: '正在解析', parsed: '已解析 · 未索引', failed: '解析失败', cancelled: '已取消' };
 const indexTaskNames = { queued: '等待索引', processing: '正在索引', indexed: '已索引', failed: '索引失败', cancelled: '索引已取消' };
 
