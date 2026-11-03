@@ -28,6 +28,7 @@ function expected(row) {
   return { documentId: row.document_id, baseRevisionId: revision(row), publicationId: row.index_publication_id ?? null, documentType: row.document_type };
 }
 
+// 'sound' / 'video_av' are retired pipelines (feature removed 2026-11-03) still tolerated so stored legacy replacement rows render read-only.
 function checked(value, wanted) {
   if (!value || Array.isArray(value) || Object.keys(value).length !== fields.length || fields.some(key => !Object.hasOwn(value, key))
     || value.document_id !== wanted.documentId || !id(value.base_revision_id) || !Object.hasOwn(labels, value.state)

@@ -34,7 +34,7 @@ function originalFixture(type = 'application/pdf', changes = {}) {
   return { bytes, item, metadata, calls, created, released, session };
 }
 
-test('saved sound original without a speech job binds registered source revision before preview', async () => {
+test('saved audio original without a speech job binds registered source revision before preview', async () => {
   const fixture = originalFixture('audio/wav', { latest_job: null, active_revision_id: null, registered_revision_id: 'rev-one' });
   await fixture.session.open(fixture.item);
   assert.equal(fixture.session.value.phase, 'ready');

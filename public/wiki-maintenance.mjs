@@ -1,5 +1,5 @@
 import { ApiError, documentDownloadOnly, escapeHtml as e, isId } from './api.mjs';
-import { documentTypeLabels, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
+import { documentTypeLabels, documentTypeLabel, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
 import { CleanupSession, cleanupEnabled, cleanupLabel, cleanupResourceLabel } from './document-cleanup.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
 import { DocumentReplacementSession, replacementsEnabled, replacementLabel, replacementAccept } from './document-replacements.mjs';
@@ -7,8 +7,6 @@ import { SynopsisSession, synopsisEnabled, canGenerateSynopsis } from './file-sy
 import { TagSuggestionSession, tagSuggestionsEnabled, canReadTagSuggestions } from './tag-suggestions.mjs';
 import { ImageVectorSession, imageVectorsEnabled, canReadImageVector } from './image-vectors.mjs';
 import { AudioVectorSession, audioVectorsEnabled, canReadAudioVector } from './audio-vectors.mjs';
-import { SoundIndexSession, soundEnabled, canReadSoundIndex } from './sound-library.mjs';
-import { VideoAvIndexSession, videoAvEnabled, canReadVideoAvIndex } from './video-av.mjs';
 import { failureReason, failureNotice } from './failure-reasons.mjs';
 
 const safeError = error => error instanceof ApiError ? error.message : '操作未完成，请刷新状态后核对。';
@@ -60,10 +58,8 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   const synopsis = new SynopsisSession(api, options), suggestions = new TagSuggestionSession(api, options);
   const cleanup = new CleanupSession(api, { ...options, onChange: () => { if (alive) renderCleanup(); } });
   const media = [
-    { key: 'image', title: '原图向量', enabled: imageVectorsEnabled, canRead: canReadImageVector, session: new ImageVectorSession(api, options), field: 'vector' },
-    { key: 'audio', title: '原声向量', enabled: audioVectorsEnabled, canRead: canReadAudioVector, session: new AudioVectorSession(api, options), field: 'vector' },
-    { key: 'sound', title: '声音理解索引', enabled: soundEnabled, canRead: canReadSoundIndex, session: new SoundIndexSession(api, options), field: 'index' },
-    { key: 'video', title: '原视频音画索引', enabled: videoAvEnabled, canRead: canReadVideoAvIndex, session: new VideoAvIndexSession(api, options), field: 'index' },
+    { key: 'image', title: '原图向量', enabled: imageVectorsEnabled, canRead: canReadImageVector, session: new ImageVectorSession(api, options) },
+    { key: 'audio', title: '原声向量', enabled: audioVectorsEnabled, canRead: canReadAudioVector, session: new AudioVectorSession(api, options) },
   ];
   sessions.push(original, replacement, synopsis, suggestions, cleanup, ...media.map(item => item.session));
   const action = (name, label, disabled = false, extra = '') => `<button type="button" class="button secondary" data-maintenance-action="${name}" ${disabled || busy ? 'disabled' : ''} ${extra}>${e(label)}</button>`;
@@ -85,7 +81,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   function renderList(regionsOnly = false) {
     const toolbar = `<a class="button secondary" href="#/directories">目录管理</a><a class="button secondary" href="#/tasks">处理任务</a><a class="button primary" href="#/sources">导入资料</a>${action('refresh', '刷新', loading)}`;
     const filter = `<form id="maint-filter" class="panel panel-body"><div class="form-grid maintenance-filters">${field('搜索资料', `<input id="maint-q" type="search" maxlength="200" value="${e(filters.q)}">`)}${field('类型', select('maint-type', [['', '全部类型'], ...Object.entries(documentTypeLabels)], filters.type))}${field('处理状态', select('maint-state', [['', '全部状态'], ['queued', '等待解析'], ['processing', '正在解析'], ['parsed', '已解析'], ['failed', '解析失败'], ['cancelled', '已取消']], filters.status))}${field('目录', folderSelect('maint-filter-folder', filters.folder_id, '全部目录'))}${field('标签', select('maint-filter-tag', [['', '全部标签'], ...tags.map(tag => [tag, tag])], filters.tag))}${field('排序', select('maint-sort', [['updated_desc', '最近更新'], ['updated_asc', '最早更新'], ['name_asc', '名称正序'], ['name_desc', '名称倒序']], filters.sort))}</div><div class="form-actions"><button class="button primary" ${busy ? 'disabled' : ''}>筛选</button>${action('reset', '重置')}</div></form>`;
-    const rows = items.map(item => `<tr><td class="maint-cell-select"><input type="checkbox" data-maintenance-select="${e(item.document_id)}" aria-label="选择 ${e(item.display_name)}" ${selected.has(item.document_id) ? 'checked' : ''}></td><td class="maint-cell-title"><a class="text-link" href="#/documents/${e(item.document_id)}">${e(item.display_name)}</a><div>${e(item.filename)}</div></td><td class="maint-cell-meta" data-label="类型">${e(documentTypeLabels[item.document_type] ?? item.document_type)}</td><td class="maint-cell-meta" data-label="状态">${e(documentStatusLabel(item))}</td><td class="maint-cell-meta" data-label="目录">${e(item.folder_name ?? folders.find(folder => folder.folder_id === item.folder_id)?.name ?? '未分类')}</td><td class="maint-cell-meta maint-cell-tags" data-label="标签">${(item.tags ?? []).map(tag => `<span class="badge gray">${e(tag)}</span>`).join(' ') || '<span class="muted">无</span>'}</td><td class="maint-cell-actions"><a class="text-link" href="#/documents/${e(item.document_id)}">查看详情</a>${cleanupEnabled(config) ? action('cleanup-row', '删除并清理', false, `data-document-id="${e(item.document_id)}"`) : ''}</td></tr>`).join('');
+    const rows = items.map(item => `<tr><td class="maint-cell-select"><input type="checkbox" data-maintenance-select="${e(item.document_id)}" aria-label="选择 ${e(item.display_name)}" ${selected.has(item.document_id) ? 'checked' : ''}></td><td class="maint-cell-title"><a class="text-link" href="#/documents/${e(item.document_id)}">${e(item.display_name)}</a><div>${e(item.filename)}</div></td><td class="maint-cell-meta" data-label="类型">${e(documentTypeLabel(item.document_type))}</td><td class="maint-cell-meta" data-label="状态">${e(documentStatusLabel(item))}</td><td class="maint-cell-meta" data-label="目录">${e(item.folder_name ?? folders.find(folder => folder.folder_id === item.folder_id)?.name ?? '未分类')}</td><td class="maint-cell-meta maint-cell-tags" data-label="标签">${(item.tags ?? []).map(tag => `<span class="badge gray">${e(tag)}</span>`).join(' ') || '<span class="muted">无</span>'}</td><td class="maint-cell-actions"><a class="text-link" href="#/documents/${e(item.document_id)}">查看详情</a>${cleanupEnabled(config) ? action('cleanup-row', '删除并清理', false, `data-document-id="${e(item.document_id)}"`) : ''}</td></tr>`).join('');
     const list = `<section class="panel maintenance-table"><table class="data-table"><thead><tr><th><label class="maint-select-page"><input id="maint-select-page" type="checkbox" aria-label="选择当前页" ${items.length && selected.size === items.length ? 'checked' : ''}><span class="maint-select-hint">全选当前页</span></label></th><th>资料</th><th>类型</th><th>处理状态</th><th>目录</th><th>标签</th><th>操作</th></tr></thead><tbody>${rows || `<tr class="maint-empty"><td colspan="7">${loading ? '正在读取资料…' : '暂无符合条件的资料'}</td></tr>`}</tbody></table></section>${pagination()}`;
     if (regionsOnly && $('maint-list')) { $('maint-list').innerHTML = list; renderStatus(); if (batchShown !== selected.size) renderBatch(); return; }
     container.innerHTML = header('资料维护', toolbar) + '<div id="maint-status"></div>' + filter + `<div id="maint-batch"></div><div id="maint-list">${list}</div><div id="maint-cleanups"></div>`;
@@ -140,7 +136,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   }
   function renderMedia() {
     $('maint-media').innerHTML = media.filter(entry => entry.enabled(config) && entry.canRead(detail, vectorOptions(config))).map(entry => {
-      const value = entry.session.value, status = value[entry.field]?.status, pending = ['loading', 'building'].includes(value.phase);
+      const value = entry.session.value, status = value.vector?.status, pending = ['loading', 'building'].includes(value.phase);
       return panel(entry.title, `<p role="status">${e(value.phase === 'building' ? '正在建立' : value.phase === 'loading' ? '读取中' : status === 'available' ? '已就绪' : status === 'missing' ? '尚未建立' : '请读取状态')}</p>${notice(value.error ? safeError(value.error) : '')}<div class="form-actions">${action('media-refresh', '刷新状态', pending, `data-key="${entry.key}"`)}${status === 'missing' ? action('media-build', `建立${entry.title}`, pending || value.phase !== 'ready', `data-key="${entry.key}"`) : ''}${value.phase === 'building' ? action('media-stop', '停止本地等待', false, `data-key="${entry.key}"`) : ''}</div>`);
     }).join('');
   }
@@ -347,7 +343,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
         const entry = media.find(item => item.key === data.key); if (!entry || !entry.enabled(config) || !entry.canRead(detail, vectorOptions(config))) return;
         if (name === 'media-build') await entry.session.build(detail);
         if (name === 'media-refresh') await entry.session.open(detail, vectorOptions(config));
-        if (name === 'media-stop') entry.session.stop ? entry.session.stop() : entry.session.close();
+        if (name === 'media-stop') entry.session.close();
       } else if (name.startsWith('task-')) {
         const entry = restoredMaintenanceTasks(items).find(item => item.kind === data.kind && item.task.task_id === data.taskId); if (!entry) return;
         if (name === 'task-refresh') { await readTask(entry); if (initializedDetail) renderPanels(); else render(); schedule(); }

@@ -325,22 +325,53 @@ test('summary and suggested tags are native, read-only until clicks, and preserv
   assert.equal(f.calls.filter(([, options]) => options.method === 'POST').length, 1); assert.equal(f.node('maint-tags').value, '灯塔'); f.mounted.destroy();
 });
 
-for (const kind of ['audio', 'sound', 'video']) test(`native ${kind} specialized index retains the existing receipt protocol and never autobuilds`, async () => {
-  const isVideo = kind === 'video', isVector = kind === 'audio';
-  const current = { ...row(), document_type: isVideo ? 'video' : 'audio', filename: isVideo ? 'synthetic.mp4' : 'synthetic.wav', index_status: 'indexed', media_info: { mime_type: isVideo ? 'video/mp4' : 'audio/wav', sha256: 'a'.repeat(64), size_bytes: 128 } };
-  const pathSuffix = { audio: 'audio-vector', sound: 'sound-index', video: 'video-av-index' }[kind];
-  const capabilities = { audio: ['audio_vector_retrieval', 'audio_answers', 'audio_sources'], sound: ['sound_upload', 'sound_index', 'sound_answers', 'sound_sources', 'sound_query_attachments'], video: ['video_av_upload', 'video_av_index', 'video_av_answers', 'video_av_sources'] }[kind];
+test('native audio vector index retains the existing receipt protocol and never autobuilds', async () => {
+  const current = { ...row(), document_type: 'audio', filename: 'synthetic.wav', index_status: 'indexed', media_info: { mime_type: 'audio/wav', sha256: 'a'.repeat(64), size_bytes: 128 } };
   const receipt = available => ({ status: available ? 'available' : 'missing', document_id: 'doc', source_revision_id: 'rev', source_sha256: 'a'.repeat(64), profile_fingerprint: 'b'.repeat(64), model_revision: 'model', dimensions: 4, manifest_sha256: available ? 'c'.repeat(64) : null,
-    ...(isVector ? { publication_id: 'pub', vector_generation_id: available ? 'generation' : null }
-      : { embedding_model_revision: 'embedding-model', publication_id: available ? 'publication' : null, generation_id: available ? 'publication' : null, ...(isVideo ? { window_count: available ? 1 : 0, video_window_count: available ? 1 : 0, audio_window_count: 0 } : { span_count: available ? 1 : 0 }) }) });
+    publication_id: 'pub', vector_generation_id: available ? 'generation' : null });
   const f = fixture({ view: 'documents', id: 'doc' }, { api: async (path, options = {}) => {
     if (path.startsWith('/v1/management/documents?')) return { items: [current], total: 1, total_pages: 1 };
-    if (path.endsWith(`/${pathSuffix}`)) return receipt(options.method === 'POST');
+    if (path.endsWith('/audio-vector')) return receipt(options.method === 'POST');
     return { items: [] };
-  } }, { capabilities }); await f.mounted.ready;
+  } }, { capabilities: ['audio_vector_retrieval', 'audio_answers', 'audio_sources'] }); await f.mounted.ready;
   assert.match(f.node('maint-media').innerHTML, /尚未建立/u); assert.ok(!f.calls.some(([, options]) => options.method === 'POST'));
-  await f.click('media-build', { key: kind }); await f.click('media-build', { key: kind });
+  await f.click('media-build', { key: 'audio' }); await f.click('media-build', { key: 'audio' });
   assert.match(f.node('maint-media').innerHTML, /已就绪/u); assert.equal(f.calls.filter(([, options]) => options.method === 'POST').length, 1); f.mounted.destroy();
+});
+test('legacy sound and video-AV documents still list, open and clean up as generic rows without the retired index panels', async () => {
+  const media = (mime_type) => ({ mime_type, sha256: 'a'.repeat(64), size_bytes: 128 });
+  const base = { ...row(), latest_job: null, latest_index_job: null };
+  const legacy = [
+    { ...base, document_id: 'sound-doc', filename: 'old.wav', display_name: '旧声音资料', document_type: 'sound', index_status: 'indexed', media_info: media('audio/wav') },
+    { ...base, document_id: 'av-doc', filename: 'old.mp4', display_name: '旧音画资料', document_type: 'video_av', index_status: 'indexed', media_info: media('video/mp4') },
+    { ...base, document_id: 'audio-doc', filename: 'old-sound.wav', display_name: '旧声音音频', document_type: 'audio', index_status: 'indexed', media_info: media('audio/wav') },
+  ];
+  const retired = /\/(?:sound|video-av)-(?:index|documents|answers|sources)\b/u, violations = [];
+  // Old capability names may still be advertised by a not-yet-updated backend; they must not resurrect anything.
+  const config = { capabilities: ['metadata', 'document_cleanup', 'sound_upload', 'sound_index', 'video_av_upload', 'video_av_index'] };
+  const api = async (path, options = {}) => {
+    if (retired.test(path)) violations.push(path);
+    if (path.startsWith('/v1/management/documents?')) return { items: legacy, total: legacy.length, total_pages: 1 };
+    if (path === '/v1/management/folders' || path === '/v1/management/tags') return { items: [] };
+    if (options.method === 'POST' && /\/v1\/documents\/[a-z-]+\/cleanup$/u.test(path)) throw new ApiError(503, '请求未完成（503），请稍后重试。');
+    return { items: [] };
+  };
+  const list = fixture({ view: 'documents' }, { api }, config); await list.mounted.ready;
+  assert.match(list.html(), /旧声音资料/u); assert.match(list.html(), /旧音画资料/u); assert.match(list.html(), /旧声音音频/u);
+  assert.equal(list.html().match(/data-label="类型">未知类型</gu)?.length, 2); assert.match(list.html(), /data-label="类型">音频</u);
+  assert.doesNotMatch(list.html(), />sound<|>video_av<|声音理解|音画索引/u);
+  await list.click('cleanup-row', { documentId: 'sound-doc' }); assert.equal(list.confirmations.length, 1);
+  assert.ok(list.calls.some(([path, options]) => options.method === 'POST' && path.includes('sound-doc')));
+  list.mounted.destroy();
+  for (const id of ['sound-doc', 'av-doc', 'audio-doc']) {
+    const f = fixture({ view: 'documents', id }, { api }, config); await f.mounted.ready;
+    assert.ok(f.html().includes(legacy.find(item => item.document_id === id).display_name));
+    assert.equal(f.node('maint-media').innerHTML, ''); assert.doesNotMatch(f.html(), /声音理解|音画索引/u);
+    assert.ok(f.calls.every(([path, options]) => !options.method || options.method === 'GET'));
+    await f.click('media-build', { key: 'sound' }); await f.click('media-build', { key: 'video' }); await f.click('media-refresh', { key: 'sound' });
+    assert.ok(f.calls.every(([path, options]) => !options.method || options.method === 'GET')); f.mounted.destroy();
+  }
+  assert.deepEqual(violations, []);
 });
 test('cleanup retry after a 503 sends again, and an unknown outcome explains instead of silently doing nothing', async () => {
   let posts = 0, status = 503;

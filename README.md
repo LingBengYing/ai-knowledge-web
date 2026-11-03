@@ -4,6 +4,10 @@
 
 配套后端0075，围绕问题展示综合回答，支持安全的段落、标题与列表排版；来源默认折叠，按资料及版本分组，正文引用仅连接已验证的来源。原回答和SSE行为保持。已发布并完成实际生产页面刷新、排版及分组检查；本轮未调用模型，不认证新的真实语义质量，选定旧答案的4处来源发布前后均返回409，全仓旧时序失败仍保留。见[行为合同](docs/changes/0055-answer-focused-presentation/spec.md)、[本机验证](docs/changes/0055-answer-focused-presentation/verification.md)与[生产记录](docs/changes/0055-answer-focused-presentation/deployment-verification.md)。
 
+## 2026-11-03 移除独立声音与原视频音画（未发布）
+
+负责人决定下线独立“声音理解”（sound）与“原视频音画”（video-AV）功能线，后端同步移除。前端删除 `public/sound-library.mjs`、`public/video-av.mjs`、资料详情里的“声音理解索引/原视频音画索引”面板及其两层Node入口路由（`/v1/sound-documents`、`/v1/video-av-documents`、`/v1/documents/{id}/sound-index`、`/v1/documents/{id}/video-av-index`）。音频资料（ASR/音频问答/原声向量）、视频资料（上传/ASR/OCR/视频问答）、原图向量与文档不受影响。生产中旧的声音/音画资料仍可在资料列表、详情与删除清理中显示，未知类型显示为“未知类型”。
+
 以下带日期段落为历史阶段，当前状态以上述最新发布记录为准。
 
 ## 此前生产版本（2026-10-11，0053）：SSE 实时显示

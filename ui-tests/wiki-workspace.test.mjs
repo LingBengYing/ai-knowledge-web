@@ -381,6 +381,21 @@ test('native registered media uses automatic index state without claiming parsin
   }
 });
 
+test('legacy sound and video-AV catalog rows and source detail render as an unknown type instead of failing', async () => {
+  const legacy = [{ document_id: 'sound-doc', filename: 'old.wav', kind: 'sound', state: 'indexed', answerable: false }, { document_id: 'av-doc', filename: 'old.mp4', kind: 'video_av', state: 'indexed', answerable: false }];
+  const f = fixture('#/sources', {
+    listCatalog: async ({ offset = 0, limit = 20 } = {}) => ({ items: legacy, offset, limit, total: legacy.length }),
+    listDocuments: async () => ({ page: 1, page_size: 100, total: 2, items: legacy.map(item => ({ document_id: item.document_id, status: 'parsed', index_status: 'indexed' })) }),
+    getDocument: async id => ({ document_id: id, filename: 'old.wav', document_type: 'sound', status: 'parsed', index_status: 'indexed' }),
+  });
+  await f.workspace.start();
+  assert.match(f.html(), /old\.wav/u); assert.match(f.html(), /old\.mp4/u);
+  assert.equal(f.html().match(/<td>未知类型<\/td>/gu)?.length, 2); assert.doesNotMatch(f.html(), />sound<|>video_av</u);
+  await f.go('#/sources/sound-doc');
+  assert.match(f.html(), /<dt>类型<\/dt><dd>未知类型<\/dd>/u); assert.match(f.html(), /href="#\/documents\/sound-doc"/u);
+  assert.deepEqual(f.calls, []); f.workspace.close();
+});
+
 test('native recall mounts the real module and leaving cancels its pending read', async () => {
   let complete, signal;
   const config = { capabilities: ['retrieval_test', 'retrieval_settings'] };

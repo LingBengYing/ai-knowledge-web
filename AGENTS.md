@@ -1,5 +1,7 @@
 # AI Knowledge Web：智能体工作约定
 
+2026-11-03 移除独立声音（sound）与原视频音画（video-AV）功能线（分支chore/remove-sound-video-av，未发布，后端同步移除）：删除`public/sound-library.mjs`、`public/video-av.mjs`及`media-sessions.mjs`里仅供二者使用的`mediaIndexSession`；资料详情不再显示“声音理解索引/原视频音画索引”面板，旧能力名（sound_upload/sound_index/video_av_upload/video_av_index）即使仍被后端报告也不再生效。两层Node入口删除静态资源`/sound-library.mjs`、`/video-av.mjs`与路由`POST /v1/sound-documents`、`POST /v1/video-av-documents`、`GET|POST /v1/documents/{id}/sound-index`、`GET|POST /v1/documents/{id}/video-av-index`（连同X-Filename转发、文件名校验、上传/超时分支）。保留：音频资料（ASR/音频问答/原声向量`audio-vector`）、视频资料（上传/ASR/OCR/视频问答）、原图向量、文档。旧声音/音画资料仍可列出、打开详情、删除清理；未知资料类型统一显示“未知类型”（`documentTypeLabel`）；更新原文件记录中旧的`pipeline: sound|video_av`仍只读接受。**生产定制external-server.mjs可选同步**（不同步只会把这些请求转发到后端得404）：从ASSETS删去上述两项、从路由表删去上述四条路由及其附属分支。不部署。
+
 2026-11-03 负责人优先级调整：权限相关开发（角色/权限模型、授权范围扩展、权限审计与权限类加固等）调整为**最低优先级**，不抢占其他任何主线；现有授权与工作区隔离保持不变、不回退，只是不再主动投入新的权限开发。修测试或重构时遇到纯权限类问题，记录即可，排在最后处理。
 
 2026-10-29 上传提前应答修复（分支fix/upload-early-reply，未发布）：scripts/upload-transport.mjs的streamUpload在后端未读完请求体就应答（409 batch_file_duplicate、413、401/429等）时，以该应答为准转发给浏览器；收到应答即停止向上游转发、读完并丢弃浏览器余下请求体（不超过已声明长度），之后的上游写错误不再变成502 backend_unavailable；上传用不复用的上游连接（专用agent，keepSocketAlive=false），应答读完或放弃即销毁。原先：后端应答后关闭时偶发502、保持连接时浏览器连接卡住约6–12秒。后端在应答前直接重置连接（未吞读）时应答已丢失，仍是502。**生产定制external-server.mjs若导入upload-transport.mjs，只需重新部署该文件**，否则照搬streamUpload与UPLOAD_AGENT。不部署。
