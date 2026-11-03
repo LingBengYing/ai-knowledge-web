@@ -313,6 +313,22 @@ test('authenticated entry forwards exact original media and frame contracts with
   assert.equal((await raw(origin, '/v1/synopsis-sources/a/1/1/frame/more', { headers })).status, 404);
 });
 
+test('retired sound and video-AV upload, index routes and modules are not served or forwarded externally', async t => {
+  const { origin, seen } = await fixture(t);
+  const headers = { Cookie: sessionPair, Origin: publicOrigin };
+  const before = seen.length;
+  const binary = { method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'X-Filename': 'old.wav' }, body: 'x' };
+  for (const path of ['/v1/sound-documents', '/v1/video-av-documents']) assert.equal((await raw(origin, path, binary)).status, 404, path);
+  for (const path of ['/v1/documents/doc/sound-index', '/v1/documents/doc/video-av-index']) {
+    assert.equal((await raw(origin, path, { headers })).status, 404, path);
+    assert.equal((await raw(origin, path, { method: 'POST', headers })).status, 404, path);
+  }
+  for (const path of ['/sound-library.mjs', '/video-av.mjs']) assert.equal((await raw(origin, path, { headers })).status, 404, path);
+  assert.equal(seen.slice(before).filter(request => /sound|video-av/u.test(request.path)).length, 0);
+  assert.equal((await raw(origin, '/audio-vectors.mjs', { headers })).status, 200);
+  assert.equal((await raw(origin, '/v1/documents/doc/audio-vector', { headers })).status, 200);
+});
+
 test('legacy text, media and attachment answer endpoints and their sources are no longer forwarded externally', async t => {
   const { origin, seen } = await fixture(t);
   const headers = { Cookie: sessionPair, Origin: publicOrigin };

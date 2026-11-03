@@ -32,8 +32,6 @@ const ASSETS = new Map([
   ['/tag-suggestions.mjs', ['tag-suggestions.mjs', 'text/javascript; charset=utf-8']],
   ['/image-vectors.mjs', ['image-vectors.mjs', 'text/javascript; charset=utf-8']],
   ['/audio-vectors.mjs', ['audio-vectors.mjs', 'text/javascript; charset=utf-8']],
-  ['/sound-library.mjs', ['sound-library.mjs', 'text/javascript; charset=utf-8']],
-  ['/video-av.mjs', ['video-av.mjs', 'text/javascript; charset=utf-8']],
   ['/media-sessions.mjs', ['media-sessions.mjs', 'text/javascript; charset=utf-8']],
   ['/document-originals.mjs', ['document-originals.mjs', 'text/javascript; charset=utf-8']],
   ['/workbench-state.mjs', ['workbench-state.mjs', 'text/javascript; charset=utf-8']],
@@ -49,10 +47,6 @@ const ROUTES = [
   [/^\/v1\/retrieval-settings$/, ['GET', 'PUT'], 'model-configuration'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/cleanup$/, ['GET', 'POST'], 'cleanup'],
   [/^\/v1\/management\/document-cleanups$/, ['GET', 'POST'], 'cleanup-list'],
-  [/^\/v1\/video-av-documents$/, ['POST'], 'video-av-upload'],
-  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/, ['GET', 'POST'], 'video-av-index'],
-  [/^\/v1\/sound-documents$/, ['POST'], 'sound-upload'],
-  [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/, ['GET', 'POST'], 'sound-index'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/, ['GET', 'POST'], 'image-vector'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/, ['GET', 'POST'], 'audio-vector'],
   [/^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/tag-suggestions$/, ['GET'], 'source'],
@@ -175,10 +169,6 @@ function forwardedHeaders(req, backend, origin, requestId) {
     if (!/^rag_session=[A-Za-z0-9._~-]{0,4096}$/.test(sessions[0])) throw new TransportError(400, 'invalid_session');
     headers.Cookie = sessions[0];
   }
-  if (req.method === 'POST' && ['/v1/sound-documents', '/v1/video-av-documents'].includes(req.url)) {
-    const filename = singleHeader(req, 'x-filename');
-    if (filename !== undefined) headers['X-Filename'] = filename;
-  }
   if (origin) headers.Origin = origin; // Preserve the validated external origin; Java explicitly accepts it.
   return headers;
 }
@@ -238,24 +228,6 @@ function validateUploadTarget(target, contentType, replacement = false) {
   } catch { throw new TransportError(400, 'invalid_upload_filename'); }
 }
 
-function validateSoundFilename(encoded) {
-  try {
-    if (typeof encoded !== 'string' || !/^[\x21-\x7e]+$/u.test(encoded)) throw new Error('invalid filename');
-    const filename = decodeURIComponent(encoded);
-    if (!filename.trim() || filename.length > 255 || /[/\\\u0000-\u001f\u007f]/u.test(filename)
-      || !/\.(?:wav|mp3|flac|ogg|m4a|mp4|webm)$/iu.test(filename)) throw new Error('invalid filename');
-  } catch { throw new TransportError(400, 'invalid_upload_filename'); }
-}
-
-function validateVideoAvFilename(encoded) {
-  try {
-    if (typeof encoded !== 'string' || !/^[\x21-\x7e]+$/u.test(encoded)) throw new Error('invalid filename');
-    const filename = decodeURIComponent(encoded);
-    if (!filename.trim() || filename.length > 255 || /[/\\\u0000-\u001f\u007f]/u.test(filename)
-      || !/\.(?:mp4|mov|webm|mkv)$/iu.test(filename)) throw new Error('invalid filename');
-  } catch { throw new TransportError(400, 'invalid_upload_filename'); }
-}
-
 async function proxy(req, res, backend, headers, limits, signal, kind) {
   if (kind?.startsWith('wiki-') && !wikiQueryAllowed(req.url, req.method)) throw new TransportError(400, 'query_denied');
   if (batchManifestRequest(req.method, req.url)) limits.requestBytes = 4 * 1024 * 1024;
@@ -269,15 +241,11 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
           || !Number.isSafeInteger(Number(value)) || Number(value) > (key === 'page_size' ? 100 : 2147483647)) throw new TransportError(400, 'query_denied');
     }
   }
-  const bodyless = ['wiki-draft', 'wiki-page', 'wiki-conversation'].includes(kind) && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector' || kind === 'sound-index' || kind === 'video-av-index';
-  if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector', 'sound-index', 'sound-upload', 'video-av-index', 'video-av-upload'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
+  const bodyless = ['wiki-draft', 'wiki-page', 'wiki-conversation'].includes(kind) && req.method === 'DELETE' || kind === 'cleanup' || kind === 'empty' || kind === 'index' || kind === 'synopsis' || kind === 'image-vector' || kind === 'audio-vector';
+  if (['replacement-index', 'model-configuration', 'retrieval', 'cleanup', 'index', 'reindex', 'synopsis', 'answer', 'source', 'content', 'media', 'tag', 'image-vector', 'audio-vector'].includes(kind) && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'replacement' && req.method === 'GET' && req.url.includes('?')) throw new TransportError(400, 'query_denied');
   if (kind === 'batch-upload') {
     if (req.url.includes('?') || headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
-  } else if (['sound-upload', 'video-av-upload'].includes(kind)) {
-    if (kind === 'sound-upload') validateSoundFilename(headers['X-Filename']);
-    else validateVideoAvFilename(headers['X-Filename']);
-    if (headers['content-type']?.toLowerCase() !== 'application/octet-stream') throw new TransportError(415, 'binary_file_required');
   } else if (kind === 'upload' || (kind === 'replacement' && req.method === 'POST')) {
     const type = headers['content-type']?.toLowerCase();
     if (validateUploadTarget(req.url, type, kind === 'replacement')) limits.requestBytes = Math.min(limits.requestBytes, limits.imageUploadBytes);
@@ -285,7 +253,7 @@ async function proxy(req, res, backend, headers, limits, signal, kind) {
   } else if (!bodyless && !['GET', 'DELETE'].includes(req.method) && !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) {
     throw new TransportError(415, 'json_required');
   }
-  const uploadBody = ['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST';
+  const uploadBody = ['upload', 'batch-upload'].includes(kind) || kind === 'replacement' && req.method === 'POST';
   // Uploads with a declared length stream through (cap and empty check first); others are buffered.
   let response = uploadBody ? await streamUpload({ req, backend, headers, limit: limits.requestBytes, signal, Failure: TransportError }) : null;
   if (!response) {
@@ -407,18 +375,16 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
     req.on('error', () => controller.abort());
     const replacementUpload = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement$/.test(req.url.split('?')[0]);
     const replacementIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/replacement\/index$/.test(req.url);
-    const upload = /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/u.test(req.url) && req.method === 'POST' || replacementUpload || req.method === 'POST' && ['/v1/documents', '/v1/sound-documents', '/v1/video-av-documents'].includes(req.url.split('?')[0]);
+    const upload = /^\/v1\/document-batches\/[A-Za-z0-9_-]{1,128}\/files\/(?:0|[1-9][0-9]{0,3})$/u.test(req.url) && req.method === 'POST' || replacementUpload || req.method === 'POST' && req.url.split('?')[0] === '/v1/documents';
     const answer = wikiCompilationRequest(req.method, req.url) || req.method === 'POST' && req.url === '/v1/knowledge-answers';
     const imageVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/image-vector$/.test(req.url);
     const audioVector = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/audio-vector$/.test(req.url);
-    const soundIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/sound-index$/.test(req.url);
-    const videoAvIndex = req.method === 'POST' && /^\/v1\/documents\/[A-Za-z0-9_-]{1,128}\/video-av-index$/.test(req.url);
     const modelTest = req.method === 'POST' && req.url === '/v1/model-configuration/test';
     const retrieval = req.method === 'POST' && req.url === '/v1/retrieval-tests';
     // A batch manifest (up to 4 MiB, ~650 KiB for 3,800 files) or an appended chunk of an open batch
     // must arrive within the deadline too, so it gets the upload deadline.
     const manifest = batchManifestRequest(req.method, req.url);
-    const timer = setTimeout(() => controller.abort(), isAgentEventStream(req.method, req.url) ? agentStreamDeadlineMs : modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload || manifest ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || soundIndex || videoAvIndex || replacementIndex) ? answerDeadlineMs : deadlineMs);
+    const timer = setTimeout(() => controller.abort(), isAgentEventStream(req.method, req.url) ? agentStreamDeadlineMs : modelTest ? modelTestDeadlineMs : retrieval ? retrievalDeadlineMs : upload || manifest ? uploadDeadlineMs : imageVector ? imageVectorDeadlineMs : audioVector ? audioVectorDeadlineMs : (answer || replacementIndex) ? answerDeadlineMs : deadlineMs);
     let releaseUpload = null;
     let uploadClient = null;
     let reservedReplacementIndex = false;
@@ -434,7 +400,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         activeStreams += 1; reservedStream = true;
       } else if (upload) {
         // Uploads are bounded by the per-client and total upload admission below, not the long-request pool.
-      } else if (answer || imageVector || audioVector || soundIndex || videoAvIndex || modelTest || retrieval || replacementIndex) {
+      } else if (answer || imageVector || audioVector || modelTest || retrieval || replacementIndex) {
         // Long model/indexing exchanges get their own slots so pages, login and ordinary reads stay reachable.
         if (activeLongRequests >= 8) throw new TransportError(429, 'entry_capacity_reached');
         activeLongRequests += 1; reservedLongRequest = true;
@@ -477,7 +443,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
         const route = ROUTES.find(([pattern]) => pattern.test(path));
         if (!route) throw new TransportError(404, 'route_not_found');
         if (!route[1].includes(req.method)) throw new TransportError(405, 'method_not_allowed');
-        if (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) {
+        if (['upload', 'batch-upload'].includes(route[2]) || replacementUpload) {
           releaseUpload = uploads.enter(uploadClient);
           if (!releaseUpload) throw new TransportError(429, 'upload_capacity_reached', UPLOAD_BUSY_DETAIL);
         }
@@ -485,7 +451,7 @@ export async function startExternalServer({ publicOrigin, backendOrigin = 'http:
           if (activeReplacementIndexes >= 2) throw new TransportError(429, 'replacement_index_capacity_reached');
           activeReplacementIndexes += 1; reservedReplacementIndex = true;
         }
-        await proxy(req, res, backend, headers, { requestBytes: (['upload', 'sound-upload', 'video-av-upload', 'batch-upload'].includes(route[2]) || replacementUpload) ? uploadBytes : requestBytes,
+        await proxy(req, res, backend, headers, { requestBytes: (['upload', 'batch-upload'].includes(route[2]) || replacementUpload) ? uploadBytes : requestBytes,
           imageUploadBytes, responseBytes: route[2] === 'media' ? mediaBytes : route[2] === 'content' ? contentBytes : responseBytes }, controller.signal, route[2]);
         if (reservedLogin && res.statusCode === 200 && reservedLogin === loginWindow) loginFailures -= 1;
       }
