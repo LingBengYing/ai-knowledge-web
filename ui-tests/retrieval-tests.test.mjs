@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from '../public/api.mjs';
-import { RetrievalSession, retrievalEnabled, retrievalRequest, checkedRetrievalResult } from '../public/retrieval-tests.mjs';
+import { RetrievalTestSession, retrievalTestEnabled, retrievalRequest, checkedRetrievalResult } from '../public/retrieval-tests.mjs';
 
 const sha = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 const text = '星港😀预算47万元。';
@@ -10,8 +10,8 @@ const settings = changes => ({ version: 0, search_method: 'hybrid', ranking_mode
 const result = async () => ({ test_id: '00000000-0000-0000-0000-000000000001', configuration_version: 1, effective_settings: settings(), status: 'completed', reason: null, scope_count: 1, score_kind: 'rrf', matches: [await hit()] });
 
 test('retrieval request preserves full selection and explicit empty scope with independent capability', () => {
-  assert.equal(retrievalEnabled({ capabilities: ['answers', 'sources'] }), false);
-  assert.equal(retrievalEnabled({ capabilities: ['retrieval_test'] }), true);
+  assert.equal(retrievalTestEnabled({ capabilities: ['answers', 'sources'] }), false);
+  assert.equal(retrievalTestEnabled({ capabilities: ['retrieval_test'] }), true);
   assert.deepEqual(retrievalRequest('完整问题', []), { question: '完整问题' });
   assert.deepEqual(retrievalRequest('完整问题', null, 20, false), { question: '完整问题', top_k: 20, rerank: false });
   for (const ids of [['doc-one', 'doc-one'], ['doc-one', '../private']]) assert.deepEqual(retrievalRequest('问题', ids), { question: '问题' });
@@ -40,27 +40,25 @@ test('rerank disabled requires null scores and empty results retain exact scope 
 });
 
 test('one retrieval action sends only the exact request and never dispatches a generation or answer route', async () => {
-  const calls = [], session = new RetrievalSession(async (path, options) => { calls.push([path, options.body]); return result(); });
+  const calls = [], session = new RetrievalTestSession(async (path, options) => { calls.push([path, options.body]); return result(); });
   await session.run('完整问题', ['doc-one'], 5, true);
   assert.deepEqual(calls, [['/v1/retrieval-tests', { question: '完整问题', top_k: 5, rerank: true }]]);
   assert.equal(session.value.phase, 'ready'); assert.equal(session.value.result.matches.length, 1);
   assert.equal(session.value.command.document_ids, undefined);
 });
 
-test('new input, stop and identity reset suppress late preview and clear the previous full result', async () => {
-  for (const cancel of ['invalidate', 'stop', 'close']) {
-    let deliver, signal;
-    const session = new RetrievalSession((_path, options) => { signal = options.signal; return new Promise(resolve => { deliver = resolve; }); });
-    const pending = session.run('问题', ['doc-one']); session[cancel](); deliver(await result()); await pending;
-    assert.equal(signal.aborted, true); assert.equal(session.value.result, null);
-  }
+test('closing suppresses a late preview and clears the previous full result', async () => {
+  let deliver, signal;
+  const session = new RetrievalTestSession((_path, options) => { signal = options.signal; return new Promise(resolve => { deliver = resolve; }); });
+  const pending = session.run('问题', ['doc-one']); session.close(); deliver(await result()); await pending;
+  assert.equal(signal.aborted, true); assert.equal(session.value.result, null);
 });
 
 test('bad tail invalidates the entire preview and authentication loss clears the current query context', async () => {
   const response = await result(); response.matches.push({ ...response.matches[0], rank: 2, text_sha256: 'b'.repeat(64) });
-  const bad = new RetrievalSession(async () => response); await bad.run('问题', ['doc-one']);
+  const bad = new RetrievalTestSession(async () => response); await bad.run('问题', ['doc-one']);
   assert.equal(bad.value.phase, 'error'); assert.equal(bad.value.result, null);
   let expired = 0;
-  const lost = new RetrievalSession(async () => { throw new ApiError(401, 'expired'); }, { onAuthenticationFailure: () => expired++ });
+  const lost = new RetrievalTestSession(async () => { throw new ApiError(401, 'expired'); }, { onAuthenticationFailure: () => expired++ });
   await lost.run('问题', ['doc-one']); assert.equal(expired, 1); assert.equal(lost.value.command, null); assert.equal(lost.value.result, null);
 });

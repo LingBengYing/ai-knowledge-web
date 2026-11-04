@@ -1,9 +1,5 @@
-import { ApiError, isId } from './api.mjs';
+import { ApiError, hasCapabilities, hasExactKeys, isId, isNonNegativeInteger, isOptionalErrorCode, isTimestampText } from './api.mjs';
 
-const keys = (value, names) => value && typeof value === 'object' && !Array.isArray(value)
-  && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
-const integer = value => Number.isSafeInteger(value) && value >= 0;
-const code = value => value === null || typeof value === 'string' && /^[a-z][a-z0-9_]{0,95}$/u.test(value);
 const invalid = () => new ApiError(502, '重建状态不完整，请刷新批次状态核对。');
 const idle = () => ({ phase: 'idle', status: null, error: null });
 const messages = {
@@ -26,24 +22,24 @@ const messages = {
   index_configuration_changed: '处理期间索引配置已变化，请重新读取配置和资格。',
 };
 
-export const modelRebuildEnabled = config => config?.capabilities?.includes('model_index_rebuild') === true;
+export const modelRebuildEnabled = config => hasCapabilities(config, 'model_index_rebuild');
 export const modelRebuildPending = job => ['queued', 'running', 'applying'].includes(job?.state);
 export const modelRebuildReason = reason => reason === null ? '' : messages[reason] ?? '当前操作未完成，请刷新状态并核对配置或资料。';
 
 function checked(value) {
-  if (!keys(value, ['target_version', 'active_version', 'required', 'can_start', 'reason', 'total_documents', 'job'])
-    || !integer(value.target_version) || !(value.active_version === null || integer(value.active_version))
-    || typeof value.required !== 'boolean' || typeof value.can_start !== 'boolean' || !code(value.reason)
-    || !integer(value.total_documents)) throw invalid();
+  if (!hasExactKeys(value, ['target_version', 'active_version', 'required', 'can_start', 'reason', 'total_documents', 'job'])
+    || !isNonNegativeInteger(value.target_version) || !(value.active_version === null || isNonNegativeInteger(value.active_version))
+    || typeof value.required !== 'boolean' || typeof value.can_start !== 'boolean' || !isOptionalErrorCode(value.reason)
+    || !isNonNegativeInteger(value.total_documents)) throw invalid();
   if (value.job !== null) {
     const job = value.job;
-    if (!keys(job, ['id', 'base_active_version', 'target_version', 'state', 'total_documents', 'completed_documents', 'error_code', 'created_at', 'updated_at'])
+    if (!hasExactKeys(job, ['id', 'base_active_version', 'target_version', 'state', 'total_documents', 'completed_documents', 'error_code', 'created_at', 'updated_at'])
       || !isId(job.id)
-      || !(job.base_active_version === null || integer(job.base_active_version)) || !integer(job.target_version)
+      || !(job.base_active_version === null || isNonNegativeInteger(job.base_active_version)) || !isNonNegativeInteger(job.target_version)
       || !['queued', 'running', 'applying', 'completed', 'failed'].includes(job.state)
-      || !integer(job.total_documents) || !integer(job.completed_documents) || job.completed_documents > job.total_documents
-      || !code(job.error_code) || (job.state === 'failed' ? job.error_code === null : job.error_code !== null)
-      || !['created_at', 'updated_at'].every(key => typeof job[key] === 'string' && job[key].length <= 64 && Number.isFinite(Date.parse(job[key])))) throw invalid();
+      || !isNonNegativeInteger(job.total_documents) || !isNonNegativeInteger(job.completed_documents) || job.completed_documents > job.total_documents
+      || !isOptionalErrorCode(job.error_code) || (job.state === 'failed' ? job.error_code === null : job.error_code !== null)
+      || !['created_at', 'updated_at'].every(key => isTimestampText(job[key]))) throw invalid();
     if (value.can_start && modelRebuildPending(job)) throw invalid();
   }
   return Object.freeze({ ...value, job: value.job === null ? null : Object.freeze({ ...value.job }) });
@@ -57,12 +53,12 @@ export class ModelRebuildSession {
     this.onCompleted = onCompleted; this.setTimer = setTimer; this.clearTimer = clearTimer;
     this.value = idle(); this.serial = 0; this.controller = null; this.timer = null; this.confirmedId = null;
   }
-  emit(value) { this.value = Object.freeze(value); this.onChange(); }
+  publish(value) { this.value = Object.freeze(value); this.onChange(); }
   pause() {
     this.serial++; this.controller?.abort(); this.controller = null; this.clearTimer(this.timer); this.timer = null;
-    this.emit({ ...this.value, phase: this.value.phase === 'starting' || this.value.phase === 'unknown' ? 'unknown' : this.value.status ? 'ready' : 'idle' });
+    this.publish({ ...this.value, phase: this.value.phase === 'starting' || this.value.phase === 'unknown' ? 'unknown' : this.value.status ? 'ready' : 'idle' });
   }
-  close() { this.pause(); this.confirmedId = null; this.emit(idle()); }
+  close() { this.pause(); this.confirmedId = null; this.publish(idle()); }
   async load() { return this.perform(); }
   async start(version) {
     const status = this.value.status;
@@ -73,7 +69,7 @@ export class ModelRebuildSession {
     if (this.controller) return null;
     const write = version !== undefined, wasUnknown = this.value.phase === 'unknown', serial = ++this.serial, controller = new AbortController();
     this.clearTimer(this.timer); this.timer = null; this.controller = controller;
-    this.emit({ ...this.value, phase: write ? 'starting' : 'loading', error: null });
+    this.publish({ ...this.value, phase: write ? 'starting' : 'loading', error: null });
     let status;
     try {
       const result = await this.request('/v1/model-configuration/rebuild', {
@@ -82,13 +78,13 @@ export class ModelRebuildSession {
       if (serial !== this.serial) return null;
       status = checked(result);
       if (write && (status.target_version !== version || status.job?.target_version !== version)) throw invalid();
-      this.emit({ phase: 'ready', status, error: null });
+      this.publish({ phase: 'ready', status, error: null });
     } catch (error) {
       if (serial !== this.serial) return null;
       if (error?.status === 401) { this.close(); this.onAuthenticationFailure(error); return null; }
       const failure = new ApiError(Number.isInteger(error?.status) ? error.status : 0,
         error?.status === 403 ? '当前身份不能发起此重建，请使用配置管理员身份。' : modelRebuildReason(error?.errorCode ?? 'unknown'));
-      this.emit({ ...this.value, phase: write || wasUnknown ? 'unknown' : 'error', error: failure });
+      this.publish({ ...this.value, phase: write || wasUnknown ? 'unknown' : 'error', error: failure });
       return null;
     } finally { if (serial === this.serial) this.controller = null; }
     if (serial !== this.serial) return null;

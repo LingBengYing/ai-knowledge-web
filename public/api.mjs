@@ -1,7 +1,12 @@
+/** Server error codes: lowercase snake_case, at most 96 characters. */
+const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,95}$/u;
+/** null, or a well-formed server error code. */
+export const isOptionalErrorCode = value => value === null || typeof value === 'string' && ERROR_CODE_PATTERN.test(value);
+
 export class ApiError extends Error {
   constructor(status, message, { errorCode, field } = {}) {
     super(message); this.status = status;
-    if (typeof errorCode === 'string' && /^[a-z][a-z0-9_]{0,95}$/u.test(errorCode)) this.errorCode = errorCode;
+    if (typeof errorCode === 'string' && ERROR_CODE_PATTERN.test(errorCode)) this.errorCode = errorCode;
     if (['request', 'base_version', 'version', 'role', 'embedding.provider', 'embedding.model', 'embedding.dimensions', 'embedding.revision', 'embedding.api_key', 'rerank.provider', 'rerank.model', 'rerank.api_key', 'generation.provider', 'generation.model', 'generation.api_key'].includes(field)) this.field = field;
   }
 }
@@ -9,11 +14,22 @@ export class ApiError extends Error {
 /** Server identities (documents, revisions, pages, tasks, batches…): 1–128 URL-safe characters. */
 export const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
 export const isId = value => typeof value === 'string' && ID_PATTERN.test(value);
+/** Lowercase hex SHA-256 digests reported by the server. */
+export const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+export const isNonNegativeInteger = value => Number.isSafeInteger(value) && value >= 0;
+/** A parseable server timestamp string of at most 64 characters. */
+export const isTimestampText = value => typeof value === 'string' && value.length <= 64 && Number.isFinite(Date.parse(value));
+export const isSha256 = value => typeof value === 'string' && SHA256_PATTERN.test(value);
+/** A non-array object whose own keys are exactly `names`. */
+export const hasExactKeys = (value, names) => !!value && typeof value === 'object' && !Array.isArray(value)
+  && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
+/** True when the server reports every named capability. */
+export const hasCapabilities = (config, ...names) => Array.isArray(config?.capabilities) && names.every(name => config.capabilities.includes(name));
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 /** Lowercase hex SHA-256 of bytes (BufferSource). */
 export const sha256Hex = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
 
-const imageUploadEnabled = config => Array.isArray(config?.capabilities) && config.capabilities.includes('ingestions')
+const imageUploadEnabled = config => hasCapabilities(config, 'ingestions')
   && ['visual_image_upload', 'image_text_upload'].some(capability => config.capabilities.includes(capability));
 
 export const DOCUMENT_FORMATS = Object.freeze({
@@ -25,6 +41,14 @@ export const DOCUMENT_FORMATS = Object.freeze({
   xml: 'application/xml', epub: 'application/epub+zip', htm: 'text/html',
 });
 export const DOCUMENT_MIME_TYPES = Object.freeze([...new Set(Object.values(DOCUMENT_FORMATS))]);
+export const IMAGE_MIME_TYPES = Object.freeze(['image/png', 'image/jpeg']);
+export const AUDIO_MIME_TYPES = Object.freeze(['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm']);
+const VIDEO_TYPES = Object.freeze({ mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' });
+export const VIDEO_MIME_TYPES = Object.freeze(Object.values(VIDEO_TYPES));
+/** Original-file media types the server accepts for each document type. */
+export const MIME_TYPES_BY_DOCUMENT_TYPE = Object.freeze({ document: DOCUMENT_MIME_TYPES, image: IMAGE_MIME_TYPES, audio: AUDIO_MIME_TYPES, video: VIDEO_MIME_TYPES });
+/** The revision a management row currently stands for: published, else latest parsed, else registered. */
+export const documentRevisionId = row => row?.active_revision_id ?? row?.latest_job?.revision_id ?? row?.registered_revision_id;
 export const DOCUMENT_ACCEPT = Object.keys(DOCUMENT_FORMATS).map(extension => `.${extension}`).join(',');
 export const documentExtension = filename => String(filename ?? '').split('.').at(-1).toLowerCase();
 export const documentDownloadOnly = mime => DOCUMENT_MIME_TYPES.includes(mime) && !['application/pdf', 'text/plain', 'text/markdown'].includes(mime);
@@ -47,7 +71,6 @@ function checkFormat(file, supported) {
   throw new ApiError(422, known ? '文件与当前上传类型不匹配，请选择正确的资料类型。' : '不支持此文件格式，请选择受支持的原文件。');
 }
 
-const videoTypes = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska' };
 const wikiBinarySource = /^\/v1\/wiki\/(?:pages\/[A-Za-z0-9_-]{1,128}\/versions\/[1-9][0-9]{0,15}|proposals\/[A-Za-z0-9_-]{1,128})\/sources\/[A-Za-z0-9_-]{1,128}\/(?:content|frame)$/u;
 export function validateReplacementUpload(file, documentType) {
   checkFile(file, documentType === 'image');
@@ -59,11 +82,11 @@ export function validateUpload(file, config, uploadKind = 'document') {
   const image = imageFile(file);
   checkFile(file, image);
   const media = ['audio', 'video'].includes(uploadKind);
-  const enabledMedia = config?.capabilities?.includes(`${uploadKind}_upload`) && config?.capabilities?.includes('ingestions');
+  const enabledMedia = hasCapabilities(config, `${uploadKind}_upload`, 'ingestions');
   const supported = media ? (uploadKind === 'video' ? videoFile(file) : audioFile(file))
     : uploadKind === 'document' && (image || documentFile(file));
   checkFormat(file, supported);
-  const enabledDocument = !Array.isArray(config?.capabilities) || ['ingestions', 'text_upload'].every(capability => config.capabilities.includes(capability));
+  const enabledDocument = !Array.isArray(config?.capabilities) || hasCapabilities(config, 'ingestions', 'text_upload');
   if (media ? !enabledMedia : image ? !imageUploadEnabled(config) : !enabledDocument) throw new ApiError(422, '服务尚未启用此类型的上传功能。');
   return file;
 }
@@ -104,18 +127,18 @@ export function createApi(config, principal, fetcher = globalThis.fetch) {
       headers['Content-Type'] = 'application/octet-stream';
     } else if (file !== undefined && replacement !== undefined) {
       validateReplacementUpload(file, replacement.documentType);
-      if (!config?.capabilities?.includes('document_replacements') || !isId(replacement.documentId) || !isId(replacement.baseRevisionId)
+      if (!hasCapabilities(config, 'document_replacements') || !isId(replacement.documentId) || !isId(replacement.baseRevisionId)
         || method !== 'POST' || body !== undefined
         || path !== `/v1/documents/${replacement.documentId}/replacement?filename=${encodeURIComponent(file.name)}&base_revision_id=${replacement.baseRevisionId}`) {
         throw new ApiError(422, '新原文件只能提交到当前资料的指定版本更新接口。');
       }
-      headers['Content-Type'] = replacement.documentType === 'video' ? videoTypes[file.name.split('.').at(-1).toLowerCase()] : 'application/octet-stream';
+      headers['Content-Type'] = replacement.documentType === 'video' ? VIDEO_TYPES[documentExtension(file.name)] : 'application/octet-stream';
     } else if (file !== undefined) {
       validateUpload(file, config, uploadKind);
       if (method !== 'POST' || body !== undefined || path !== `/v1/documents?filename=${encodeURIComponent(file.name)}`) {
         throw new ApiError(422, '原始文件仅允许发送到指定文本上传接口。');
       }
-      headers['Content-Type'] = uploadKind === 'video' ? videoTypes[file.name.split('.').at(-1).toLowerCase()] : 'application/octet-stream';
+      headers['Content-Type'] = uploadKind === 'video' ? VIDEO_TYPES[documentExtension(file.name)] : 'application/octet-stream';
     } else if (body !== undefined) headers['Content-Type'] = 'application/json';
     const send = () => fetcher(path, {
       method, headers, signal, credentials: 'same-origin', cache: 'no-store',
@@ -199,9 +222,8 @@ async function readBinary(response, path) {
     || (wikiBinarySource.test(path) && path.endsWith('/content'));
   const headerType = response.headers.get('content-type')?.toLowerCase();
   const type = original ? headerType?.split(';')[0].trim() : headerType;
-  const audioTypes = ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'];
   // Originals may be any library format; everything else readable here is a server-decoded frame image.
-  const types = original ? [...DOCUMENT_MIME_TYPES, 'image/png', 'image/jpeg', ...audioTypes, ...Object.values(videoTypes)] : ['image/png', 'image/jpeg'];
+  const types = original ? [...DOCUMENT_MIME_TYPES, ...IMAGE_MIME_TYPES, ...AUDIO_MIME_TYPES, ...VIDEO_MIME_TYPES] : IMAGE_MIME_TYPES;
   const limit = (original ? 20 : 10) * 1024 * 1024;
   if (response.status !== 200 || !types.includes(type) || Number(response.headers.get('content-length')) > limit) {
     await response.body?.cancel();

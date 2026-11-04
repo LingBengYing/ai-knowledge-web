@@ -1,10 +1,8 @@
-import { ApiError } from './api.mjs';
+import { ApiError, hasCapabilities, hasExactKeys, isNonNegativeInteger } from './api.mjs';
 
 const roles = ['embedding', 'rerank', 'generation'];
 const validProvider = (role, provider) => provider === 'siliconflow' || role === 'generation' && provider === 'deepseek';
 const modelName = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
-const keys = (value, names) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
-const version = value => Number.isSafeInteger(value) && value >= 0;
 const invalid = () => new ApiError(502, '模型配置状态不完整，请重新读取状态。');
 const idle = () => ({ phase: 'idle', configuration: null, dirty: false, tests: Object.freeze({}), error: null });
 const busy = value => ['loading', 'saving', 'testing', 'activating'].includes(value.phase);
@@ -25,11 +23,11 @@ const safeError = error => {
   return result;
 };
 
-export const modelConfigurationEnabled = config => config?.capabilities?.includes('model_configuration') === true;
+export const modelConfigurationEnabled = config => hasCapabilities(config, 'model_configuration');
 
 export function checkedModelConfiguration(value) {
-  if (!keys(value, ['version', 'active_version', 'state', 'can_edit', 'provider', 'embedding', 'rerank', 'generation', 'projection'])
-    || !(value.version === null || version(value.version)) || !(value.active_version === null || version(value.active_version))
+  if (!hasExactKeys(value, ['version', 'active_version', 'state', 'can_edit', 'provider', 'embedding', 'rerank', 'generation', 'projection'])
+    || !(value.version === null || isNonNegativeInteger(value.version)) || !(value.active_version === null || isNonNegativeInteger(value.active_version))
     || !['unconfigured', 'draft', 'active'].includes(value.state) || typeof value.can_edit !== 'boolean' || !['siliconflow', 'mixed'].includes(value.provider)
     || (value.active_version !== null && (value.version === null || value.active_version > value.version))
     || (value.state === 'active' && (value.active_version === null || value.active_version !== value.version))
@@ -38,7 +36,7 @@ export function checkedModelConfiguration(value) {
   const empty = value.state === 'unconfigured', normalizedRoles = {};
   for (const role of roles) {
     const item = value[role], expected = role === 'embedding' ? ['model', 'dimensions', 'revision', 'has_key'] : ['model', 'has_key'];
-    if (!keys(item, expected) && !keys(item, [...expected, 'provider'])) throw invalid();
+    if (!hasExactKeys(item, expected) && !hasExactKeys(item, [...expected, 'provider'])) throw invalid();
     const provider = Object.hasOwn(item, 'provider') ? item.provider : 'siliconflow';
     if (!validProvider(role, provider) || typeof item.has_key !== 'boolean' || (empty ? item.model !== null || item.has_key : !modelName.test(item.model ?? ''))) throw invalid();
     if (role === 'embedding' && (empty ? item.dimensions !== null || item.revision !== null
@@ -46,17 +44,17 @@ export function checkedModelConfiguration(value) {
     normalizedRoles[role] = Object.freeze({ ...item, provider });
   }
   if (value.provider !== (normalizedRoles.generation.provider === 'deepseek' ? 'mixed' : 'siliconflow')) throw invalid();
-  if (!keys(value.projection, ['configured', 'dimension', 'can_test']) || typeof value.projection.configured !== 'boolean' || typeof value.projection.can_test !== 'boolean'
+  if (!hasExactKeys(value.projection, ['configured', 'dimension', 'can_test']) || typeof value.projection.configured !== 'boolean' || typeof value.projection.can_test !== 'boolean'
     || !(value.projection.dimension === null || Number.isSafeInteger(value.projection.dimension) && value.projection.dimension >= 2 && value.projection.dimension <= 8192)) throw invalid();
   return Object.freeze({ ...value, ...normalizedRoles, projection: Object.freeze({ ...value.projection }) });
 }
 
 function command(draft, configuration) {
-  if (!keys(draft, roles)) throw new ApiError(422, '请填写三个文字模型角色。');
+  if (!hasExactKeys(draft, roles)) throw new ApiError(422, '请填写三个文字模型角色。');
   const result = { base_version: configuration.version };
   for (const role of roles) {
     const item = draft[role], expected = role === 'embedding' ? ['model', 'dimensions', 'revision'] : ['model'];
-    if (!item || !keys(item, [...expected, ...(Object.hasOwn(item, 'provider') ? ['provider'] : []), ...(Object.hasOwn(item, 'api_key') ? ['api_key'] : [])]) || !modelName.test(item.model ?? '')) throw new ApiError(422, '模型名称不符合要求。');
+    if (!item || !hasExactKeys(item, [...expected, ...(Object.hasOwn(item, 'provider') ? ['provider'] : []), ...(Object.hasOwn(item, 'api_key') ? ['api_key'] : [])]) || !modelName.test(item.model ?? '')) throw new ApiError(422, '模型名称不符合要求。');
     const previousProvider = configuration[role].provider ?? 'siliconflow';
     const provider = Object.hasOwn(item, 'provider') ? item.provider : previousProvider;
     if (!validProvider(role, provider)) throw new ApiError(422, '请选择该角色支持的服务商。', { field: `${role}.provider` });
@@ -70,21 +68,21 @@ function command(draft, configuration) {
 
 /** Only safe summaries and role test outcomes are retained. Write-only keys remain single-call input. */
 export class ModelConfigurationSession {
-  #request; #change; #clear; #auth; #canWrite; #serial = 0; #controller = null; #operation = null;
+  #request; #onChange; #clear; #onAuthenticationFailure; #canWrite; #serial = 0; #controller = null; #operation = null;
   value = Object.freeze(idle());
   constructor(request, { onChange = () => {}, onClearSecrets = () => {}, onAuthenticationFailure = () => {}, canWrite = () => true } = {}) {
-    this.#request = request; this.#change = onChange; this.#clear = onClearSecrets; this.#auth = onAuthenticationFailure; this.#canWrite = canWrite;
+    this.#request = request; this.#onChange = onChange; this.#clear = onClearSecrets; this.#onAuthenticationFailure = onAuthenticationFailure; this.#canWrite = canWrite;
   }
-  #emit(value) { this.value = Object.freeze(value); this.#change(this.value); }
-  close() { this.#serial++; this.#controller?.abort(); this.#controller = null; this.#operation = null; this.#clear(); this.#emit(idle()); }
+  #publish(value) { this.value = Object.freeze(value); this.#onChange(this.value); }
+  close() { this.#serial++; this.#controller?.abort(); this.#controller = null; this.#operation = null; this.#clear(); this.#publish(idle()); }
   stop() {
     const write = ['saving', 'activating'].includes(this.#operation);
     this.#serial++; this.#controller?.abort(); this.#controller = null; this.#operation = null; this.#clear();
-    this.#emit({ ...this.value, phase: write ? 'unknown' : 'ready', error: null });
+    this.#publish({ ...this.value, phase: write ? 'unknown' : 'ready', error: null });
   }
   edit() {
     if (busy(this.value) || !this.value.configuration || !this.#canWrite()) return false;
-    this.#emit({ ...this.value, dirty: true, tests: Object.freeze({}), error: null }); return true;
+    this.#publish({ ...this.value, dirty: true, tests: Object.freeze({}), error: null }); return true;
   }
   async load() {
     if (busy(this.value)) return null;
@@ -111,9 +109,9 @@ export class ModelConfigurationSession {
       || ![...roles, 'projection'].includes(role) || role === 'projection' && !saved.projection.can_test) return null;
     const tests = { ...this.value.tests };
     delete tests[role];
-    this.#emit({ ...this.value, tests: Object.freeze(tests) });
+    this.#publish({ ...this.value, tests: Object.freeze(tests) });
     return this.#perform('testing', '/v1/model-configuration/test', { version: saved.version, role }, result => {
-      if (!keys(result, ['version', 'role', 'status', 'error_code']) || result.version !== saved.version || result.role !== role
+      if (!hasExactKeys(result, ['version', 'role', 'status', 'error_code']) || result.version !== saved.version || result.role !== role
         || !['passed', 'failed'].includes(result.status) || (result.status === 'passed' ? result.error_code !== null : typeof result.error_code !== 'string' || !/^[a-z][a-z0-9_]{0,95}$/u.test(result.error_code))) throw invalid();
       return { tests: Object.freeze({ ...this.value.tests, [role]: Object.freeze({ ...result }) }) };
     });
@@ -130,15 +128,15 @@ export class ModelConfigurationSession {
   async #perform(phase, path, body, validate) {
     const wasUnknown = this.value.phase === 'unknown';
     const serial = ++this.#serial; const controller = new AbortController(); this.#controller = controller; this.#operation = phase;
-    this.#emit({ ...this.value, phase, error: null });
+    this.#publish({ ...this.value, phase, error: null });
     try {
       const response = await this.#request(path, { method: phase === 'loading' ? 'GET' : phase === 'saving' ? 'PUT' : 'POST', ...(body === undefined ? {} : { body }), signal: controller.signal });
       if (serial !== this.#serial) return null;
-      this.#emit({ ...this.value, ...validate(response), phase: 'ready', error: null }); return response;
+      this.#publish({ ...this.value, ...validate(response), phase: 'ready', error: null }); return response;
     } catch (error) {
       if (serial !== this.#serial) return null;
-      if (error?.status === 401) { this.close(); this.#auth(error); return null; }
-      this.#emit({ ...this.value, phase: wasUnknown || ['saving', 'activating'].includes(phase) && !knownFailure(error) ? 'unknown' : 'error', error: safeError(error) });
+      if (error?.status === 401) { this.close(); this.#onAuthenticationFailure(error); return null; }
+      this.#publish({ ...this.value, phase: wasUnknown || ['saving', 'activating'].includes(phase) && !knownFailure(error) ? 'unknown' : 'error', error: safeError(error) });
       if (phase !== 'loading') throw this.value.error;
       return null;
     } finally { if (serial === this.#serial) { this.#controller = null; this.#operation = null; } }

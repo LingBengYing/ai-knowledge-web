@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from '../public/api.mjs';
-import { mountWikiMaintenance, restoredMaintenanceTasks, maintenanceCanReindex } from '../public/wiki-maintenance.mjs';
+import { mountWikiMaintenance, restoredMaintenanceTasks, canReindex } from '../public/wiki-maintenance.mjs';
 
 const job = (id, state = 'parsed') => ({ task_id: id, document_id: 'doc', revision_id: 'rev', state, attempt: 1, error_code: null, can_cancel: state === 'processing', can_retry: false });
 const row = () => ({ document_id: 'doc', filename: 'source.txt', display_name: '资料名称', document_type: 'document', status: 'parsed', synthetic_fixture: false, can_edit: true, can_index: false, can_reindex: true, active_revision_id: 'rev', index_publication_id: 'pub', tags: [], folder_id: null, latest_job: job('parse'), latest_index_job: job('index', 'indexed') });
@@ -32,8 +32,8 @@ function fixture(route, overrides = {}, config = { capabilities: ['metadata', 'f
 test('restores real current parsing and indexing tasks with exact document identity', () => {
   assert.deepEqual(restoredMaintenanceTasks([row()]).map(item => [item.kind, item.task.task_id]), [['ingestion', 'parse'], ['indexing', 'index']]);
   assert.throws(() => restoredMaintenanceTasks([{ ...row(), latest_job: { ...job('parse'), document_id: 'other' } }]));
-  assert.equal(maintenanceCanReindex({ capabilities: ['text_index', 'indexings', 'text_reindex'] }, row()), true);
-  assert.equal(maintenanceCanReindex({ capabilities: ['text_index', 'indexings', 'text_reindex'] }, { ...row(), latest_index_job: job('pending', 'processing') }), false);
+  assert.equal(canReindex({ capabilities: ['text_index', 'indexings', 'text_reindex'] }, row()), true);
+  assert.equal(canReindex({ capabilities: ['text_index', 'indexings', 'text_reindex'] }, { ...row(), latest_index_job: job('pending', 'processing') }), false);
 });
 test('completed parsing task does not contradict the separately published indexing task', async () => {
   const f = fixture({ view: 'tasks' }); await f.mounted.ready;

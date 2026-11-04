@@ -12,7 +12,7 @@ async function loadPdfEngine() {
 
 /** Renders one server-selected page from original bytes already verified by AnswerSession. */
 export class PdfPreviewSession {
-  #loadEngine; #onChange; #sequence = 0; #loading = null; #render = null; #canvas = null;
+  #loadEngine; #onChange; #serial = 0; #loading = null; #render = null; #canvas = null;
   value = idle();
 
   constructor({ loadEngine = loadPdfEngine, onChange = () => {} } = {}) {
@@ -22,7 +22,7 @@ export class PdfPreviewSession {
   #publish(value) { this.value = value; this.#onChange(value); }
 
   close() {
-    this.#sequence += 1;
+    this.#serial += 1;
     this.#render?.cancel(); this.#render = null;
     if (this.#loading) Promise.resolve(this.#loading.destroy()).catch(() => {});
     this.#loading = null;
@@ -32,8 +32,8 @@ export class PdfPreviewSession {
 
   async open({ blob, page, canvas, width = 720, pixelRatio = 1 }) {
     this.close();
-    const sequence = this.#sequence;
-    const current = () => sequence === this.#sequence;
+    const serial = this.#serial;
+    const current = () => serial === this.#serial;
     this.#publish({ phase: 'loading', page, pages: null, error: null });
     let pageProxy;
     try {

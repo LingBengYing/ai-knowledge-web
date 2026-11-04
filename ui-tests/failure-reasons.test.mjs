@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { failureReason, failureNotice, agentFailureMessages, UNKNOWN_FAILURE } from '../public/failure-reasons.mjs';
+import { failureReason, failureNotice, AGENT_FAILURE_MESSAGES, UNKNOWN_FAILURE } from '../public/failure-reasons.mjs';
 
 test('every backend parsing, indexing and synopsis failure code has a plain explanation', () => {
   const backend = ['unsupported_document', 'text_configuration_required', 'media_text_configuration_mismatch', 'parser_failed', 'parser_timeout', 'parser_output_invalid', 'worker_interrupted',
@@ -10,7 +10,7 @@ test('every backend parsing, indexing and synopsis failure code has a plain expl
     const text = failureReason(code);
     assert.notEqual(text, UNKNOWN_FAILURE, code); assert.doesNotMatch(text, /[a-z]+_[a-z]+/u, code);
   }
-  assert.equal(failureReason('agent_timeout'), agentFailureMessages.agent_timeout);
+  assert.equal(failureReason('agent_timeout'), AGENT_FAILURE_MESSAGES.agent_timeout);
 });
 
 test('unknown codes fall back to generic guidance and the raw code is only support detail', () => {

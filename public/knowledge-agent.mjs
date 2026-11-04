@@ -1,22 +1,22 @@
 import { ApiError, isId } from './api.mjs';
 import { answerRequest, checkedKnowledgeAnswer } from './answers.mjs';
-import { agentFailureMessages } from './failure-reasons.mjs';
+import { AGENT_FAILURE_MESSAGES } from './failure-reasons.mjs';
 
-const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
+/** Agent runs, request ids and conversations are UUIDs. */
+export const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
 const statuses = ['running', 'completed', 'failed', 'cancelled'];
 const events = Object.freeze({ running: '任务已开始', planning: '整理任务', searching: '检索知识库', reading: '阅读原始资料', completed: '任务已完成', failed: '任务未完成', cancelled: '任务已取消' });
-const failureMessages = agentFailureMessages;
 const invalid = () => new ApiError(502, '智能体返回的任务记录不完整，请刷新状态核对。');
 const inputError = () => new ApiError(422, '智能体请求参数无效，请重新发起。');
 const validText = value => typeof value === 'string' && !!value.trim();
 const failure = error => new ApiError(error?.status ?? 502, error?.status === 401 ? '当前会话不可用，请重新连接。' : '任务状态未能确认，请刷新状态核对；没有自动重发。');
 /** A 4xx answer (except timeout/rate limit) is a definite refusal: no run was created, so the question can be sent again. */
 const refused = error => Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
-const refusal = error => new ApiError(error.status, error.status === 401 ? '当前会话不可用，请重新连接。' : failureMessages[error.errorCode] ?? `问题未被受理（${error.status}），请核对后重新发送。`, { errorCode: error.errorCode });
+const refusal = error => new ApiError(error.status, error.status === 401 ? '当前会话不可用，请重新连接。' : AGENT_FAILURE_MESSAGES[error.errorCode] ?? `问题未被受理（${error.status}），请核对后重新发送。`, { errorCode: error.errorCode });
 const checkedId = value => { if (!isId(value)) throw inputError(); return value; };
 const checkedFailure = value => {
-  if (!value || !Object.hasOwn(failureMessages, value.code)) throw invalid();
-  return Object.freeze({ code: value.code, message: failureMessages[value.code] });
+  if (!value || !Object.hasOwn(AGENT_FAILURE_MESSAGES, value.code)) throw invalid();
+  return Object.freeze({ code: value.code, message: AGENT_FAILURE_MESSAGES[value.code] });
 };
 const toolNames = ['knowledge_search', 'knowledge_read', 'terminate'];
 const sourceKinds = ['document_text', 'video_transcript', 'video_subtitle', 'video_frame_ocr'];
@@ -50,7 +50,7 @@ function checkedEventDetails(value) {
       title: source.title, kind: source.kind, page: optionalNumber(source.page, { minimum: 1 }), start_ms: start, end_ms: end });
   });
   const safeCode = value.safe_code ?? null;
-  if (safeCode !== null && !Object.hasOwn(failureMessages, safeCode)) throw invalid();
+  if (safeCode !== null && !Object.hasOwn(AGENT_FAILURE_MESSAGES, safeCode)) throw invalid();
   if (value.reasoning_truncated !== undefined && value.reasoning_truncated !== null && typeof value.reasoning_truncated !== 'boolean') throw invalid();
   return Object.freeze({ status: value.status, tool_name: value.tool_name,
     query: optionalText(value.query, 4000), elapsed_ms: optionalNumber(value.elapsed_ms),
@@ -114,14 +114,14 @@ export function checkedAgentConfig(value) {
 
 /** Service-owned fields only; optional upstream reasoning is display data, never an evidence source. */
 export async function checkedAgentRun(value, expectedId) {
-  if (!value || typeof value.id !== 'string' || !uuid.test(value.id) || expectedId && value.id !== expectedId
+  if (!value || typeof value.id !== 'string' || !UUID_PATTERN.test(value.id) || expectedId && value.id !== expectedId
     || !statuses.includes(value.status) || !Array.isArray(value.events) || !Array.isArray(value.suggestions)) throw invalid();
   const safeEvents = value.events.map((event, index) => {
     if (!event || event.sequence !== index + 1 || !Object.hasOwn(events, event.type) || !validText(event.message)) throw invalid();
     return Object.freeze({ sequence: event.sequence, type: event.type, message: events[event.type], details: checkedEventDetails(event.details) });
   });
   if (value.status === 'completed' ? !value.result || value.error !== null : value.result !== null) throw invalid();
-  if (value.status === 'failed' ? !value.error || !Object.hasOwn(failureMessages, value.error.code) || !validText(value.error.message) : value.error !== null) throw invalid();
+  if (value.status === 'failed' ? !value.error || !Object.hasOwn(AGENT_FAILURE_MESSAGES, value.error.code) || !validText(value.error.message) : value.error !== null) throw invalid();
   if (value.preview !== undefined && value.preview !== null && typeof value.preview !== 'string') throw invalid();
   const suggestions = value.suggestions.map(item => {
     if (!item || !validText(item.title) || !validText(item.reason) || !Array.isArray(item.document_ids)
@@ -138,10 +138,10 @@ export function createKnowledgeAgentApi(api) {
   return Object.freeze({
     getAgentConfig: async ({ signal } = {}) => checkedAgentConfig(await api('/v1/knowledge-agent/config', { signal })),
     createAgentRun: async (command, { signal } = {}) => {
-      if (!uuid.test(command?.request_id ?? '')) throw inputError();
+      if (!UUID_PATTERN.test(command?.request_id ?? '')) throw inputError();
       const body = { ...answerRequest(command.question), request_id: command.request_id };
       if (command.conversation_id !== undefined) {
-        if (!uuid.test(command.conversation_id)) throw inputError();
+        if (!UUID_PATTERN.test(command.conversation_id)) throw inputError();
         body.conversation_id = command.conversation_id;
       }
       return checkedAgentRun(await api('/v1/knowledge-agent/runs', { method: 'POST', body, signal }));
@@ -171,7 +171,7 @@ export function createKnowledgeAgentApi(api) {
 
 /** One explicit write per action, one read-only SSE attachment, no implicit reconnect. */
 export class KnowledgeAgentSession {
-  #api; #onChange; #requestId; #epoch = 0; #controller;
+  #api; #onChange; #requestId; #serial = 0; #controller;
   value = Object.freeze({ phase: 'idle', run: null, error: null });
   constructor(api, { onChange = () => {}, requestId = () => crypto.randomUUID() } = {}) {
     this.#api = api; this.#onChange = onChange; this.#requestId = requestId;
@@ -180,39 +180,39 @@ export class KnowledgeAgentSession {
     if (run?.error) run = Object.freeze({ ...run, error: checkedFailure(run.error) });
     this.value = Object.freeze({ phase, run, error }); this.#onChange(this.value);
   }
-  #begin() { this.#controller?.abort(); this.#controller = new AbortController(); return ++this.#epoch; }
+  #begin() { this.#controller?.abort(); this.#controller = new AbortController(); return ++this.#serial; }
   #accept(run) {
     const previous = this.value.run;
     if (previous && (previous.id !== run.id || previous.events.length > run.events.length
       || previous.events.some((event, index) => event.sequence !== run.events[index]?.sequence || event.type !== run.events[index]?.type))) throw invalid();
     this.#publish(run.status, run);
   }
-  async #watch(ticket) {
-    if (ticket !== this.#epoch || this.value.run?.status !== 'running') return;
+  async #watch(serial) {
+    if (serial !== this.#serial || this.value.run?.status !== 'running') return;
     try {
       await this.#api.streamAgentRun(this.value.run.id, { signal: this.#controller.signal,
-        onSnapshot: run => { if (ticket === this.#epoch) this.#accept(run); } });
-      if (ticket === this.#epoch && this.value.run?.status === 'running') throw invalid();
+        onSnapshot: run => { if (serial === this.#serial) this.#accept(run); } });
+      if (serial === this.#serial && this.value.run?.status === 'running') throw invalid();
     } catch (error) {
-      if (ticket === this.#epoch && this.value.run?.status === 'running') this.#publish('unknown', this.value.run, failure(error));
+      if (serial === this.#serial && this.value.run?.status === 'running') this.#publish('unknown', this.value.run, failure(error));
     }
   }
   async start(question, { conversationId } = {}) {
     if (['submitting', 'running', 'reading', 'cancelling'].includes(this.value.phase)) return this.value;
-    const ticket = this.#begin(); this.#publish('submitting', null); let sent = false;
+    const serial = this.#begin(); this.#publish('submitting', null); let sent = false;
     try {
       const body = { ...answerRequest(question), request_id: this.#requestId(), ...(conversationId ? { conversation_id: conversationId } : {}) }; sent = true;
       const run = await this.#api.createAgentRun(body, { signal: this.#controller.signal });
-      if (ticket === this.#epoch) { this.#accept(run); void this.#watch(ticket); }
-    } catch (error) { if (ticket === this.#epoch) this.#publish(!sent || refused(error) ? 'error' : 'unknown', null, !sent ? error : refused(error) ? refusal(error) : failure(error)); }
+      if (serial === this.#serial) { this.#accept(run); void this.#watch(serial); }
+    } catch (error) { if (serial === this.#serial) this.#publish(!sent || refused(error) ? 'error' : 'unknown', null, !sent ? error : refused(error) ? refusal(error) : failure(error)); }
     return this.value;
   }
   async refresh() {
     const id = this.value.run?.id;
     if (!id || ['submitting', 'reading', 'cancelling', 'completed', 'failed', 'cancelled'].includes(this.value.phase)) return this.value;
-    const ticket = this.#begin(); this.#publish('reading');
-    try { const run = await this.#api.getAgentRun(id, { signal: this.#controller.signal }); if (ticket === this.#epoch) { this.#accept(run); void this.#watch(ticket); } }
-    catch (error) { if (ticket === this.#epoch) this.#publish('unknown', this.value.run, failure(error)); }
+    const serial = this.#begin(); this.#publish('reading');
+    try { const run = await this.#api.getAgentRun(id, { signal: this.#controller.signal }); if (serial === this.#serial) { this.#accept(run); void this.#watch(serial); } }
+    catch (error) { if (serial === this.#serial) this.#publish('unknown', this.value.run, failure(error)); }
     return this.value;
   }
   async resume(run) {
@@ -222,10 +222,10 @@ export class KnowledgeAgentSession {
   async cancel() {
     const id = this.value.run?.id;
     if (!id || !['running', 'reading', 'unknown'].includes(this.value.phase)) return this.value;
-    const ticket = this.#begin(); this.#publish('cancelling');
-    try { const run = await this.#api.cancelAgentRun(id, { signal: this.#controller.signal }); if (ticket === this.#epoch) { this.#accept(run); void this.#watch(ticket); } }
-    catch (error) { if (ticket === this.#epoch) this.#publish('unknown', this.value.run, failure(error)); }
+    const serial = this.#begin(); this.#publish('cancelling');
+    try { const run = await this.#api.cancelAgentRun(id, { signal: this.#controller.signal }); if (serial === this.#serial) { this.#accept(run); void this.#watch(serial); } }
+    catch (error) { if (serial === this.#serial) this.#publish('unknown', this.value.run, failure(error)); }
     return this.value;
   }
-  close() { this.#epoch++; this.#controller?.abort(); }
+  close() { this.#serial++; this.#controller?.abort(); }
 }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { BatchUploadSession, batchFileLabels, uploadSettled, uploadProgressHtml } from '../public/batch-upload.mjs';
+import { BatchUploadSession, BATCH_FILE_LABELS, uploadSettled, uploadProgressHtml } from '../public/batch-upload.mjs';
 import { Sha256, fileSha256Hex } from '../public/sha256-stream.mjs';
 import { ApiError, createApi } from '../public/api.mjs';
 import { createWikiWorkspaceApi } from '../public/wiki-workspace-api.mjs';
@@ -100,7 +100,7 @@ test('duplicate slots are skipped, settled and never uploaded; opting in sends t
   const items = session.snapshot().items;
   assert.equal(items[1].state, 'duplicate'); assert.equal(items[1].documentId, 'doc-existing'); assert.equal(items[150].duplicateOrdinal, 0);
   assert.equal(items.every(item => uploadSettled(item.state)), true);
-  assert.equal(batchFileLabels.duplicate, '已存在（跳过）');
+  assert.equal(BATCH_FILE_LABELS.duplicate, '已存在（跳过）');
   writes.length = 0;
   await new BatchUploadSession(api).start(input, { includeDuplicates: true });
   assert.equal(creates[1].include_duplicates, true); assert.equal(writes.length, 205);

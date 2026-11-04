@@ -1,5 +1,5 @@
-import { ApiError, DOCUMENT_FORMATS, documentExtension, documentDownloadOnly, escapeHtml as e } from './api.mjs';
-import { RetrievalSession, retrievalEnabled } from './retrieval-tests.mjs';
+import { ApiError, DOCUMENT_FORMATS, documentExtension, documentDownloadOnly, escapeHtml as e, hasCapabilities } from './api.mjs';
+import { RetrievalTestSession, retrievalTestEnabled } from './retrieval-tests.mjs';
 import { RetrievalSettingsSession, retrievalSettingsEnabled, retrievalSettingsSummary, retrievalThresholdHelp, retrievalScoreLabel } from './retrieval-settings.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
 import { PdfPreviewSession } from './pdf-preview.mjs';
@@ -19,7 +19,7 @@ export function mountWikiRetrieval({ container, document, window = globalThis, a
   if (!container || typeof api !== 'function') throw new TypeError('A retrieval container and API are required');
   let destroyed = false, sourceSequence = 0, sourceController = null, sourceMatch = null, sourceError = '', settingsVersion = null;
   const $ = suffix => container.querySelector(`#wiki-retrieval-${suffix}`);
-  const available = retrievalEnabled(config);
+  const available = retrievalTestEnabled(config);
   const onAuthenticationFailure = () => notify('会话已失效，请重新连接。', true);
   container.innerHTML = `<div class="page-heading"><div class="heading-copy"><h1>召回测试</h1></div><div class="actions"><a class="button secondary" href="#/settings">检索设置</a></div></div>
     <section class="panel"><div class="panel-body"><form id="wiki-retrieval-form">
@@ -42,7 +42,7 @@ export function mountWikiRetrieval({ container, document, window = globalThis, a
     <section id="wiki-retrieval-original" class="article-paper model-projection" aria-live="polite" hidden></section>`;
 
   const settings = new RetrievalSettingsSession(api, { onChange: () => render(), onAuthenticationFailure });
-  const retrieval = new RetrievalSession(api, { onChange: () => render(), onAuthenticationFailure });
+  const retrieval = new RetrievalTestSession(api, { onChange: () => render(), onAuthenticationFailure });
   const original = new DocumentOriginalSession(api, { onChange: () => renderOriginal(), onAuthenticationFailure, objectUrls: window.URL ?? URL });
   const pdf = new PdfPreviewSession({ onChange: value => {
     if (destroyed) return;
@@ -90,7 +90,7 @@ export function mountWikiRetrieval({ container, document, window = globalThis, a
     $('results').innerHTML = value.result?.matches.length ? value.result.matches.map(match => `<article class="knowledge-body task-status"><h3>${match.rank}. ${e(match.filename)} · ${e(locationLabel(match))}</h3><div class="preserve-lines">${e(match.text)}</div>
       <div class="status-line"><span class="badge gray">${e(retrievalScoreLabel(value.result.score_kind))} ${e(match.retrieval_score)}</span><span class="badge gray">${match.rerank_score === null ? '未重排' : `原始重排分 ${e(match.rerank_score)}`}</span></div>
       <details class="settings-help"><summary>片段位置与版本</summary><p class="provenance">版本 ${e(match.revision_id)} · Unicode 码点 ${match.start}–${match.end}</p><p>分值用于排序，不是事实置信度。</p></details>
-      <div class="form-actions">${button('original', '核对同版本原文件', `data-rank="${match.rank}" ${config?.capabilities?.includes('document_originals') ? '' : 'disabled'}`)}<a class="button secondary" href="#/sources/${e(match.document_id)}">查看资料</a></div></article>`).join('')
+      <div class="form-actions">${button('original', '核对同版本原文件', `data-rank="${match.rank}" ${hasCapabilities(config, 'document_originals') ? '' : 'disabled'}`)}<a class="button secondary" href="#/sources/${e(match.document_id)}">查看资料</a></div></article>`).join('')
       : `<div class="empty-state"><h3>${busy ? '正在查找相关片段…' : value.error ? '本次测试未完成' : value.result ? value.result.reason === 'empty_scope' ? '还没有可检索的已发布资料' : '没有找到匹配片段' : '输入内容，查看命中的原文片段'}</h3></div>`;
   }
 
@@ -98,7 +98,7 @@ export function mountWikiRetrieval({ container, document, window = globalThis, a
     sourceSequence++; sourceController?.abort(); sourceController = null; sourceMatch = null; sourceError = '';
     pdf.close(); original.close();
   }
-  function invalidate() { clearSource(); retrieval.invalidate(); }
+  function invalidate() { clearSource(); retrieval.close(); }
   function renderOriginal() {
     if (destroyed) return;
     const panel = $('original'), value = original.value;
@@ -117,7 +117,7 @@ export function mountWikiRetrieval({ container, document, window = globalThis, a
   }
 
   async function openOriginal(rank) {
-    if (destroyed || !config?.capabilities?.includes('document_originals')) return;
+    if (destroyed || !hasCapabilities(config, 'document_originals')) return;
     const match = retrieval.value.result?.matches.find(item => item.rank === rank);
     if (!match) return;
     clearSource(); sourceMatch = match; renderOriginal();

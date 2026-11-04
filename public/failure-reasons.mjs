@@ -80,7 +80,7 @@ const taskMessages = Object.freeze({
 });
 
 /** Knowledge-agent run failures (agent-service codes); also used to validate run records. */
-export const agentFailureMessages = Object.freeze({
+export const AGENT_FAILURE_MESSAGES = Object.freeze({
   agent_interrupted: '服务重启中断了这条任务，原有对话已保留。',
   agent_context_compaction_failed: '历史上下文整理未完成，原始对话已保留，本次未继续调用问答模型。',
   agent_unavailable: '知识助手服务暂时无法连接，请检查服务状态。',
@@ -121,7 +121,7 @@ const code = value => typeof value === 'string' && value ? value : '';
 /** Plain-language explanation for a failure code; `fallback` replaces the generic unknown-code text. */
 export function failureReason(value, fallback = UNKNOWN_FAILURE) {
   const key = code(value);
-  return (Object.hasOwn(taskMessages, key) ? taskMessages[key] : Object.hasOwn(agentFailureMessages, key) ? agentFailureMessages[key] : null) ?? fallback;
+  return (Object.hasOwn(taskMessages, key) ? taskMessages[key] : Object.hasOwn(AGENT_FAILURE_MESSAGES, key) ? AGENT_FAILURE_MESSAGES[key] : null) ?? fallback;
 }
 
 /** Error notice whose visible text is the explanation; the raw code stays in the title for support. */

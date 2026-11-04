@@ -60,7 +60,7 @@ export class Sha256 {
   }
 }
 
-export const HASH_CHUNK_BYTES = 4 * 1024 * 1024;
+const HASH_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /**
  * SHA-256 of a File/Blob read in bounded slices: at most one chunk is in memory. Small files use

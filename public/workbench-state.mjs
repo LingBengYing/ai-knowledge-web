@@ -1,9 +1,9 @@
-import { ApiError } from './api.mjs';
+import { ApiError, hasCapabilities } from './api.mjs';
 
 /** Display names of the document types the server reports. */
-export const documentTypeLabels = Object.freeze({ document: '文档', image: '图片', audio: '音频', video: '视频' });
+export const DOCUMENT_TYPE_LABELS = Object.freeze({ document: '文档', image: '图片', audio: '音频', video: '视频' });
 /** Unknown or retired types (e.g. legacy sound / video-AV rows) render as a generic label instead of a raw code or blank. */
-export function documentTypeLabel(type) { return Object.hasOwn(documentTypeLabels, type) ? documentTypeLabels[type] : '未知类型'; }
+export function documentTypeLabel(type) { return Object.hasOwn(DOCUMENT_TYPE_LABELS, type) ? DOCUMENT_TYPE_LABELS[type] : '未知类型'; }
 const taskNames = { queued: '等待解析', processing: '正在解析', parsed: '已解析 · 未索引', failed: '解析失败', cancelled: '已取消' };
 const indexTaskNames = { queued: '等待索引', processing: '正在索引', indexed: '已索引', failed: '索引失败', cancelled: '索引已取消' };
 
@@ -12,7 +12,7 @@ export function indexTaskLabel(state) { return indexTaskNames[state] ?? '未知�
 export function taskPending(task) { return task?.state === 'queued' || task?.state === 'processing'; }
 
 export function canStartIndexing(config, item) {
-  return Array.isArray(config?.capabilities) && config.capabilities.includes('text_index') && config.capabilities.includes('indexings')
+  return hasCapabilities(config, 'text_index', 'indexings')
     && item?.can_index === true && item.status === 'parsed' && !item.synthetic_fixture && !item.active_revision_id && !item.latest_index_job;
 }
 
@@ -67,7 +67,7 @@ export function parseTags(value) {
 const invalidTransition = () => new ApiError(502, '资料或任务状态不一致，请刷新后核对。');
 /** Same permission gate the tasks page uses: the task capability plus the server's can_cancel/can_retry flag. */
 export function taskOperationAllowed(config, kind, task, operation) {
-  return ['cancel', 'retry'].includes(operation) && config?.capabilities?.includes(kind === 'indexing' ? 'indexings' : 'ingestions') === true
+  return ['cancel', 'retry'].includes(operation) && hasCapabilities(config, kind === 'indexing' ? 'indexings' : 'ingestions')
     && task?.[operation === 'cancel' ? 'can_cancel' : 'can_retry'] === true;
 }
 export const taskOperationPath = (kind, task, operation) => `/v1/${kind === 'indexing' ? 'indexings' : 'ingestions'}/${encodeURIComponent(task.task_id)}/${operation}`;

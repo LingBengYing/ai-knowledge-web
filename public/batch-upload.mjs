@@ -6,9 +6,9 @@ const UPLOAD_ATTEMPTS = 4;
 /** The most files one folder selection or drop collects; a batch takes at most this many. */
 export const MAX_COLLECTED_FILES = 10000;
 /** Folder nesting a drop follows; deeper directories are left out and reported. */
-export const MAX_FOLDER_DEPTH = 32;
+const MAX_FOLDER_DEPTH = 32;
 /** The longest folder-relative path the server accepts, in code points. */
-export const MAX_RELATIVE_PATH = 1024;
+const MAX_RELATIVE_PATH = 1024;
 
 const relativePaths = new WeakMap();
 /** Remembers the folder-relative path a dropped file was found at (File.webkitRelativePath is read-only). */
@@ -28,7 +28,7 @@ export function relativePathOf(file) {
 /** What the batch page and lists show for a file: its folder path when it has one. */
 export const displayPath = item => item?.relative_path || item?.relativePath || item?.filename || '';
 
-const SYSTEM_FILES = new Set(['thumbs.db', 'desktop.ini', 'ehthumbs.db', 'icon\r']);
+const systemFiles = new Set(['thumbs.db', 'desktop.ini', 'ehthumbs.db', 'icon\r']);
 /**
  * Splits collected files into importable ones and silently skipped ones: hidden files or folders
  * (a segment starting with "."), system files (Thumbs.db, desktop.ini, __MACOSX, Office "~$" lock
@@ -40,7 +40,7 @@ export function partitionImportable(files, accept) {
   for (const file of files) {
     const path = relativePathOf(file) || file.name, segments = path.split('/'), name = String(file.name ?? '');
     const lower = name.toLowerCase(), extension = lower.includes('.') ? `.${lower.split('.').at(-1)}` : '';
-    const hidden = segments.some(segment => segment.startsWith('.') || segment === '__MACOSX') || SYSTEM_FILES.has(lower) || name.startsWith('~$');
+    const hidden = segments.some(segment => segment.startsWith('.') || segment === '__MACOSX') || systemFiles.has(lower) || name.startsWith('~$');
     if (hidden || !extensions.has(extension)) skipped.push(path); else accepted.push(file);
   }
   return { accepted, skipped };
@@ -78,7 +78,7 @@ export async function collectEntries(entries, { maxFiles = MAX_COLLECTED_FILES, 
 }
 
 /** Parser segments: 1200-code-point windows overlapping by 120 (TextParser in the Java service). */
-export const SEGMENT_CHARS = 1200, SEGMENT_OVERLAP = 120, SEGMENTS_PER_REQUEST = 31, MAX_SEGMENTS = 4096;
+const SEGMENT_CHARS = 1200, SEGMENT_OVERLAP = 120, SEGMENTS_PER_REQUEST = 31, MAX_SEGMENTS = 4096;
 /**
  * Estimated embedding requests for these files, taking characters ≈ bytes for text (an image counts one
  * request for its OCR text): each document is split into
@@ -97,7 +97,7 @@ export function estimateEmbeddingRequests(files) {
   }
   return requests;
 }
-export const MAX_EMBEDDING_REQUEST_LIMIT = 1000000;
+const MAX_EMBEDDING_REQUEST_LIMIT = 1000000;
 /** A typed budget: undefined when left empty, the number when 1–1,000,000, otherwise null (invalid). */
 export function checkedRequestLimit(value) {
   const text = String(value ?? '').trim();
@@ -106,7 +106,8 @@ export function checkedRequestLimit(value) {
   return Number(text);
 }
 
-const ACTIVE_FILE_STATES = ['queued', 'parsing', 'parsed', 'indexing'];
+/** Batch file states that are still being processed by the server. */
+export const ACTIVE_FILE_STATES = ['queued', 'parsing', 'parsed', 'indexing'];
 /**
  * Rate and estimate from the server's recent window: files finished per minute over the window, and
  * the time the uploaded files still in progress need at that rate. Too short a window or nothing
@@ -168,7 +169,7 @@ export function uploadProgressHtml(progress) {
     : ['uploading', 'starting'].includes(phase) ? '速度统计中…' : '';
   const eta = Number.isFinite(progress?.etaSeconds) && progress.etaSeconds > 0 ? `预计剩余 ${formatEta(progress.etaSeconds)}` : '';
   const rows = [...(progress?.active ?? []), ...(progress?.recent ?? [])].slice(0, 16)
-    .map(row => `<div class="upload-item"><strong>${e(row.label)}</strong><span>${e(batchFileLabels[row.state] ?? row.state)}</span></div>`).join('');
+    .map(row => `<div class="upload-item"><strong>${e(row.label)}</strong><span>${e(BATCH_FILE_LABELS[row.state] ?? row.state)}</span></div>`).join('');
   const done = phase === 'done' && batchId ? `<p class="notice" role="status">上传完成，正在后台解析和索引 → <a class="text-link" href="#/imports/${e(batchId)}">查看批次进度</a></p>` : '';
   return `<div class="upload-progress-panel"><div class="result-count" role="status">${e(headline)}</div>`
     + `<progress class="upload-progress" max="100" value="${percent}" aria-label="上传进度">${percent}%</progress>`
@@ -179,9 +180,9 @@ export function uploadProgressHtml(progress) {
 }
 
 /** Bounded transfers; the durable server batch owns processing and recovery. */
-export const DEFAULT_UPLOAD_CONCURRENCY = 4;
+const DEFAULT_UPLOAD_CONCURRENCY = 4;
 /** Files hashed at once while preparing a manifest; small files are dominated by read latency. */
-export const DEFAULT_HASH_CONCURRENCY = 4;
+const DEFAULT_HASH_CONCURRENCY = 4;
 /** The most often progress is reported: at most five renders a second, however many files move. */
 export const PROGRESS_MS = 200;
 /**
@@ -190,18 +191,18 @@ export const PROGRESS_MS = 200;
  */
 export const FIRST_CHUNK = 50;
 /** Later chunks: up to this many entries per append (the server takes at most 1000). */
-export const CHUNK_FILES = 500;
+const CHUNK_FILES = 500;
 /** A partial chunk is registered anyway once this long has passed since the last append. */
-export const CHUNK_WAIT_MS = 1000;
+const CHUNK_WAIT_MS = 1000;
 /** Speed is measured over the uploads finished within this recent window. */
-export const SPEED_WINDOW_MS = 10000;
+const SPEED_WINDOW_MS = 10000;
 /** Finished files listed under the files in flight. */
-export const RECENT_ROWS = 8;
+const RECENT_ROWS = 8;
 const REGISTER_ATTEMPTS = 4;
 /** A slot that needs no further transfer: received by the server, or skipped as a duplicate. */
 export const uploadSettled = state => state === 'submitted' || state === 'duplicate';
-const FINISHED = new Set(['submitted', 'duplicate', 'failed', 'unknown', 'skipped']);
-const STATES = ['preparing', 'awaiting_upload', 'uploading', 'submitted', 'duplicate', 'failed', 'unknown', 'skipped'];
+const finishedStates = new Set(['submitted', 'duplicate', 'failed', 'unknown', 'skipped']);
+const fileStates = ['preparing', 'awaiting_upload', 'uploading', 'submitted', 'duplicate', 'failed', 'unknown', 'skipped'];
 /** A lost or refused-for-now request that is safe to repeat: a network error, 429 or a 5xx. */
 const transient = error => error?.name !== 'AbortError' && (!(error instanceof ApiError) || error.status === 0 || error.status === 429 || error.status >= 500);
 const invalidReceipt = () => new ApiError(502, '批次回执无效，请刷新后核对。');
@@ -236,7 +237,7 @@ export class BatchUploadSession {
     this.files = Array.from(files);
     this.progress = this.files.map(file => ({ filename: file.name, relativePath: relativePathOf(file), state: 'preparing' }));
     this.ordinals = new Array(this.files.length);
-    this.counts = Object.fromEntries(STATES.map(name => [name, 0])); this.counts.preparing = this.files.length;
+    this.counts = Object.fromEntries(fileStates.map(name => [name, 0])); this.counts.preparing = this.files.length;
     this.hashed = 0; this.registered = 0; this.hashing = new Set(); this.uploading = new Set(); this.recent = [];
     this.finished = []; this.finishedBytes = 0; this.uploadedBytes = 0;
     this.startedAt = this.now(); this.firstUploadAt = null; this.phase = 'preparing'; this.sealed = false; this.reported = -Infinity;
@@ -247,7 +248,7 @@ export class BatchUploadSession {
     this.counts[previous.state]--; this.counts[state]++;
     this.progress[index] = { filename: previous.filename, relativePath: previous.relativePath, state, ...extra };
     if (state === 'uploading') this.uploading.add(index); else this.uploading.delete(index);
-    if (FINISHED.has(state)) { this.recent.push(index); if (this.recent.length > RECENT_ROWS) this.recent.shift(); }
+    if (finishedStates.has(state)) { this.recent.push(index); if (this.recent.length > RECENT_ROWS) this.recent.shift(); }
   }
   /** The progress the dialog shows: counters, rate and estimate, files in flight and the last few finished. */
   view() {
@@ -561,7 +562,7 @@ export class BatchUploadSession {
     finally { this.running = false; this.emit(true); }
   }
 }
-export const batchFileLabels = Object.freeze({ preparing: '准备中', awaiting_upload: '待上传', uploading: '上传中',
+export const BATCH_FILE_LABELS = Object.freeze({ preparing: '准备中', awaiting_upload: '待上传', uploading: '上传中',
   submitted: '已提交', queued: '等待解析', parsing: '解析中', parsed: '等待索引', indexing: '索引中',
   indexed: '已完成', failed: '失败', unknown: '待核对', cancelled: '已取消', deleted: '已删除', duplicate: '已存在（跳过）',
   hashing: '校验中', skipped: '不属于本批次（跳过）' });

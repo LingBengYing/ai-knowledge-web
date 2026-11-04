@@ -1,4 +1,4 @@
-import { createApi, escapeHtml, ID_PATTERN, validateUpload, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
+import { createApi, escapeHtml, hasCapabilities, ID_PATTERN, validateUpload, DOCUMENT_ACCEPT, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob } from './api.mjs';
 import { createWikiWorkspaceApi } from './wiki-workspace-api.mjs';
 import { AnswerSession } from './answers.mjs';
 import { KnowledgeAgentSession, agentProgressView } from './knowledge-agent.mjs';
@@ -7,19 +7,18 @@ import { PdfPreviewSession } from './pdf-preview.mjs';
 import { checkedRetrievalSettings, retrievalSettingsFields, retrievalThresholdHelp } from './retrieval-settings.mjs';
 import { ModelConfigurationSession, modelConfigurationEnabled } from './model-configuration.mjs';
 import { ModelRebuildSession, modelRebuildEnabled, modelRebuildPending, modelRebuildReason } from './model-rebuild.mjs';
-import { documentTypeLabels, documentTypeLabel, documentStatusLabel, indexTaskLabel, taskPending, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
+import { DOCUMENT_TYPE_LABELS, documentTypeLabel, documentStatusLabel, indexTaskLabel, taskPending, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
 import { failureNotice, failureReason } from './failure-reasons.mjs';
-import { BatchUploadSession, batchFileLabels, relativePathOf, displayPath, partitionImportable, droppedEntries, collectEntries, estimateEmbeddingRequests, checkedRequestLimit, batchThroughput, formatDuration, uploadProgressHtml, MAX_COLLECTED_FILES } from './batch-upload.mjs';
+import { BatchUploadSession, BATCH_FILE_LABELS, relativePathOf, displayPath, partitionImportable, droppedEntries, collectEntries, estimateEmbeddingRequests, checkedRequestLimit, batchThroughput, formatDuration, uploadProgressHtml, ACTIVE_FILE_STATES, MAX_COLLECTED_FILES } from './batch-upload.mjs';
 
 const e = escapeHtml;
-const BATCH_ACTIVE = ['queued', 'parsing', 'parsed', 'indexing'];
-const BATCH_HALTED = '批次已停止，后续文件不再继续处理；已完成的资料保持可用。';
-const BATCH_SUMMARY = Object.freeze({ halted: ' · 批次已停止', cancelled: ' · 批次已取消', completed_with_failures: ' · 处理结束，部分文件未完成' });
+const batchHaltedNotice = '批次已停止，后续文件不再继续处理；已完成的资料保持可用。';
+const batchSummarySuffixes = Object.freeze({ halted: ' · 批次已停止', cancelled: ' · 批次已取消', completed_with_failures: ' · 处理结束，部分文件未完成' });
 /** Batch page filters and the file states each one shows (the server pages the filtered files). */
-export const BATCH_FILTERS = Object.freeze([['all', '全部', []], ['failed', '失败', ['failed', 'cancelled']],
+const batchFilters = Object.freeze([['all', '全部', []], ['failed', '失败', ['failed', 'cancelled']],
   ['active', '处理中', ['awaiting_upload', 'queued', 'parsing', 'parsed', 'indexing']], ['indexed', '已完成', ['indexed']], ['duplicate', '已跳过（重复）', ['duplicate']]]);
-const batchFilterStates = name => BATCH_FILTERS.find(([id]) => id === name)?.[2] ?? [];
-export const batchStateLabels = Object.freeze({ registering: '登记未完成', awaiting_upload: '待上传', processing: '处理中', completed: '已完成', completed_with_failures: '部分未完成', halted: '已停止', cancelled: '已取消' });
+const batchFilterStates = name => batchFilters.find(([id]) => id === name)?.[2] ?? [];
+const batchStateLabels = Object.freeze({ registering: '登记未完成', awaiting_upload: '待上传', processing: '处理中', completed: '已完成', completed_with_failures: '部分未完成', halted: '已停止', cancelled: '已取消' });
 /** Server timestamps are ISO-8601 text; unparseable values show a dash rather than a guess. */
 const isoTime = text => { const milliseconds = Date.parse(text ?? ''); return text && Number.isFinite(milliseconds) ? formatTimestamp(milliseconds) : '—'; };
 /** Server timestamps stay milliseconds; presentation uses the browser's local time zone. */
@@ -141,7 +140,7 @@ const svg = { book: '<path d="M4 4h6a3 3 0 0 1 2 1 3 3 0 0 1 2-1h6v16h-6a3 3 0 0
 const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${svg[name] ?? svg.file}</svg>`;
 const heading = (title, actions = '') => `<div class="page-heading"><div class="heading-copy"><h1>${e(title)}</h1></div><div class="actions">${actions}</div></div>`;
 const empty = title => `<div class="empty-state">${icon('book')}<h3>${e(title)}</h3></div>`;
-const SECTION_CHANGES = { same: ['section-unchanged', 'gray', '未修改'], modified: ['section-modified', 'amber', '已修改'], added: ['section-added', 'green', '新增'], removed: ['section-removed', 'gray', '删除'] };
+const sectionChangeMarks = { same: ['section-unchanged', 'gray', '未修改'], modified: ['section-modified', 'amber', '已修改'], added: ['section-added', 'green', '新增'], removed: ['section-removed', 'gray', '删除'] };
 const notice = (message, error = false) => `<p class="notice${error ? ' error' : ''}" ${error ? 'role="alert"' : ''}>${e(message)}</p>`;
 const button = (action, label, primary = false, attrs = '') => `<button type="button" class="button ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${attrs}>${e(label)}</button>`;
 /** Previous / next page buttons around "first–last / total" for an offset-paged list. */
@@ -161,7 +160,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   const unknownSourceTasks = new Set();
   let renderedChatContainer, renderedChatMarkup, renderedToolsContainer, renderedToolsMarkup;
   const isCurrent = value => value === epoch;
-  const can = capability => state.config?.capabilities?.includes(capability) === true;
+  const can = capability => hasCapabilities(state.config, capability);
   const notify = message => { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000); };
   const errorMessage = error => error?.status === 401 ? '当前会话不可用，请在模型与管理入口连接后重试。' : error?.message ?? '请求未完成，请刷新读取后核对。';
   const linkPage = page => `#/knowledge/${e(page.page_id)}`;
@@ -227,14 +226,14 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     return pageDeleted(page) ? button('restore-page', '恢复知识页', false, attrs) + button('purge-page', '彻底删除', false, attrs)
       : button('delete-page', '删除知识页', false, attrs);
   }
-  function sections(content, path, change = () => null) { return content.sections.map(section => { const mark = SECTION_CHANGES[change(section)]; return `<section${mark ? ` class="section-change ${mark[0]}"` : ''}>${mark ? `<span class="badge ${mark[1]}">${mark[2]}</span>` : ''}<h2>${e(section.heading)}</h2><p class="preserve-lines">${e(section.body)}</p><div class="provenance">${section.sources.map((source, i) => `<a class="source-ref" href="${path(source)}">原始来源 ${i + 1}${source.current === false ? '（已变化）' : ''}</a>`).join('')}</div></section>`; }).join(''); }
+  function sections(content, path, change = () => null) { return content.sections.map(section => { const mark = sectionChangeMarks[change(section)]; return `<section${mark ? ` class="section-change ${mark[0]}"` : ''}>${mark ? `<span class="badge ${mark[1]}">${mark[2]}</span>` : ''}<h2>${e(section.heading)}</h2><p class="preserve-lines">${e(section.body)}</p><div class="provenance">${section.sources.map((source, i) => `<a class="source-ref" href="${path(source)}">原始来源 ${i + 1}${source.current === false ? '（已变化）' : ''}</a>`).join('')}</div></section>`; }).join(''); }
   function sources() {
     if (state.route.id) {
       const item = state.data.document;
       return `${heading(item.display_name || item.filename, '<a class="button secondary" href="#/sources">返回资料列表</a>')}<div class="article-layout"><article class="article-paper"><div class="status-line"><span id="source-processing-status" class="badge gray">${e(sourceStatus(item))}</span></div><div id="source-task-status">${sourceTaskStatus(item)}</div><div id="reader">${empty('正在核对原文件…')}</div></article><aside class="side-column"><section class="panel"><div class="panel-header"><h2>资料信息</h2></div><div class="panel-body reader-meta"><dl class="meta-list"><dt>原文件名</dt><dd>${e(item.filename)}</dd><dt>类型</dt><dd>${e(documentTypeLabel(item.document_type))}</dd></dl>${button('refresh', '刷新处理状态')}<a class="button secondary" href="#/tasks">查看处理任务</a></div></section><button class="button secondary" data-ask="${e(item.display_name || item.filename)}讲了什么？">了解相关内容</button><a class="button secondary" href="#/documents/${e(item.document_id)}">整理 / 更新原文件</a></aside></div>`;
     }
     const cat = state.catalog;
-    return `${heading('原始资料', '<a class="button secondary" href="#/documents">资料维护</a><a class="button secondary" href="#/directories">目录管理</a>' + (can('wiki_maintenance') ? '<a class="button secondary" href="#/quality">资料质量</a>' : '') + button('import', '导入资料', true))}<div class="toolbar">${searchForm('搜索文件名或正文')}<select id="source-kind" class="filter-select" aria-label="资料类型"><option value="">所有类型</option>${Object.entries(documentTypeLabels).map(([key, value]) => `<option value="${key}" ${state.sourceKind === key ? 'selected' : ''}>${value}</option>`).join('')}</select></div><div class="result-count">找到 ${cat.total} 份资料 · 当前显示 ${cat.items.length} 份</div><div class="table-wrap"><table class="data-table"><thead><tr><th>资料名称 / 匹配片段</th><th>类型</th><th>处理状态</th><th>可用于问答</th></tr></thead><tbody>${cat.items.map(item => `<tr><td><a class="table-title" href="#/sources/${e(item.document_id)}"><span class="file-icon">${icon('file')}</span><span><strong class="row-title">${e(item.display_name || item.filename)}</strong><span class="row-subtitle">${e(item.excerpt || item.filename)}</span></span></a></td><td>${e(documentTypeLabel(item.kind))}</td><td>${e(sourceStatus(state.sourceDocuments.get(item.document_id), item.state))}</td><td><span class="badge ${item.answerable ? 'green' : 'amber'}">${item.answerable ? '已发布' : '尚未发布'}</span></td></tr>`).join('')}</tbody></table></div>${!cat.items.length ? empty('没有匹配资料') : ''}${pager('prev-catalog', 'next-catalog', cat.offset, cat.items.length, cat.total)}`;
+    return `${heading('原始资料', '<a class="button secondary" href="#/documents">资料维护</a><a class="button secondary" href="#/directories">目录管理</a>' + (can('wiki_maintenance') ? '<a class="button secondary" href="#/quality">资料质量</a>' : '') + button('import', '导入资料', true))}<div class="toolbar">${searchForm('搜索文件名或正文')}<select id="source-kind" class="filter-select" aria-label="资料类型"><option value="">所有类型</option>${Object.entries(DOCUMENT_TYPE_LABELS).map(([key, value]) => `<option value="${key}" ${state.sourceKind === key ? 'selected' : ''}>${value}</option>`).join('')}</select></div><div class="result-count">找到 ${cat.total} 份资料 · 当前显示 ${cat.items.length} 份</div><div class="table-wrap"><table class="data-table"><thead><tr><th>资料名称 / 匹配片段</th><th>类型</th><th>处理状态</th><th>可用于问答</th></tr></thead><tbody>${cat.items.map(item => `<tr><td><a class="table-title" href="#/sources/${e(item.document_id)}"><span class="file-icon">${icon('file')}</span><span><strong class="row-title">${e(item.display_name || item.filename)}</strong><span class="row-subtitle">${e(item.excerpt || item.filename)}</span></span></a></td><td>${e(documentTypeLabel(item.kind))}</td><td>${e(sourceStatus(state.sourceDocuments.get(item.document_id), item.state))}</td><td><span class="badge ${item.answerable ? 'green' : 'amber'}">${item.answerable ? '已发布' : '尚未发布'}</span></td></tr>`).join('')}</tbody></table></div>${!cat.items.length ? empty('没有匹配资料') : ''}${pager('prev-catalog', 'next-catalog', cat.offset, cat.items.length, cat.total)}`;
   }
   /** Failure explanation plus the tasks page's retry action, gated by the same capability and can_retry flag. */
   function sourceTaskStatus(item) {
@@ -575,20 +574,20 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     // Resuming may raise the embedding budget; the typed value survives silent refreshes.
     const resumeLimit = actions.includes('resume') ? `<div class="field batch-resume-limit"><label for="batch-resume-limit">继续时的嵌入请求上限（可选）</label><input id="batch-resume-limit" type="number" inputmode="numeric" min="${Math.max(1, reserved)}" max="1000000" step="1" value="${e(state.resumeLimitDraft ?? '')}" placeholder="不填则保持 ${limit}"><p class="field-hint">当前上限 ${limit} 次，已预留 ${reserved} 次；新上限不能低于已预留数。</p></div>` : '';
     const filter = state.batchFilter ?? 'all', matched = Number.isSafeInteger(batch.matched) ? batch.matched : batch.total;
-    const filters = `<div class="batch-filters" role="group" aria-label="按状态筛选">${BATCH_FILTERS.map(([id, label, states]) => {
+    const filters = `<div class="batch-filters" role="group" aria-label="按状态筛选">${batchFilters.map(([id, label, states]) => {
       const count = states.length ? states.reduce((sum, name) => sum + (Number(batch.counts[name]) || 0), 0) : batch.total;
       return `<button type="button" class="button small ${filter === id ? 'primary' : 'secondary'}" data-action="batch-filter" data-filter="${id}" aria-pressed="${filter === id}">${e(label)}（${count}）</button>`;
     }).join('')}</div>`;
     const rows = batch.items.map(item => {
       const path = displayPath(item);
-      return `<tr><td class="maint-cell-title"><span class="batch-path">${e(path)}</span>${path !== item.filename ? `<div class="muted">${e(item.filename)}</div>` : ''}</td><td class="maint-cell-meta" data-label="状态">${e(batchFileLabels[item.state] ?? item.state)}${item.error_code ? `<div class="muted" title="错误代码：${e(item.error_code)}">${e(failureReason(item.error_code))}</div>` : ''}</td><td class="maint-cell-meta" data-label="开始">${e(isoTime(item.started_at))}</td><td class="maint-cell-meta" data-label="完成">${e(isoTime(item.finished_at))}</td><td class="maint-cell-actions">${batchFileLink(item)}</td></tr>`;
+      return `<tr><td class="maint-cell-title"><span class="batch-path">${e(path)}</span>${path !== item.filename ? `<div class="muted">${e(item.filename)}</div>` : ''}</td><td class="maint-cell-meta" data-label="状态">${e(BATCH_FILE_LABELS[item.state] ?? item.state)}${item.error_code ? `<div class="muted" title="错误代码：${e(item.error_code)}">${e(failureReason(item.error_code))}</div>` : ''}</td><td class="maint-cell-meta" data-label="开始">${e(isoTime(item.started_at))}</td><td class="maint-cell-meta" data-label="完成">${e(isoTime(item.finished_at))}</td><td class="maint-cell-actions">${batchFileLink(item)}</td></tr>`;
     }).join('') || `<tr class="maint-empty"><td colspan="5">没有符合筛选条件的文件。</td></tr>`;
     // An open batch: the page was left while files were still being registered.
     const expected = Number.isSafeInteger(batch.expected_total) ? batch.expected_total : batch.total;
     const placement = batch.target_folder_id || batch.preserve_paths === true
       ? `<div class="result-count">目录：${e(batch.target_folder_name || (batch.target_folder_id ? '原目标目录（不可用）' : '未分类'))}${batch.preserve_paths === true ? ' · 保留文件夹路径' : ''}</div>` : '';
     const registration = open ? `<div class="notice batch-open" role="status">批次登记未完成：已登记 ${batch.total} / ${expected} 份文件。${stopped ? '' : '点击“继续上传”重新选择同一文件夹或同一批文件，会先上传已登记但尚未上传的文件，再登记并上传其余文件；也可以“按已登记的文件结束登记”，不再追加文件，已登记的文件照常处理。'}</div>` : '';
-    return `${heading('批量导入', tools)}${registration}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.counts.duplicate ? ` · 已存在跳过 ${batch.counts.duplicate} 份` : ''}${batch.counts.failed ? ` · 失败 ${batch.counts.failed} 份` : ''}${BATCH_SUMMARY[batch.state] ?? ''}</div><div class="result-count muted">导入于 ${e(isoTime(batch.created_at))} · 最后更新 ${e(isoTime(batch.updated_at))}</div>${placement}${batchSpeed(batch)}${stopped ? failureNotice(batch.halted_reason, { prefix: batch.state === 'cancelled' ? '' : '批次已停止：', fallback: BATCH_HALTED }) : ''}${resumeLimit}${filters}<div class="table-wrap maintenance-table batch-table"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>开始</th><th>完成</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>${pager('batch-prev', 'batch-next', batch.offset, batch.items.length, matched, matched ? `${batch.offset + 1}–${batch.offset + batch.items.length}` : '0')}`;
+    return `${heading('批量导入', tools)}${registration}<div class="result-count">共 ${batch.total} 份 · 已索引 ${batch.counts.indexed ?? 0} 份 · 待上传 ${batch.counts.awaiting_upload ?? 0} 份${batch.counts.duplicate ? ` · 已存在跳过 ${batch.counts.duplicate} 份` : ''}${batch.counts.failed ? ` · 失败 ${batch.counts.failed} 份` : ''}${batchSummarySuffixes[batch.state] ?? ''}</div><div class="result-count muted">导入于 ${e(isoTime(batch.created_at))} · 最后更新 ${e(isoTime(batch.updated_at))}</div>${placement}${batchSpeed(batch)}${stopped ? failureNotice(batch.halted_reason, { prefix: batch.state === 'cancelled' ? '' : '批次已停止：', fallback: batchHaltedNotice }) : ''}${resumeLimit}${filters}<div class="table-wrap maintenance-table batch-table"><table class="data-table"><thead><tr><th>文件</th><th>状态</th><th>开始</th><th>完成</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>${pager('batch-prev', 'batch-next', batch.offset, batch.items.length, matched, matched ? `${batch.offset + 1}–${batch.offset + batch.items.length}` : '0')}`;
   }
   async function completeList(method, options = {}, signal) {
     const items = []; let total;
@@ -788,7 +787,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
   /** Silent batch refresh: no loading frame, no epoch change, and never underneath a running write or upload. */
   function scheduleBatchPoll(captured) {
     clearPollTimer(pollTimer); pollTimer = null;
-    if (BATCH_ACTIVE.some(name => state.data?.counts?.[name] > 0)) pollTimer = setPollTimer(() => refreshBatch(captured), 2000);
+    if (ACTIVE_FILE_STATES.some(name => state.data?.counts?.[name] > 0)) pollTimer = setPollTimer(() => refreshBatch(captured), 2000);
   }
   async function refreshBatch(captured) {
     if (!isCurrent(captured)) return;
@@ -910,7 +909,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     // A budget or folder paths only exist for a batch, so either one makes a single file a batch too.
     const budget = resuming || retry ? undefined : checkedRequestLimit($('batch-budget')?.value);
     if (budget === null) { notify('嵌入请求上限须为 1–1,000,000 的整数，或留空使用默认上限。'); return; }
-    const batchCapable = state.config?.capabilities?.includes('batch_upload');
+    const batchCapable = can('batch_upload');
     // Only a visible choice is sent; the section is hidden while a retry keeps its original placement.
     const organization = can('batch_organization') && uploadKind === 'document' && $('import-organization')?.hidden === false;
     const targetFolderId = retry ? retry.targetFolderId : organization ? $('import-target-folder')?.value || null : null;
@@ -927,7 +926,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
         const includeDuplicates = retry ? retry.includeDuplicates === true : $('include-duplicates').checked === true;
         const embeddingRequestLimit = retry ? retry.embeddingRequestLimit : budget;
         // Open batches (append while uploading) when the server offers them; a retry keeps its registration style.
-        const streaming = retry ? retry.streaming === true : state.config?.capabilities?.includes('batch_streaming_upload') === true;
+        const streaming = retry ? retry.streaming === true : can('batch_streaming_upload');
         // The session throttles its reports (at most five a second) and sends counters, never every file.
         const session = new BatchUploadSession(wiki, { streaming, validate: file => validateUpload(file, state.config, 'document'), onProgress: progress => { state.batchProgress = progress; updateUploadList(); } });
         batchSession = session;
@@ -1102,7 +1101,7 @@ export function createWikiWorkspace({ document: doc = globalThis.document, windo
     if (action === 'retry-source-task') { await retrySourceTask(target); return; }
     if (['batch-retry-failed', 'batch-cancel', 'batch-resume', 'batch-seal'].includes(action)) { await batchAction(action); return; }
     if (action === 'batch-prev' || action === 'batch-next') { state.batchOffset = Math.max(0, (state.batchOffset ?? 0) + (action === 'batch-prev' ? -100 : 100)); load(); }
-    if (action === 'batch-filter' && BATCH_FILTERS.some(([id]) => id === target.dataset.filter)) { state.batchFilter = target.dataset.filter; state.batchOffset = 0; load(); }
+    if (action === 'batch-filter' && batchFilters.some(([id]) => id === target.dataset.filter)) { state.batchFilter = target.dataset.filter; state.batchOffset = 0; load(); }
     if (action === 'imports-prev' || action === 'imports-next') { state.importsOffset = Math.max(0, (state.importsOffset ?? 0) + (action === 'imports-prev' ? -20 : 20)); load(); }
     if (action === 'choose-folder' && !state.busy) $('workspace-folder')?.click?.();
     if (action === 'import') await openImport();

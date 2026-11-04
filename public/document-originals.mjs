@@ -1,26 +1,19 @@
-import { ApiError, ID_PATTERN, DOCUMENT_MIME_TYPES, documentTextPreview, documentDownloadOnly, safeOriginalBlob, sha256Hex } from './api.mjs';
+import { ApiError, ID_PATTERN, MIME_TYPES_BY_DOCUMENT_TYPE, SHA256_PATTERN, documentDownloadOnly, documentRevisionId, documentTextPreview, safeOriginalBlob, sha256Hex } from './api.mjs';
 
-const hashes = /^[a-f0-9]{64}$/u;
 const maxBytes = 20 * 1024 * 1024;
-const types = {
-  document: DOCUMENT_MIME_TYPES,
-  image: ['image/png', 'image/jpeg'],
-  audio: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'],
-  video: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'],
-};
 const idle = () => ({ phase: 'idle', original: null, error: null });
 const invalid = () => new ApiError(502, '原文件身份、版本、类型或完整性不一致，请刷新资料后重试。');
-const identity = item => JSON.stringify([item?.document_id, item?.active_revision_id ?? item?.latest_job?.revision_id ?? item?.registered_revision_id,
+const identity = item => JSON.stringify([item?.document_id, documentRevisionId(item),
   item?.filename, item?.document_type, item?.media_info?.mime_type, item?.media_info?.sha256,
   item?.media_info?.size_bytes, item?.synthetic_fixture]);
 
 function expected(item) {
-  const revision = item?.active_revision_id ?? item?.latest_job?.revision_id ?? item?.registered_revision_id;
+  const revision = documentRevisionId(item);
   const media = item?.media_info;
   if (item?.synthetic_fixture || !ID_PATTERN.test(item?.document_id ?? '') || !ID_PATTERN.test(revision ?? '')
     || typeof item?.filename !== 'string' || !item.filename || item.filename.length > 255
-    || !types[item.document_type]?.includes(media?.mime_type)
-    || !hashes.test(media?.sha256 ?? '') || !Number.isSafeInteger(media?.size_bytes)
+    || !MIME_TYPES_BY_DOCUMENT_TYPE[item.document_type]?.includes(media?.mime_type)
+    || !SHA256_PATTERN.test(media?.sha256 ?? '') || !Number.isSafeInteger(media?.size_bytes)
     || media.size_bytes < 1 || media.size_bytes > maxBytes) throw invalid();
   return Object.freeze({ document_id: item.document_id, revision_id: revision, filename: item.filename,
     document_type: item.document_type, media_type: media.mime_type, source_sha256: media.sha256, size_bytes: media.size_bytes });
@@ -35,7 +28,7 @@ function checked(metadata, wanted) {
 /** Opens only the currently selected saved original; URLs live for one detail context. */
 export class DocumentOriginalSession {
   #request; #onChange; #onAuthenticationFailure; #objectUrls; #controller = null;
-  #sequence = 0; #identity = null; #url = null;
+  #serial = 0; #identity = null; #url = null;
   value = idle();
 
   constructor(request, { onChange = () => {}, onAuthenticationFailure = () => {}, objectUrls = URL } = {}) {
@@ -50,16 +43,16 @@ export class DocumentOriginalSession {
   #publish(value) { this.value = value; this.#onChange(value); }
 
   close() {
-    this.#sequence += 1; this.#controller?.abort(); this.#controller = null;
+    this.#serial += 1; this.#controller?.abort(); this.#controller = null;
     if (this.#url) this.#objectUrls.revokeObjectURL(this.#url);
     this.#url = null; this.#identity = null; this.#publish(idle());
   }
 
   async open(item) {
     this.close();
-    const sequence = this.#sequence;
+    const serial = this.#serial;
     const controller = new AbortController(); this.#controller = controller;
-    const current = () => sequence === this.#sequence && !controller.signal.aborted;
+    const current = () => serial === this.#serial && !controller.signal.aborted;
     this.#identity = identity(item);
     this.#publish({ phase: 'loading', original: null, error: null });
     try {
