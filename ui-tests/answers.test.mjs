@@ -109,7 +109,7 @@ test('identity reset aborts waiting and ignores old success even if request igno
   const session = new AnswerSession(async (_path, options) => { signal = options.signal; return pending.promise; },
     { onChange: value => phases.push(value.phase) });
   const ask = session.ask('旧身份问题');
-  session.reset();
+  session.cancel();
   assert.equal(signal.aborted, true);
   pending.resolve(answered());
   await ask;
@@ -154,7 +154,7 @@ test('only current 401 invokes existing authentication-failure handler', async (
   const session = new AnswerSession(async () => pending.promise,
     { onAuthenticationFailure: error => { assert.equal(error.status, 401); failures += 1; } });
   const old = session.ask('旧问题');
-  session.reset();
+  session.cancel();
   pending.reject(new ApiError(401, '旧会话失效。'));
   await old;
   assert.equal(failures, 0);

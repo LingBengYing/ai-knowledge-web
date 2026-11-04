@@ -1,5 +1,7 @@
 # AI Knowledge Web：智能体工作约定
 
+2026-11-04 前端瘦身与命名整理（分支refactor/slim-naming，未发布）：只改文件内部标识符，**静态资源文件名、两层Node入口的资源清单与路由、API路径与字段、DOM id/data属性均未改**，生产定制external-server.mjs无需同步。重复的哈希/精确字段/能力/MIME/时间/错误码校验与引用定位校验收进`api.mjs`、`answers.mjs`（`isCitationLocator`）；会话类内部名统一；删除无调用的`RetrievalTestSession.stop`/`invalidate`、`AnswerSession.reset`（并入`cancel`）、只在模块内使用的导出和两个未用CSS变量。命名规则见下方“命名约定”。
+
 2026-11-03 移除独立声音（sound）与原视频音画（video-AV）功能线（分支chore/remove-sound-video-av，未发布，后端同步移除）：删除`public/sound-library.mjs`、`public/video-av.mjs`及`media-sessions.mjs`里仅供二者使用的`mediaIndexSession`；资料详情不再显示“声音理解索引/原视频音画索引”面板，旧能力名（sound_upload/sound_index/video_av_upload/video_av_index）即使仍被后端报告也不再生效。两层Node入口删除静态资源`/sound-library.mjs`、`/video-av.mjs`与路由`POST /v1/sound-documents`、`POST /v1/video-av-documents`、`GET|POST /v1/documents/{id}/sound-index`、`GET|POST /v1/documents/{id}/video-av-index`（连同X-Filename转发、文件名校验、上传/超时分支）。保留：音频资料（ASR/音频问答/原声向量`audio-vector`）、视频资料（上传/ASR/OCR/视频问答）、原图向量、文档。旧声音/音画资料仍可列出、打开详情、删除清理；未知资料类型统一显示“未知类型”（`documentTypeLabel`）；更新原文件记录中旧的`pipeline: sound|video_av`仍只读接受。**生产定制external-server.mjs可选同步**（不同步只会把这些请求转发到后端得404）：从ASSETS删去上述两项、从路由表删去上述四条路由及其附属分支。不部署。
 
 2026-11-03 负责人优先级调整：权限相关开发（角色/权限模型、授权范围扩展、权限审计与权限类加固等）调整为**最低优先级**，不抢占其他任何主线；现有授权与工作区隔离保持不变、不回退，只是不再主动投入新的权限开发。修测试或重构时遇到纯权限类问题，记录即可，排在最后处理。
@@ -45,6 +47,15 @@
 - **不留无调用代码**：新增代码必须有真实调用方。阶段收尾时检查本次改动涉及的模块里有没有失去调用方的方法、类、路由、静态资源和配置，有就一并删除。
 - **删除要有依据**：删之前用搜索结果确认没有调用方（含其他仓库和生产入口）。删除后跑相关测试，对比改动前后的失败用例，不能新增失败。
 - 历史记录（docs/changes/*）保留不改；它描述的“保留旧功能”只代表当时的决定，不构成继续保留的理由。
+
+## 常驻规则：命名约定（2026-11-04）
+
+- **静态资源文件不改名、不移动**：`public/*.mjs`、`*.css`、`*.html` 由生产定制 external-server.mjs 按文件名列出，改名会让生产 404。模块名与内容不符时只在文件内部整理，改名建议写进说明，由负责人决定。
+- 类用 PascalCase；持有一项服务器资源状态的类以 `Session` 结尾，前缀与能力开关一致（`cleanupEnabled`↔`CleanupSession`，`retrievalTestEnabled`↔`RetrievalTestSession`）。
+- 函数和变量用 camelCase，按用途固定前缀：`createX` 工厂；`xEnabled(config)` 服务能力开关；`canX(row)` 当前资料是否允许某操作；`isX`/`hasX` 只返回布尔；`checkedX` 校验后返回（冻结的）值、不合格就抛错；`xLabel` 显示文字。
+- 常量：导出的常量和固定上限/时长用 UPPER_SNAKE_CASE；模块私有的查表和列表用 camelCase。
+- 会话类内部：`value` 当前状态，`idle()` 初始状态，`publish`/`#publish` 更新并通知，`serial`/`#serial` 请求代次，回调叫 `onChange`/`onAuthenticationFailure`（`BatchUploadSession.emit` 是节流进度通知，保持原名）。
+- 通用校验只放 `api.mjs`，模块里不再各写一份：`isId`/`ID_PATTERN`、`isSha256`/`SHA256_PATTERN`、`hasExactKeys`、`hasCapabilities`、`isNonNegativeInteger`、`isOptionalErrorCode`、`isTimestampText`、`IMAGE/AUDIO/VIDEO_MIME_TYPES` 与 `MIME_TYPES_BY_DOCUMENT_TYPE`、`documentRevisionId`。
 
 ## 下次部署须知（前端 #12、#13 与后端 #10–#12 合并后）
 

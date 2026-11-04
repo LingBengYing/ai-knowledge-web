@@ -1,6 +1,5 @@
-import { ApiError, DOCUMENT_MIME_TYPES, isId, sha256Hex } from './api.mjs';
+import { ApiError, DOCUMENT_MIME_TYPES, IMAGE_MIME_TYPES, SHA256_PATTERN, VIDEO_MIME_TYPES, isId, sha256Hex } from './api.mjs';
 
-const sha256 = /^[a-f0-9]{64}$/u;
 const idle = () => ({ phase: 'idle', result: null, error: null });
 const invalidResponse = () => new ApiError(502, '服务器返回的答案或来源格式无效，请刷新后核对。');
 const knowledgeFields = ['citation_id', 'evidence_kind', 'document_id', 'revision_id', 'filename', 'source_sha256',
@@ -16,6 +15,27 @@ export function answerRequest(question) {
   return { question };
 }
 
+/**
+ * A citation's locator: page and character range for document text, or a time interval for video evidence.
+ * Shared by answer validation and answer-source reads; the quote must already be a non-empty string.
+ */
+export function isCitationLocator(value) {
+  if (value.evidence_kind === 'document_text') {
+    return [...DOCUMENT_MIME_TYPES, ...IMAGE_MIME_TYPES].includes(value.media_type)
+      && ['source_text', 'machine_ocr'].includes(value.origin)
+      && Number.isSafeInteger(value.page) && value.page >= 1
+      && Number.isSafeInteger(value.start) && value.start >= 0
+      && Number.isSafeInteger(value.end) && value.end > value.start && [...value.quote].length === value.end - value.start
+      && value.start_ms === null && value.end_ms === null && value.time_precision === null;
+  }
+  const type = { video_transcript: ['machine_asr', 'server_chunk'], video_subtitle: ['embedded_subtitle', 'subtitle_cue'], video_frame_ocr: ['machine_ocr', 'frame_interval'] }[value.evidence_kind];
+  return !!type && value.origin === type[0] && value.time_precision === type[1]
+    && VIDEO_MIME_TYPES.includes(value.media_type)
+    && value.page === null && value.start === null && value.end === null
+    && Number.isFinite(value.start_ms) && value.start_ms >= 0
+    && Number.isFinite(value.end_ms) && value.end_ms > value.start_ms;
+}
+
 async function checkedKnowledgeCitation(value, answerId, ordinal) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || knowledgeFields.some(field => !Object.hasOwn(value, field))
@@ -23,25 +43,11 @@ async function checkedKnowledgeCitation(value, answerId, ordinal) {
     || !isId(value.document_id)
     || !isId(value.revision_id)
     || typeof value.filename !== 'string' || !value.filename
-    || !sha256.test(value.source_sha256 ?? '') || !sha256.test(value.text_sha256 ?? '')
+    || !SHA256_PATTERN.test(value.source_sha256 ?? '') || !SHA256_PATTERN.test(value.text_sha256 ?? '')
     || typeof value.quote !== 'string' || !value.quote
     || value.source_url !== `/v1/knowledge-sources/${answerId}/${ordinal}`
     || value.content_url !== `/v1/documents/${value.document_id}/revisions/${value.revision_id}/content`) throw invalidResponse();
-  if (value.evidence_kind === 'document_text') {
-    if (![...DOCUMENT_MIME_TYPES, 'image/png', 'image/jpeg'].includes(value.media_type)
-      || !['source_text', 'machine_ocr'].includes(value.origin)
-      || !Number.isSafeInteger(value.page) || value.page < 1
-      || !Number.isSafeInteger(value.start) || value.start < 0
-      || !Number.isSafeInteger(value.end) || value.end <= value.start || [...value.quote].length !== value.end - value.start
-      || value.start_ms !== null || value.end_ms !== null || value.time_precision !== null) throw invalidResponse();
-  } else {
-    const type = { video_transcript: ['machine_asr', 'server_chunk'], video_subtitle: ['embedded_subtitle', 'subtitle_cue'], video_frame_ocr: ['machine_ocr', 'frame_interval'] }[value.evidence_kind];
-    if (!type || value.origin !== type[0] || value.time_precision !== type[1]
-      || !['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'].includes(value.media_type)
-      || value.page !== null || value.start !== null || value.end !== null
-      || !Number.isFinite(value.start_ms) || value.start_ms < 0
-      || !Number.isFinite(value.end_ms) || value.end_ms <= value.start_ms) throw invalidResponse();
-  }
+  if (!isCitationLocator(value)) throw invalidResponse();
   if (await sha256Hex(new TextEncoder().encode(value.quote)) !== value.text_sha256) throw invalidResponse();
   return Object.freeze({ ...Object.fromEntries(knowledgeFields.map(field => [field, value[field]])),
     ...(typeof value.parser_revision === 'string' && value.parser_revision ? { parser_revision: value.parser_revision } : {}),
@@ -69,7 +75,7 @@ export class AnswerSession {
   #onChange;
   #onAuthenticationFailure;
   #value = Object.freeze(idle());
-  #epoch = 0;
+  #serial = 0;
   #controller = null;
 
   constructor(request, { onChange = () => {}, onAuthenticationFailure = () => {} } = {}) {
@@ -86,22 +92,20 @@ export class AnswerSession {
   }
 
   #invalidate() {
-    this.#epoch += 1;
+    this.#serial += 1;
     this.#controller?.abort();
     this.#controller = null;
   }
 
-  reset() {
+  // Cancels local waiting only. There is no server task-cancellation endpoint for answers.
+  cancel() {
     this.#invalidate();
     this.#publish(idle());
   }
 
-  // Cancels local waiting only. There is no server task-cancellation endpoint for answers.
-  cancel() { this.reset(); }
-
   async ask(question) {
     this.#invalidate();
-    const epoch = this.#epoch;
+    const serial = this.#serial;
     let body;
     try { body = answerRequest(question); }
     catch (error) { this.#publish({ ...idle(), phase: 'error', error }); return this.value; }
@@ -110,12 +114,12 @@ export class AnswerSession {
     this.#publish({ ...idle(), phase: 'loading' });
     try {
       const response = await this.#request('/v1/knowledge-answers', { method: 'POST', body, signal: controller.signal });
-      if (epoch !== this.#epoch) return this.value;
+      if (serial !== this.#serial) return this.value;
       const result = await checkedKnowledgeAnswer(response);
-      if (epoch !== this.#epoch) return this.value;
+      if (serial !== this.#serial) return this.value;
       this.#publish({ ...idle(), phase: result.status, result });
     } catch (error) {
-      if (epoch !== this.#epoch) return this.value;
+      if (serial !== this.#serial) return this.value;
       this.#publish({ ...idle(), phase: 'error', error });
       if (error?.status === 401) this.#onAuthenticationFailure(error);
     } finally {

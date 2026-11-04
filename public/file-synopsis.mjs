@@ -1,26 +1,22 @@
-import { ApiError, isId as id, DOCUMENT_MIME_TYPES, safeOriginalBlob, sha256Hex } from './api.mjs';
+import { ApiError, IMAGE_MIME_TYPES, MIME_TYPES_BY_DOCUMENT_TYPE, hasCapabilities, isId, isNonNegativeInteger, isSha256, safeOriginalBlob, sha256Hex } from './api.mjs';
 
-const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
-const integer = value => Number.isSafeInteger(value) && value >= 0;
 const text = (value, max = 64000) => typeof value === 'string' && !!value.trim() && [...value].length <= max;
 const invalid = () => new ApiError(502, '摘要或来源的身份、版本、定位或完整性无效，请刷新资料后核对。');
 const pending = task => ['queued', 'processing'].includes(task?.state);
 const kinds = ['text', 'image_ocr', 'image', 'audio_transcript', 'video_frame', 'video_transcript', 'video_ocr', 'video_subtitle'];
 const timed = kind => kind.startsWith('audio_') || kind.startsWith('video_');
-const mediaTypes = { document: DOCUMENT_MIME_TYPES, image: ['image/png', 'image/jpeg'],
-  audio: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/webm'], video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska'] };
 const idle = () => ({ phase: 'idle', synopsis: null, task: null, error: null, sourcePhase: 'idle', source: null, sourceError: null });
 const identity = item => JSON.stringify([item?.document_id, item?.index_publication_id, item?.active_revision_id, item?.filename,
   item?.document_type, item?.media_info, item?.synthetic_fixture]);
 
 export function synopsisEnabled(config) {
-  return Array.isArray(config?.capabilities) && ['file_synopsis', 'synopsis_sources'].every(name => config.capabilities.includes(name));
+  return hasCapabilities(config, 'file_synopsis', 'synopsis_sources');
 }
 
 function expected(item) {
-  if (!item || item.synthetic_fixture || !id(item.document_id) || !id(item.index_publication_id) || !id(item.active_revision_id)
-    || !text(item.filename, 255) || !mediaTypes[item.document_type]?.includes(item.media_info?.mime_type)
-    || !hash(item.media_info?.sha256) || !integer(item.media_info?.size_bytes) || item.media_info.size_bytes < 1 || item.media_info.size_bytes > 20 * 1024 * 1024) throw invalid();
+  if (!item || item.synthetic_fixture || !isId(item.document_id) || !isId(item.index_publication_id) || !isId(item.active_revision_id)
+    || !text(item.filename, 255) || !MIME_TYPES_BY_DOCUMENT_TYPE[item.document_type]?.includes(item.media_info?.mime_type)
+    || !isSha256(item.media_info?.sha256) || !isNonNegativeInteger(item.media_info?.size_bytes) || item.media_info.size_bytes < 1 || item.media_info.size_bytes > 20 * 1024 * 1024) throw invalid();
   return { document_id: item.document_id, publication_id: item.index_publication_id, revision_id: item.active_revision_id,
     source_sha256: item.media_info.sha256, filename: item.filename, media_type: item.media_info.mime_type, size: item.media_info.size_bytes, type: item.document_type };
 }
@@ -30,14 +26,14 @@ export function canGenerateSynopsis(item) {
 }
 
 function time(value) {
-  if (!value || !integer(value.start_us) || !integer(value.end_us) || value.end_us <= value.start_us) throw invalid();
+  if (!value || !isNonNegativeInteger(value.start_us) || !isNonNegativeInteger(value.end_us) || value.end_us <= value.start_us) throw invalid();
   return Object.freeze({ start_us: value.start_us, end_us: value.end_us });
 }
 
 function checkedDocument(value, wanted, task) {
-  if (!value || !id(value.synopsis_id) || value.status !== 'available'
+  if (!value || !isId(value.synopsis_id) || value.status !== 'available'
     || ['document_id', 'publication_id', 'revision_id', 'source_sha256'].some(key => value[key] !== wanted[key])
-    || !hash(value.input_fingerprint) || !text(value.model_revision, 200) || !text(value.policy_revision, 200)
+    || !isSha256(value.input_fingerprint) || !text(value.model_revision, 200) || !text(value.policy_revision, 200)
     || !Array.isArray(value.entries) || value.entries.length < 3 || value.entries.length > 32
     || (task?.state === 'available' && value.synopsis_id !== task.task_id)) throw invalid();
   const entries = value.entries.map((entry, index) => {
@@ -45,7 +41,7 @@ function checkedDocument(value, wanted, task) {
       || !text(entry.text, 1024) || !Array.isArray(entry.evidence) || !entry.evidence.length || entry.evidence.length > 8) throw invalid();
     const evidence = entry.evidence.map((reference, number) => {
       if (!reference || reference.ordinal !== number + 1 || !text(reference.evidence_id, 128) || !kinds.includes(reference.kind)
-        || !hash(reference.sha256) || reference.source_url !== `/v1/synopsis-sources/${value.synopsis_id}/${index + 1}/${number + 1}`) throw invalid();
+        || !isSha256(reference.sha256) || reference.source_url !== `/v1/synopsis-sources/${value.synopsis_id}/${index + 1}/${number + 1}`) throw invalid();
       const interval = timed(reference.kind) ? time(reference.time) : null;
       if (!interval && reference.time !== null) throw invalid();
       return Object.freeze({ ordinal: reference.ordinal, evidence_id: reference.evidence_id, kind: reference.kind, sha256: reference.sha256, time: interval, source_url: reference.source_url });
@@ -61,7 +57,7 @@ function checkedDocument(value, wanted, task) {
 }
 
 function checkedTask(value, wanted, previous = null) {
-  if (!value || !id(value.task_id) || value.document_id !== wanted.document_id || value.publication_id !== wanted.publication_id
+  if (!value || !isId(value.task_id) || value.document_id !== wanted.document_id || value.publication_id !== wanted.publication_id
     || !['queued', 'processing', 'available', 'unavailable', 'cancelled'].includes(value.state)
     || (['unavailable', 'cancelled'].includes(value.state) ? typeof value.error_code !== 'string' || !/^[a-z][a-z0-9_]{0,99}$/u.test(value.error_code) : value.error_code !== null)
     || !Number.isFinite(Date.parse(value.created_at)) || !Number.isFinite(Date.parse(value.updated_at))
@@ -70,7 +66,7 @@ function checkedTask(value, wanted, previous = null) {
 }
 
 function dimensions(locator) {
-  if (!integer(locator.width) || !integer(locator.height) || locator.width < 1 || locator.height < 1 || locator.width * locator.height > 12_000_000) throw invalid();
+  if (!isNonNegativeInteger(locator.width) || !isNonNegativeInteger(locator.height) || locator.width < 1 || locator.height < 1 || locator.width * locator.height > 12_000_000) throw invalid();
 }
 
 function checkedSource(value, synopsis, entry, reference, wanted) {
@@ -88,49 +84,49 @@ function checkedSource(value, synopsis, entry, reference, wanted) {
     || (picture ? value.text !== null : !text(value.text))) throw invalid();
   if (timed(kind) && JSON.stringify(time(locator)) !== JSON.stringify(reference.time)) throw invalid();
   if (['image', 'image_ocr', 'video_frame', 'video_ocr'].includes(kind)) dimensions(locator);
-  if (['text', 'image_ocr'].includes(kind) && (!integer(locator.page) || locator.page < 1)) throw invalid();
+  if (['text', 'image_ocr'].includes(kind) && (!isNonNegativeInteger(locator.page) || locator.page < 1)) throw invalid();
   if (['text', 'image_ocr', 'video_ocr', 'video_subtitle'].includes(kind)
-    && (!integer(locator.start_code_point) || !integer(locator.end_code_point) || locator.end_code_point <= locator.start_code_point || [...value.text].length !== locator.end_code_point - locator.start_code_point)) throw invalid();
-  if (['audio_transcript', 'video_transcript'].includes(kind) && !integer(locator.span_ordinal)) throw invalid();
+    && (!isNonNegativeInteger(locator.start_code_point) || !isNonNegativeInteger(locator.end_code_point) || locator.end_code_point <= locator.start_code_point || [...value.text].length !== locator.end_code_point - locator.start_code_point)) throw invalid();
+  if (['audio_transcript', 'video_transcript'].includes(kind) && !isNonNegativeInteger(locator.span_ordinal)) throw invalid();
   if (kind === 'video_transcript' && !text(locator.span_id, 128)) throw invalid();
-  if (framed && (!text(locator.frame_id, 128) || !integer(locator.frame_ordinal))) throw invalid();
+  if (framed && (!text(locator.frame_id, 128) || !isNonNegativeInteger(locator.frame_ordinal))) throw invalid();
   if (['text', 'image_ocr', 'video_ocr'].includes(kind)) {
     if (!Array.isArray(locator.regions) || (kind === 'text' && (locator.width !== null || locator.height !== null || locator.regions.length))) throw invalid();
     for (const region of locator.regions) {
-      if (['start_code_point', 'end_code_point', 'left', 'top', 'right', 'bottom'].some(key => !integer(region[key]))
+      if (['start_code_point', 'end_code_point', 'left', 'top', 'right', 'bottom'].some(key => !isNonNegativeInteger(region[key]))
         || region.end_code_point <= region.start_code_point || region.start_code_point >= locator.end_code_point || region.end_code_point <= locator.start_code_point
         || region.right <= region.left || region.bottom <= region.top || region.right > locator.width || region.bottom > locator.height) throw invalid();
     }
   }
-  if (kind === 'video_subtitle' && (!text(locator.cue_id, 128) || !text(locator.track_id, 128) || !integer(locator.stream_index) || !integer(locator.cue_ordinal)
+  if (kind === 'video_subtitle' && (!text(locator.cue_id, 128) || !text(locator.track_id, 128) || !isNonNegativeInteger(locator.stream_index) || !isNonNegativeInteger(locator.cue_ordinal)
     || !text(locator.codec, 100) || (locator.language !== null && typeof locator.language !== 'string') || !Number.isSafeInteger(locator.pts)
-    || !integer(locator.duration) || locator.duration < 1 || !integer(locator.time_base_numerator) || locator.time_base_numerator < 1
-    || !integer(locator.time_base_denominator) || locator.time_base_denominator < 1 || !text(locator.decoder_revision, 200) || !text(locator.text_format, 200)
-    || ['payload_sha256', 'subtitle_manifest_sha256', 'native_manifest_sha256', 'track_text_sha256'].some(key => !hash(locator[key])))) throw invalid();
+    || !isNonNegativeInteger(locator.duration) || locator.duration < 1 || !isNonNegativeInteger(locator.time_base_numerator) || locator.time_base_numerator < 1
+    || !isNonNegativeInteger(locator.time_base_denominator) || locator.time_base_denominator < 1 || !text(locator.decoder_revision, 200) || !text(locator.text_format, 200)
+    || ['payload_sha256', 'subtitle_manifest_sha256', 'native_manifest_sha256', 'track_text_sha256'].some(key => !isSha256(locator[key])))) throw invalid();
   return Object.freeze({ ...Object.fromEntries(['synopsis_id', 'entry_ordinal', 'source_ordinal', 'evidence_id', 'kind', 'sha256', 'filename', 'media_type', 'text', 'proof_origin', 'time_precision', 'content_url', 'frame_url'].map(key => [key, value[key]])), locator: structuredClone(locator) });
 }
 
 /** Persistent summary navigation, with independent bounded task polling and current-source rereads. */
 export class SynopsisSession {
-  #request; #change; #authentication; #setTimer; #clearTimer; #timer = null; #urls; #blobs = new Set();
-  #epoch = 0; #sourceEpoch = 0; #controller = null; #sourceController = null; #identity = null; #wanted = null;
+  #request; #onChange; #onAuthenticationFailure; #setTimer; #clearTimer; #timer = null; #urls; #blobs = new Set();
+  #serial = 0; #sourceSerial = 0; #controller = null; #sourceController = null; #identity = null; #wanted = null;
   value = Object.freeze(idle());
 
   constructor(request, { onChange = () => {}, onAuthenticationFailure = () => {}, setTimer = setTimeout, clearTimer = clearTimeout, objectUrls = URL } = {}) {
-    this.#request = request; this.#change = onChange; this.#authentication = onAuthenticationFailure;
+    this.#request = request; this.#onChange = onChange; this.#onAuthenticationFailure = onAuthenticationFailure;
     this.#setTimer = setTimer; this.#clearTimer = clearTimer; this.#urls = objectUrls;
   }
   matches(item) { return this.#identity === identity(item); }
-  #publish(value) { this.value = Object.freeze(value); this.#change(this.value); }
+  #publish(value) { this.value = Object.freeze(value); this.#onChange(this.value); }
   #stopTimer() { if (this.#timer !== null) this.#clearTimer(this.#timer); this.#timer = null; }
   #release() { for (const url of this.#blobs) this.#urls.revokeObjectURL(url); this.#blobs.clear(); }
   closeSource() {
-    this.#sourceEpoch++; this.#sourceController?.abort(); this.#sourceController = null; this.#release();
+    this.#sourceSerial++; this.#sourceController?.abort(); this.#sourceController = null; this.#release();
     this.#publish({ ...this.value, sourcePhase: 'idle', source: null, sourceError: null });
   }
   close() {
-    this.#epoch++; this.#controller?.abort(); this.#controller = null; this.#stopTimer();
-    this.#sourceEpoch++; this.#sourceController?.abort(); this.#sourceController = null; this.#release();
+    this.#serial++; this.#controller?.abort(); this.#controller = null; this.#stopTimer();
+    this.#sourceSerial++; this.#sourceController?.abort(); this.#sourceController = null; this.#release();
     this.#identity = null; this.#wanted = null; this.#publish(idle());
   }
   async open(item) {
@@ -174,25 +170,25 @@ export class SynopsisSession {
   }
   async #run(phase, action) {
     this.#stopTimer(); this.#controller?.abort(); this.closeSource();
-    const epoch = ++this.#epoch, controller = new AbortController(); this.#controller = controller;
-    const current = () => epoch === this.#epoch && !controller.signal.aborted;
+    const serial = ++this.#serial, controller = new AbortController(); this.#controller = controller;
+    const current = () => serial === this.#serial && !controller.signal.aborted;
     this.#publish({ ...this.value, phase, synopsis: null, error: null });
     try { await action(controller.signal, current); }
     catch (error) {
       if (current()) {
         this.#stopTimer(); this.#publish({ ...this.value, phase: 'error', synopsis: null, error });
-        if (error?.status === 401) this.#authentication(error);
+        if (error?.status === 401) this.#onAuthenticationFailure(error);
       }
     } finally { if (this.#controller === controller) this.#controller = null; }
     return this.value;
   }
   async readSource(entryOrdinal, sourceOrdinal) {
     this.closeSource();
-    const epoch = this.#epoch, sequence = this.#sourceEpoch, synopsis = this.value.synopsis;
+    const serial = this.#serial, sourceSerial = this.#sourceSerial, synopsis = this.value.synopsis;
     const entry = synopsis?.entries.find(item => item.ordinal === entryOrdinal), reference = entry?.evidence.find(item => item.ordinal === sourceOrdinal);
     if (!reference) { this.#publish({ ...this.value, sourcePhase: 'error', sourceError: invalid() }); return this.value; }
     const controller = new AbortController(); this.#sourceController = controller;
-    const current = () => epoch === this.#epoch && sequence === this.#sourceEpoch && !controller.signal.aborted;
+    const current = () => serial === this.#serial && sourceSerial === this.#sourceSerial && !controller.signal.aborted;
     this.#publish({ ...this.value, sourcePhase: 'loading', source: null, sourceError: null });
     try {
       const value = await this.#request(reference.source_url, { signal: controller.signal });
@@ -202,13 +198,13 @@ export class SynopsisSession {
       if (!current()) return this.value;
       const original = await this.#blob(source.content_url, [source.media_type], synopsis.source_sha256, 20, controller.signal, current, this.#wanted.size);
       if (!current()) return this.value;
-      const frame = source.frame_url ? await this.#blob(source.frame_url, mediaTypes.image, source.kind === 'video_frame' ? source.sha256 : null, 10, controller.signal, current) : null;
+      const frame = source.frame_url ? await this.#blob(source.frame_url, IMAGE_MIME_TYPES, source.kind === 'video_frame' ? source.sha256 : null, 10, controller.signal, current) : null;
       if (!current()) return this.value;
       this.#publish({ ...this.value, sourcePhase: 'ready', source: Object.freeze({ ...source, originalUrl: original.url, frameUrl: frame?.url ?? null }), sourceError: null });
     } catch (error) {
       if (current()) {
         this.#release(); this.#publish({ ...this.value, sourcePhase: 'error', source: null, sourceError: error });
-        if (error?.status === 401) this.#authentication(error);
+        if (error?.status === 401) this.#onAuthenticationFailure(error);
       }
     } finally { if (this.#sourceController === controller) this.#sourceController = null; }
     return this.value;

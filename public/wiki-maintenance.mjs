@@ -1,5 +1,5 @@
-import { ApiError, documentDownloadOnly, escapeHtml as e, isId } from './api.mjs';
-import { documentTypeLabels, documentTypeLabel, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
+import { ApiError, documentDownloadOnly, escapeHtml as e, hasCapabilities, isId } from './api.mjs';
+import { DOCUMENT_TYPE_LABELS, documentTypeLabel, batchFeedback, parseTags, checkedTask, checkedIndexTask, taskPending, taskLabel, indexTaskLabel, canStartIndexing, documentStatusLabel, taskOperationAllowed, taskOperationPath, checkedTaskTransition, rowWithTask } from './workbench-state.mjs';
 import { CleanupSession, cleanupEnabled, cleanupLabel, cleanupResourceLabel } from './document-cleanup.mjs';
 import { DocumentOriginalSession } from './document-originals.mjs';
 import { DocumentReplacementSession, replacementsEnabled, replacementLabel, replacementAccept } from './document-replacements.mjs';
@@ -11,11 +11,10 @@ import { failureReason, failureNotice } from './failure-reasons.mjs';
 
 const safeError = error => error instanceof ApiError ? error.message : '操作未完成，请刷新状态后核对。';
 const invalid = () => new ApiError(502, '资料或任务状态不一致，请刷新后核对。');
-const cap = (config, name) => config?.capabilities?.includes(name) === true;
-const vectorOptions = config => ({ allowPublishedDuringReindex: cap(config, 'text_reindex_with_vectors') });
+const vectorOptions = config => ({ allowPublishedDuringReindex: hasCapabilities(config, 'text_reindex_with_vectors') });
 
-export function maintenanceCanReindex(config, item) {
-  return ['text_index', 'indexings', 'text_reindex'].every(name => cap(config, name)) && item?.can_reindex === true
+export function canReindex(config, item) {
+  return hasCapabilities(config, 'text_index', 'indexings', 'text_reindex') && item?.can_reindex === true
     && item.status === 'parsed' && item.synthetic_fixture === false && item.latest_job?.state === 'parsed'
     && isId(item.active_revision_id) && item.active_revision_id === item.latest_job.revision_id
     && isId(item.index_publication_id) && !taskPending(item.latest_index_job);
@@ -70,7 +69,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   const header = (title, controls = '') => `<div class="page-heading"><div><h1 id="maint-heading">${e(title)}</h1></div><div class="actions">${controls}</div></div>`;
   const technical = rows => `<details class="tech-detail"><summary>技术信息（排查用）</summary><dl class="meta-list">${rows.filter(([, value]) => value).map(([label, value]) => `<dt>${e(label)}</dt><dd><code>${e(value)}</code></dd>`).join('')}</dl></details>`;
   /** Failure explanation and the same retry control the tasks page uses, for the detail page's own latest tasks. */
-  const taskFailures = row => restoredMaintenanceTasks([row]).filter(({ task }) => task.state === 'failed' || task.can_retry).map(({ kind, task }) => `<div class="task-failure">${task.state === 'failed' ? failureNotice(task.error_code, { prefix: `${kind === 'indexing' ? '索引' : '解析'}失败原因：` }) : ''}${unknownTasks.has(task.task_id) ? notice('上次操作结果待核对，请先刷新状态。') : ''}${task.can_retry && cap(config, kind === 'indexing' ? 'indexings' : 'ingestions') ? `<div class="form-actions">${action('task-retry', kind === 'indexing' ? '重试索引' : '重试解析', unknownTasks.has(task.task_id), `data-kind="${kind}" data-task-id="${e(task.task_id)}"`)}</div>` : ''}</div>`).join('');
+  const taskFailures = row => restoredMaintenanceTasks([row]).filter(({ task }) => task.state === 'failed' || task.can_retry).map(({ kind, task }) => `<div class="task-failure">${task.state === 'failed' ? failureNotice(task.error_code, { prefix: `${kind === 'indexing' ? '索引' : '解析'}失败原因：` }) : ''}${unknownTasks.has(task.task_id) ? notice('上次操作结果待核对，请先刷新状态。') : ''}${task.can_retry && hasCapabilities(config, kind === 'indexing' ? 'indexings' : 'ingestions') ? `<div class="form-actions">${action('task-retry', kind === 'indexing' ? '重试索引' : '重试解析', unknownTasks.has(task.task_id), `data-kind="${kind}" data-task-id="${e(task.task_id)}"`)}</div>` : ''}</div>`).join('');
   const panel = (title, body) => `<section class="panel settings-section"><div class="panel-header"><h2>${e(title)}</h2></div><div class="panel-body">${body}</div></section>`;
   function renderStatus() {
     const node = $('maint-status'); if (node) node.innerHTML = notice(error) + (feedback ? `<p class="notice" role="status">${e(feedback)}</p>` : '');
@@ -80,7 +79,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   }
   function renderList(regionsOnly = false) {
     const toolbar = `<a class="button secondary" href="#/directories">目录管理</a><a class="button secondary" href="#/tasks">处理任务</a><a class="button primary" href="#/sources">导入资料</a>${action('refresh', '刷新', loading)}`;
-    const filter = `<form id="maint-filter" class="panel panel-body"><div class="form-grid maintenance-filters">${field('搜索资料', `<input id="maint-q" type="search" maxlength="200" value="${e(filters.q)}">`)}${field('类型', select('maint-type', [['', '全部类型'], ...Object.entries(documentTypeLabels)], filters.type))}${field('处理状态', select('maint-state', [['', '全部状态'], ['queued', '等待解析'], ['processing', '正在解析'], ['parsed', '已解析'], ['failed', '解析失败'], ['cancelled', '已取消']], filters.status))}${field('目录', folderSelect('maint-filter-folder', filters.folder_id, '全部目录'))}${field('标签', select('maint-filter-tag', [['', '全部标签'], ...tags.map(tag => [tag, tag])], filters.tag))}${field('排序', select('maint-sort', [['updated_desc', '最近更新'], ['updated_asc', '最早更新'], ['name_asc', '名称正序'], ['name_desc', '名称倒序']], filters.sort))}</div><div class="form-actions"><button class="button primary" ${busy ? 'disabled' : ''}>筛选</button>${action('reset', '重置')}</div></form>`;
+    const filter = `<form id="maint-filter" class="panel panel-body"><div class="form-grid maintenance-filters">${field('搜索资料', `<input id="maint-q" type="search" maxlength="200" value="${e(filters.q)}">`)}${field('类型', select('maint-type', [['', '全部类型'], ...Object.entries(DOCUMENT_TYPE_LABELS)], filters.type))}${field('处理状态', select('maint-state', [['', '全部状态'], ['queued', '等待解析'], ['processing', '正在解析'], ['parsed', '已解析'], ['failed', '解析失败'], ['cancelled', '已取消']], filters.status))}${field('目录', folderSelect('maint-filter-folder', filters.folder_id, '全部目录'))}${field('标签', select('maint-filter-tag', [['', '全部标签'], ...tags.map(tag => [tag, tag])], filters.tag))}${field('排序', select('maint-sort', [['updated_desc', '最近更新'], ['updated_asc', '最早更新'], ['name_asc', '名称正序'], ['name_desc', '名称倒序']], filters.sort))}</div><div class="form-actions"><button class="button primary" ${busy ? 'disabled' : ''}>筛选</button>${action('reset', '重置')}</div></form>`;
     const rows = items.map(item => `<tr><td class="maint-cell-select"><input type="checkbox" data-maintenance-select="${e(item.document_id)}" aria-label="选择 ${e(item.display_name)}" ${selected.has(item.document_id) ? 'checked' : ''}></td><td class="maint-cell-title"><a class="text-link" href="#/documents/${e(item.document_id)}">${e(item.display_name)}</a><div>${e(item.filename)}</div></td><td class="maint-cell-meta" data-label="类型">${e(documentTypeLabel(item.document_type))}</td><td class="maint-cell-meta" data-label="状态">${e(documentStatusLabel(item))}</td><td class="maint-cell-meta" data-label="目录">${e(item.folder_name ?? folders.find(folder => folder.folder_id === item.folder_id)?.name ?? '未分类')}</td><td class="maint-cell-meta maint-cell-tags" data-label="标签">${(item.tags ?? []).map(tag => `<span class="badge gray">${e(tag)}</span>`).join(' ') || '<span class="muted">无</span>'}</td><td class="maint-cell-actions"><a class="text-link" href="#/documents/${e(item.document_id)}">查看详情</a>${cleanupEnabled(config) ? action('cleanup-row', '删除并清理', false, `data-document-id="${e(item.document_id)}"`) : ''}</td></tr>`).join('');
     const list = `<section class="panel maintenance-table"><table class="data-table"><thead><tr><th><label class="maint-select-page"><input id="maint-select-page" type="checkbox" aria-label="选择当前页" ${items.length && selected.size === items.length ? 'checked' : ''}><span class="maint-select-hint">全选当前页</span></label></th><th>资料</th><th>类型</th><th>处理状态</th><th>目录</th><th>标签</th><th>操作</th></tr></thead><tbody>${rows || `<tr class="maint-empty"><td colspan="7">${loading ? '正在读取资料…' : '暂无符合条件的资料'}</td></tr>`}</tbody></table></section>${pagination()}`;
     if (regionsOnly && $('maint-list')) { $('maint-list').innerHTML = list; renderStatus(); if (batchShown !== selected.size) renderBatch(); return; }
@@ -91,7 +90,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   function renderRegions() { if (route.view === 'documents' && !route.id) renderList(true); else render(); }
   function renderBatch() {
     const node = $('maint-batch'); if (!node || route.id) return; batchShown = selected.size;
-    node.innerHTML = selected.size ? `<section class="panel panel-body"><strong>已选 ${selected.size} 项 · 当前页</strong><div class="form-grid">${cap(config, 'batch_move') ? field('移入目录', folderSelect('maint-batch-folder')) : ''}${cap(config, 'batch_tag') ? field('添加标签', '<input id="maint-batch-tags" maxlength="1000">') : ''}</div><div class="form-actions">${cap(config, 'batch_move') ? action('batch-move', '移动') : ''}${cap(config, 'batch_tag') ? action('batch-tag', '添加标签') : ''}${cap(config, 'batch_text_reindex') ? action('batch-reindex', '重建文本索引') : ''}${cleanupEnabled(config) ? action('batch-cleanup', '删除并清理所选资料') : ''}${action('clear-selection', '取消选择')}</div></section>` : '';
+    node.innerHTML = selected.size ? `<section class="panel panel-body"><strong>已选 ${selected.size} 项 · 当前页</strong><div class="form-grid">${hasCapabilities(config, 'batch_move') ? field('移入目录', folderSelect('maint-batch-folder')) : ''}${hasCapabilities(config, 'batch_tag') ? field('添加标签', '<input id="maint-batch-tags" maxlength="1000">') : ''}</div><div class="form-actions">${hasCapabilities(config, 'batch_move') ? action('batch-move', '移动') : ''}${hasCapabilities(config, 'batch_tag') ? action('batch-tag', '添加标签') : ''}${hasCapabilities(config, 'batch_text_reindex') ? action('batch-reindex', '重建文本索引') : ''}${cleanupEnabled(config) ? action('batch-cleanup', '删除并清理所选资料') : ''}${action('clear-selection', '取消选择')}</div></section>` : '';
   }
   function renderTasks() {
     const all = restoredMaintenanceTasks(items), entries = all.filter(entry => (taskFilter === 'all' || entry.kind === taskFilter) && (!route.id || entry.task.task_id === route.id));
@@ -109,7 +108,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   function renderDetail() {
     if (!detail) { container.innerHTML = header('资料详情', '<a class="text-link" href="#/documents">返回资料维护</a>') + '<div id="maint-status"></div>'; renderStatus(); return; }
     container.innerHTML = header(detail.display_name ?? detail.filename, `<a class="button secondary" href="#/documents">返回资料维护</a><a class="button secondary" href="#/tasks">处理任务</a>${cleanupEnabled(config) ? action('cleanup', '删除并清理资料') : ''}`) + '<div id="maint-status"></div>'
-      + panel('整理信息', `<form id="maint-edit"><div class="form-grid">${field('显示名称', `<input id="maint-name" value="${e(detail.display_name)}" maxlength="255" required>`)}${field('目录', folderSelect('maint-folder', detail.folder_id))}${field('手工标签', `<textarea id="maint-tags" maxlength="1000">${e((detail.tags ?? []).join('，'))}</textarea>`)}</div><div class="form-actions"><button class="button primary" ${busy || !cap(config, 'metadata') ? 'disabled' : ''}>保存整理信息</button></div></form>`)
+      + panel('整理信息', `<form id="maint-edit"><div class="form-grid">${field('显示名称', `<input id="maint-name" value="${e(detail.display_name)}" maxlength="255" required>`)}${field('目录', folderSelect('maint-folder', detail.folder_id))}${field('手工标签', `<textarea id="maint-tags" maxlength="1000">${e((detail.tags ?? []).join('，'))}</textarea>`)}</div><div class="form-actions"><button class="button primary" ${busy || !hasCapabilities(config, 'metadata') ? 'disabled' : ''}>保存整理信息</button></div></form>`)
       + '<div id="maint-evidence"></div><div id="maint-original"></div><div id="maint-replacement"></div><div id="maint-synopsis"></div><div id="maint-suggestions"></div><div id="maint-media"></div><div id="maint-cleanups"></div>';
     initializedDetail = true; renderPanels(); renderStatus(); renderCleanup();
   }
@@ -117,9 +116,9 @@ export function mountWikiMaintenance({ container, document, window, api, config,
     if (!alive || !initializedDetail || !detail) return;
     const item = detail;
     const heading = $('maint-heading'); if (heading) heading.textContent = item.display_name ?? item.filename;
-    $('maint-evidence').innerHTML = panel('处理与索引', `<p>${e(documentStatusLabel(item))}</p>${taskFailures(item)}<dl class="meta-list"><dt>原文件</dt><dd>${e(item.filename)}</dd></dl>${technical([['资料编号', item.document_id], ['当前版本', item.active_revision_id ?? item.latest_job?.revision_id ?? item.registered_revision_id], ['解析任务', item.latest_job?.task_id], ['索引任务', item.latest_index_job?.task_id]])}<div class="form-actions">${action('refresh', '刷新状态')}${canStartIndexing(config, item) ? action('index', '建立索引') : ''}${maintenanceCanReindex(config, item) ? action('reindex', '重建文本索引', unknownTasks.has(item.document_id)) : ''}</div>`);
+    $('maint-evidence').innerHTML = panel('处理与索引', `<p>${e(documentStatusLabel(item))}</p>${taskFailures(item)}<dl class="meta-list"><dt>原文件</dt><dd>${e(item.filename)}</dd></dl>${technical([['资料编号', item.document_id], ['当前版本', item.active_revision_id ?? item.latest_job?.revision_id ?? item.registered_revision_id], ['解析任务', item.latest_job?.task_id], ['索引任务', item.latest_index_job?.task_id]])}<div class="form-actions">${action('refresh', '刷新状态')}${canStartIndexing(config, item) ? action('index', '建立索引') : ''}${canReindex(config, item) ? action('reindex', '重建文本索引', unknownTasks.has(item.document_id)) : ''}</div>`);
     const o = original.value;
-    $('maint-original').innerHTML = !cap(config, 'document_originals') ? '' : panel('原始文件', `${action('original', o.phase === 'loading' ? '正在核对原件…' : '读取同版本原件', o.phase === 'loading')}${notice(o.error ? safeError(o.error) : '')}${o.original ? `<div class="form-actions"><a class="button secondary" href="${e(o.original.url)}" download="${e(o.original.filename)}">下载原件</a>${!o.original.downloadOnly ? `<a class="button secondary" href="${e(o.original.url)}" target="_blank" rel="noopener noreferrer">打开原件</a>` : ''}</div>${o.original.text != null ? `<pre class="source-excerpt">${e(o.original.text)}</pre>` : ''}` : ''}`);
+    $('maint-original').innerHTML = !hasCapabilities(config, 'document_originals') ? '' : panel('原始文件', `${action('original', o.phase === 'loading' ? '正在核对原件…' : '读取同版本原件', o.phase === 'loading')}${notice(o.error ? safeError(o.error) : '')}${o.original ? `<div class="form-actions"><a class="button secondary" href="${e(o.original.url)}" download="${e(o.original.filename)}">下载原件</a>${!o.original.downloadOnly ? `<a class="button secondary" href="${e(o.original.url)}" target="_blank" rel="noopener noreferrer">打开原件</a>` : ''}</div>${o.original.text != null ? `<pre class="source-excerpt">${e(o.original.text)}</pre>` : ''}` : ''}`);
     const r = replacement.value, ready = r.phase === 'ready', value = r.replacement;
     put('maint-replacement', !replacementsEnabled(config) ? '' : panel('更新原文件', `<p>${e(replacementLabel(value))}${['uploading', 'indexing', 'loading'].includes(r.phase) ? ' · 正在处理' : ''}</p>${notice(r.error ? safeError(r.error) : '')}<div class="form-actions">${action('replacement-refresh', '刷新新版本状态', ['uploading', 'indexing', 'loading'].includes(r.phase))}${value?.can_index ? action('replacement-index', '建立新版本索引', !ready) : ''}</div>${value?.can_upload ? `<form id="maint-replace"><div class="field"><label for="maint-replace-file">选择新原文件</label><input id="maint-replace-file" type="file" accept="${e(replacementAccept(item.document_type))}" required></div><button class="button secondary" ${!ready || busy ? 'disabled' : ''}>上传新版本</button></form>` : ''}${value?.filename ? `<p title="版本 ${e(value.candidate_revision_id)}">${e(value.filename)}</p>` : ''}`));
     renderSynopsis(); renderMedia();
@@ -259,7 +258,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
     return values;
   }
   async function indexDocument() {
-    const row = detail, rebuilding = maintenanceCanReindex(config, row);
+    const row = detail, rebuilding = canReindex(config, row);
     if ((!canStartIndexing(config, row) && !rebuilding) || unknownTasks.has(row.document_id)) return;
     await mutation(async () => {
       unknownTasks.add(row.document_id);
@@ -271,14 +270,14 @@ export function mountWikiMaintenance({ container, document, window, api, config,
   }
   async function batch(name) {
     const ids = [...selected]; if (!ids.length) return;
-    if (!['move', 'tag', 'cleanup', 'reindex'].includes(name) || name === 'move' && !cap(config, 'batch_move') || name === 'tag' && !cap(config, 'batch_tag')) return;
+    if (!['move', 'tag', 'cleanup', 'reindex'].includes(name) || name === 'move' && !hasCapabilities(config, 'batch_move') || name === 'tag' && !hasCapabilities(config, 'batch_tag')) return;
     if (name === 'cleanup') { await doCleanup(ids); return; }
     const body = { action: name, document_ids: ids };
     if (name === 'move') body.folder_id = $('maint-batch-folder').value || null;
     if (name === 'tag') body.tags = checkedTags($('maint-batch-tags').value, true);
     if (name === 'reindex') {
-      if (!cap(config, 'batch_text_reindex')) return;
-      const rows = items.filter(item => selected.has(item.document_id) && maintenanceCanReindex(config, item) && !unknownTasks.has(item.document_id));
+      if (!hasCapabilities(config, 'batch_text_reindex')) return;
+      const rows = items.filter(item => selected.has(item.document_id) && canReindex(config, item) && !unknownTasks.has(item.document_id));
       if (!rows.length) { error = '选中资料暂不能重建索引，请核对资料状态。'; renderStatus(); return; }
       body.document_ids = rows.map(item => item.document_id); body.base_publication_ids = Object.fromEntries(rows.map(item => [item.document_id, item.index_publication_id]));
     }
@@ -328,7 +327,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
       else if (name === 'cleanup-records') await cleanup.loadPage();
       else if (name === 'cleanup-previous' || name === 'cleanup-next') await cleanup.loadPage(cleanup.value.page + (name === 'cleanup-next' ? 1 : -1));
       else if (name === 'cleanup-refresh') await cleanup.load(data.documentId);
-      else if (name === 'original' && cap(config, 'document_originals')) await original.open(detail);
+      else if (name === 'original' && hasCapabilities(config, 'document_originals')) await original.open(detail);
       else if (name === 'replacement-refresh' && replacementsEnabled(config)) await replacement.open(detail);
       else if (name === 'replacement-index' && replacementsEnabled(config)) await replacement.index(detail);
       else if (name === 'synopsis-create' && synopsisEnabled(config)) await synopsis.create(detail);
@@ -356,7 +355,7 @@ export function mountWikiMaintenance({ container, document, window, api, config,
             return replaceTask(entry.task, entry.kind, result, operation);
           }, () => { feedback = operation === 'cancel' ? '任务已取消。' : '已提交一次重试。'; });
         }
-      } else if (name === 'folder-delete' && cap(config, 'folders') && folders.some(folder => folder.folder_id === data.folderId) && await confirm('删除这个空目录？目录中的资料不会删除；非空目录无法删除。')) {
+      } else if (name === 'folder-delete' && hasCapabilities(config, 'folders') && folders.some(folder => folder.folder_id === data.folderId) && await confirm('删除这个空目录？目录中的资料不会删除；非空目录无法删除。')) {
         await mutation(() => api(`/v1/management/folders/${encodeURIComponent(data.folderId)}`, { method: 'DELETE' }), () => load());
       }
     } catch (failure) { error = safeError(failure); renderStatus(); }
@@ -367,17 +366,17 @@ export function mountWikiMaintenance({ container, document, window, api, config,
     try {
       if (form.id === 'maint-filter') {
         filters = { q: $('maint-q').value.trim(), type: $('maint-type').value, status: $('maint-state').value, folder_id: $('maint-filter-folder').value, tag: $('maint-filter-tag').value, sort: $('maint-sort').value || 'updated_desc' }; page = 1; selected.clear(); await load();
-      } else if (form.id === 'maint-edit' && detail && cap(config, 'metadata')) {
+      } else if (form.id === 'maint-edit' && detail && hasCapabilities(config, 'metadata')) {
         const body = { display_name: $('maint-name').value.trim(), folder_id: $('maint-folder').value || null, tags: checkedTags($('maint-tags').value) };
         if (!body.display_name || body.display_name.length > 255) throw new ApiError(422, '请填写有效的显示名称。');
         await mutation(() => api(`/v1/management/documents/${encodeURIComponent(detail.document_id)}`, { method: 'PATCH', body }), async () => { feedback = '整理信息已保存。'; await load({ preserveForm: true }); });
       } else if (form.id === 'maint-replace' && replacementsEnabled(config)) {
         const file = $('maint-replace-file').files?.[0]; if (!file || !await confirm('上传这个新原文件版本？新版本完成索引后才会替换当前可用版本。')) return;
         await replacement.upload(detail, file);
-      } else if (form.id === 'maint-folder-create' && cap(config, 'folders')) {
+      } else if (form.id === 'maint-folder-create' && hasCapabilities(config, 'folders')) {
         const name = $('maint-folder-new').value.trim(); if (!name) return;
         await mutation(() => api('/v1/management/folders', { method: 'POST', body: { name } }), () => load());
-      } else if (cap(config, 'folders') && form.dataset?.maintenanceFolder && folders.some(folder => folder.folder_id === form.dataset.maintenanceFolder)) {
+      } else if (hasCapabilities(config, 'folders') && form.dataset?.maintenanceFolder && folders.some(folder => folder.folder_id === form.dataset.maintenanceFolder)) {
         const id = form.dataset.maintenanceFolder, name = $(`maint-folder-name-${id}`).value.trim(); if (!name) return;
         await mutation(() => api(`/v1/management/folders/${encodeURIComponent(id)}`, { method: 'PATCH', body: { name } }), () => load());
       }

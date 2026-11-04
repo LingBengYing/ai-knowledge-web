@@ -1,9 +1,8 @@
-/* Original UI for the local-only Wiki workspace preview. No external assets. */
+/* Base styles of the Wiki workspace (loaded before wiki-workspace.css). No external assets. */
 :root {
   color-scheme: light;
   --ink: #25362f;
   --muted: #657160;
-  --subtle: #9aa39d;
   --green: #2b624c;
   --green-dark: #204c3a;
   --green-soft: #eaf1eb;
@@ -12,7 +11,6 @@
   --paper: #ffffff;
   --canvas: #f9faf7;
   --sidebar: #f3f5f0;
-  --amber: #896832;
   --amber-soft: #f8f2e7;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: 14px;
